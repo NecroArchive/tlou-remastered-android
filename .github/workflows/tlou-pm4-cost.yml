@@ -9,6 +9,10 @@ on:
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_cpu_phase_sample.h'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
       - 'gow3_pc/tests/test_cpu_phase_sample.cpp'
+      - 'gow3_pc/src/runtime_memory.c'
+      - 'gow3_pc/tests/test_memory_walk_cost.c'
+      - 'gow3_pc/tests/test_ring_binding_cursor.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/ring_binding_cursor.h'
       - '.github/workflows/tlou-pm4-cost.yml'
   workflow_dispatch:
 
@@ -40,6 +44,17 @@ jobs:
             gow3_pc/tests/test_cpu_phase_sample.cpp -o out/pm4-cost/sampler
           out/pm4-cost/sampler | tee out/pm4-cost/sampler.txt
           out/pm4-cost/sampler | tee out/pm4-cost/sampler-repeat.txt
+      - name: Compare production memory walks and packet ring lookup
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            gow3_pc/tests/test_memory_walk_cost.c -o out/pm4-cost/memory-walk
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+            gow3_pc/tests/test_ring_binding_cursor.cpp -o out/pm4-cost/ring-cursor
+          out/pm4-cost/memory-walk | tee out/pm4-cost/memory-walk.txt
+          out/pm4-cost/memory-walk | tee out/pm4-cost/memory-walk-repeat.txt
+          out/pm4-cost/ring-cursor | tee out/pm4-cost/ring-cursor.txt
+          out/pm4-cost/ring-cursor | tee out/pm4-cost/ring-cursor-repeat.txt
       - name: Check memory access and undefined behavior
         run: |
           set -euo pipefail
@@ -51,6 +66,14 @@ jobs:
             -fsanitize=address,undefined -fno-omit-frame-pointer \
             gow3_pc/tests/test_cpu_phase_sample.cpp -o out/pm4-cost/sampler-asan
           out/pm4-cost/sampler-asan --correctness-only
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            gow3_pc/tests/test_memory_walk_cost.c -o out/pm4-cost/memory-walk-asan
+          out/pm4-cost/memory-walk-asan --correctness-only
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            gow3_pc/tests/test_ring_binding_cursor.cpp -o out/pm4-cost/ring-cursor-asan
+          out/pm4-cost/ring-cursor-asan --correctness-only
       - uses: actions/upload-artifact@v4
         with:
           name: pm4-cost-${{ matrix.runner }}

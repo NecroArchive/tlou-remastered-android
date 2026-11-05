@@ -1,0 +1,64 @@
+#include "../gpu/shadps4/video_core/renderer_vulkan/ring_binding_cursor.h"
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <random>
+#include <vector>
+struct Binding { unsigned index; std::uint64_t address, size; };
+using Cursor=Vulkan::Detail::RingBindingCursor<Binding>;
+static const Binding* Reference(const std::vector<Binding>& bindings,unsigned index) {
+    for(const auto& b:bindings) if(b.index==index) return &b;
+    return nullptr;
+}
+static void Correctness() {
+    std::mt19937 rng(19432);
+    for(unsigned run=0;run<100000;++run) {
+        std::vector<Binding> bindings;
+        unsigned buffers=rng()%41;
+        for(unsigned i=0;i<buffers;++i) if(rng()%3) bindings.push_back({i,rng(),rng()});
+        Cursor cursor(bindings.data(),bindings.size());
+        for(unsigned i=0;i<buffers+3;++i) assert(cursor.Take(i)==Reference(bindings,i));
+    }
+    Cursor empty(nullptr,0); assert(!empty.Take(0)); assert(!empty.Take(40));
+    std::puts("Ring cursor: 100000 packet comparisons passed; exact pointers, sparse/empty/full stages and missing indices");
+}
+static volatile std::uint64_t sink;
+static __attribute__((noinline)) double Measure(const std::vector<Binding>& bindings,unsigned count,bool cursor) {
+    constexpr unsigned repeats=200000;
+    auto start=std::chrono::steady_clock::now();
+    std::uint64_t total=0;
+    for(unsigned r=0;r<repeats;++r) {
+        // Keep packet data observable at the same boundary as a recorded draw.
+        asm volatile("" : : "r"(bindings.data()) : "memory");
+        Cursor next(bindings.data(),bindings.size());
+        for(unsigned i=0;i<count;++i) {
+            const auto* b=cursor?next.Take(i):Reference(bindings,i);
+            if(b) total+=b->address;
+        }
+    }
+    sink=total;
+    return double(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-start).count())/repeats;
+}
+static void Benchmark() {
+    for(unsigned count:{1,4,8,16,40}) for(unsigned fraction:{0,1,2}) {
+        std::vector<Binding> bindings;
+        for(unsigned i=0;i<count;++i) if(fraction==2 || (fraction==1 && i%2)) bindings.push_back({i,i*17+3,256});
+        std::array<double,7> old{},next{};
+        for(unsigned r=0;r<8;++r) {
+            double a,b;
+            if(r%2) { b=Measure(bindings,count,true); a=Measure(bindings,count,false); }
+            else { a=Measure(bindings,count,false); b=Measure(bindings,count,true); }
+            if(r) {old[r-1]=a;next[r-1]=b;}
+        }
+        std::sort(old.begin(),old.end());std::sort(next.begin(),next.end());
+        std::printf("buffers=%u ring=%zu old_ns/packet=%.2f new_ns/packet=%.2f reduction=%.1f%%\n",count,bindings.size(),old[3],next[3],100*(old[3]-next[3])/old[3]);
+    }
+}
+int main(int argc,char**argv) {
+    Correctness();
+    if(argc<2 || std::strcmp(argv[1],"--correctness-only")) Benchmark();
+}

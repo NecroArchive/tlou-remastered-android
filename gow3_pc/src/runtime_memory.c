@@ -1048,9 +1048,11 @@ void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
     unsigned char *out=dest;
     { const void *fast=cached_backing(address,size); if (fast) { memcpy(dest,fast,size); return; } }
     read_lock();
-    { size_t first=vma_index(address); if (first<vma_count && vmas[first].start<=address) cache_region(first); }
+    size_t i=vma_index(address);
+    if (i<vma_count && vmas[i].start<=address) cache_region(i);
     for (uintptr_t at=address, end=address+size; at<end;) {
-        size_t i=vma_index(at);
+        /* The table cannot change under this read lock, and at only advances. */
+        while (i<vma_count && vmas[i].end<=at) ++i;
         uintptr_t next=end;
         if (i<vma_count && vmas[i].start<=at) {
             next=vmas[i].end<end ? vmas[i].end : end;
@@ -1097,9 +1099,10 @@ uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
     const CachedRegion *c=(runtime_disabled_optimizations & 1) ? NULL : cached_region(address);
     if (c && c->kind!=KIND_RESERVED && size<=c->end-address) return size;
     read_lock();
-    { size_t i=vma_index(address); if (i<vma_count && vmas[i].start<=address) cache_region(i); }
+    size_t first=vma_index(address);
+    if (first<vma_count && vmas[first].start<=address) cache_region(first);
     uint64_t length=0;
-    for (size_t i=vma_index(address); i<vma_count && length<size; ++i) {
+    for (size_t i=first; i<vma_count && length<size; ++i) {
         if (vmas[i].start>address+length || vmas[i].kind==KIND_RESERVED) break;
         length=vmas[i].end-address;
     }

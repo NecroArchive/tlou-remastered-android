@@ -10,6 +10,25 @@
 #include <vector>
 struct Binding { unsigned index; std::uint64_t address, size; };
 using Cursor=Vulkan::Detail::RingBindingCursor<Binding>;
+struct CountedIndex {
+    unsigned value;
+    static inline unsigned comparisons=0;
+    bool operator<(std::size_t rhs) const { ++comparisons; return value<rhs; }
+    bool operator==(std::size_t rhs) const { ++comparisons; return value==rhs; }
+};
+static void CountWork() {
+    struct CountedBinding { CountedIndex index; };
+    std::array<CountedBinding,40> bindings{};
+    for(unsigned i=0;i<40;++i) bindings[i].index.value=i;
+    CountedIndex::comparisons=0;
+    for(unsigned index=0;index<40;++index) for(const auto& b:bindings) if(b.index==index) break;
+    const unsigned old=CountedIndex::comparisons;
+    CountedIndex::comparisons=0;
+    Vulkan::Detail::RingBindingCursor<CountedBinding> cursor(bindings.data(),bindings.size());
+    for(unsigned i=0;i<40;++i) assert(cursor.Take(i)==&bindings[i]);
+    assert(old==820 && CountedIndex::comparisons==80);
+    std::puts("Ring work gate passed: full 40-buffer packet 820->80 index comparisons");
+}
 static const Binding* Reference(const std::vector<Binding>& bindings,unsigned index) {
     for(const auto& b:bindings) if(b.index==index) return &b;
     return nullptr;
@@ -59,6 +78,6 @@ static void Benchmark() {
     }
 }
 int main(int argc,char**argv) {
-    Correctness();
+    CountWork(); Correctness();
     if(argc<2 || std::strcmp(argv[1],"--correctness-only")) Benchmark();
 }

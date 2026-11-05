@@ -6,6 +6,15 @@ int32_t *runtime_errno(void) { return &test_errno; }
 uintptr_t runtime_lookup(const RuntimeExport *table,size_t count,const char *name) {
     (void)table; (void)count; (void)name; return 0;
 }
+#ifdef TEST_VMA_LOOKUP_COUNTS
+static uint64_t lookup_count;
+void __cyg_profile_func_enter(void *,void *) __attribute__((no_instrument_function));
+void __cyg_profile_func_exit(void *,void *) __attribute__((no_instrument_function));
+void __cyg_profile_func_enter(void *fn,void *caller) {
+    (void)caller; if(fn==(void *)vma_index) ++lookup_count;
+}
+void __cyg_profile_func_exit(void *fn,void *caller) { (void)fn; (void)caller; }
+#endif
 /* Frozen v0.30 reference: keep independent of the optimized table walk. */
 static void reference_copy(uintptr_t address, void *dest, uint64_t size) {
     unsigned char *out=dest;
@@ -135,8 +144,20 @@ static void benchmark(void) {
         printf("%s %-23s old_ns=%.2f new_ns=%.2f reduction=%.1f%%\n",kind?"copy":"clamp",names[w],old[4],next[4],100*(old[4]-next[4])/old[4]);
     }
 }
+static void count_work(void) {
+#ifdef TEST_VMA_LOOKUP_COUNTS
+    unsigned char out[4*16384];
+    cold_cache(); lookup_count=0; reference_clamp(vmas[1].start,128); assert(lookup_count==2);
+    cold_cache(); lookup_count=0; runtime_memory_clamp(vmas[1].start,128); assert(lookup_count==1);
+    lookup_count=0; runtime_memory_clamp(vmas[1].start,128); assert(lookup_count==0);
+    cold_cache(); lookup_count=0; reference_copy(vmas[1].start,out,3*PAGE); uint64_t old=lookup_count;
+    cold_cache(); lookup_count=0; runtime_memory_copy_backing(vmas[1].start,out,3*PAGE);
+    assert(old==4 && lookup_count==1);
+    puts("Lookup work gate passed: clamp miss 2->1, hot 0->0, three-region copy 4->1 binary searches");
+#endif
+}
 int main(int argc,char **argv) {
-    setup(); correctness();
+    setup(); count_work(); correctness();
     if(argc<2 || strcmp(argv[1],"--correctness-only")) benchmark();
     free(vmas); free(backing_base); return 0;
 }

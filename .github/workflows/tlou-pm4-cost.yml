@@ -8,6 +8,7 @@ on:
       - 'gow3_pc/tests/test_pm4_checksum_cost.cpp'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_cpu_phase_sample.h'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.h'
       - 'gow3_pc/tests/test_cpu_phase_sample.cpp'
       - 'gow3_pc/src/runtime_memory.c'
       - 'gow3_pc/tests/test_memory_walk_cost.c'
@@ -55,6 +56,12 @@ jobs:
           out/pm4-cost/memory-walk | tee out/pm4-cost/memory-walk-repeat.txt
           out/pm4-cost/ring-cursor | tee out/pm4-cost/ring-cursor.txt
           out/pm4-cost/ring-cursor | tee out/pm4-cost/ring-cursor-repeat.txt
+          # Compiler instrumentation counts entries into the actual production vma_index.
+          # It is absent from timing binaries and from the runtime build.
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            -finstrument-functions -DTEST_VMA_LOOKUP_COUNTS \
+            gow3_pc/tests/test_memory_walk_cost.c -o out/pm4-cost/memory-walk-count
+          out/pm4-cost/memory-walk-count --correctness-only | tee out/pm4-cost/memory-work.txt
       - name: Check memory access and undefined behavior
         run: |
           set -euo pipefail

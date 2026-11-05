@@ -1,4 +1,4 @@
-name: TLOU stream-copy exact-key cache: CPU-only validation
+name: 'TLOU stream-copy exact-key cache - CPU-only validation'
 
 on:
   push:

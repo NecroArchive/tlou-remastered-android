@@ -631,6 +631,7 @@ void PipelineCache::PublishShaders(bool wait) {
             std::unique_lock lock{programs_mutex};
             if (build->initial) {
                 program->info = std::move(build->info);
+                program->compute_perm_memo.Invalidate();
                 // user_data is refreshed on the next lookup; no pointer into a completed job survives.
                 program->info.user_data = {};
                 program->info_template = std::make_unique<Shader::Info>(program->info);
@@ -1899,6 +1900,37 @@ static bool AssignFetch(std::optional<Shader::Gcn::FetchShaderData>& to,
     return true;
 }
 
+// No part of the specialization for these compute descriptors may depend on
+// current VMA membership, which can change without changing flattened guest
+// data. Garbage-effect descriptors are deterministic; non-effect odd buffers
+// ask gpu_mapped_extent and must take the original path on every dispatch.
+// This is checked on memo creation, NOT on a memo hit.
+static bool ExactComputeMemoSafe(const Shader::Info& info) {
+    if (info.has_fetch_shader || info.FlatUserData().size() > 256) {
+        return false;
+    }
+    for (const auto& desc : info.buffers) {
+        if (desc.IsSpecial()) {
+            continue;
+        }
+        AmdGpu::Buffer sharp{};
+        if (!desc.sharp_fetch.Fetch(info.FlatUserData().data(), &sharp)) {
+            continue;
+        }
+        if (desc.post_op == Shader::SharpFetchPostOp::BitwiseOrDw1WithImm) {
+            reinterpret_cast<u32*>(&sharp)[1] |= desc.post_op_dw1_mask;
+        } else if (desc.post_op == Shader::SharpFetchPostOp::OffsetByProgramBase) {
+            sharp.base_address += info.ProgramBase();
+        }
+        if (!Shader::IsEffectShader(info.pgm_hash) && sharp.base_address &&
+            sharp.GetSize() != 0 && ((sharp.base_address & 3) != 0 ||
+                sharp.stride >= 8192 || sharp.GetSize() > 64_MB)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage hw_stage,
                                                 SwStage sw_stage,
                                                 const Shader::ShaderParams& params,
@@ -2055,6 +2087,42 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     info.pgm_base = params.Base(); // Needs to be actualized for inline cbuffer address fixup
     info.user_data = params.user_data;
     info.RefreshFlatBuf();
+
+    // Exact compute permutation memo. The SRT walker above ALWAYS runs:
+    // same pointer is not sufficient; its freshly resolved content, shader
+    // base and runtime specialization state must all match. The cache only
+    // bypasses rebuilding the permutation's descriptors and vectors.
+    static const bool compute_memo_enabled = [] {
+        const char* env = std::getenv("GOW3_TLOU_COMPUTE_MEMO");
+        return env && env[0] == '1' && env[1] == '\0';
+    }();
+    if (compute_memo_enabled && hw_stage == HwStage::Compute &&
+        program->compute_perm_memo.Matches(info.ProgramBase(), info.FlatUserData(),
+                                          runtime_info, program->modules.size())) {
+        const size_t idx = program->compute_perm_memo.Permutation();
+        // The validation hook rebuilds the full specialization and compares
+        // against the cached module. It must NEVER mask a mismatch.
+        static const bool verify = std::getenv("GOW3_TLOU_COMPUTE_MEMO_VERIFY") != nullptr;
+        bool equivalent = true;
+        if (verify) {
+            auto fresh = Shader::StageSpecialization(info, runtime_info, profile, binding);
+            equivalent = program->modules[idx].spec == fresh;
+            if (!equivalent) {
+                program->compute_perm_memo.Invalidate();
+                std::fprintf(stderr, "TLOU compute memo: specialization mismatch shader %llx\\n",
+                             static_cast<unsigned long long>(params.hash));
+            }
+        }
+        if (equivalent) {
+            program->last_used = idx;
+            info.AddBindings(binding);
+            const auto hash = TlouComputeSplit::PermutationKey(
+                params.hash, HashCombine(params.hash, idx));
+            return std::make_tuple(&program->info, program->modules[idx].module,
+                                   AssignFetch(fetch, program->modules[idx].spec.fetch_shader_data),
+                                   hash);
+        }
+    }
     auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
 
     size_t perm_idx = program->modules.size();
@@ -2091,6 +2159,13 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         module = it->module;
         perm_idx = std::distance(program->modules.begin(), it);
         perm_hash = TlouComputeSplit::PermutationKey(params.hash, HashCombine(params.hash, perm_idx));
+    }
+    if (compute_memo_enabled && hw_stage == HwStage::Compute &&
+        ExactComputeMemoSafe(info)) {
+        program->compute_perm_memo.Remember(info.ProgramBase(), info.FlatUserData(),
+                                            runtime_info, perm_idx);
+    } else if (hw_stage == HwStage::Compute) {
+        program->compute_perm_memo.Invalidate();
     }
     return std::make_tuple(&program->info, module,
                            AssignFetch(fetch, program->modules[perm_idx].spec.fetch_shader_data),

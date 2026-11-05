@@ -1,0 +1,52 @@
+name: TLOU draw pipe busy-counter cost (no APK)
+
+on:
+  push:
+    branches:
+      - tlou-draw-pipe-counter-gate
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_draw_pipe_busy_sample.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_draw_pipe.h'
+      - 'gow3_pc/tests/test_draw_pipe_busy_sample.cpp'
+      - '.github/workflows/tlou-draw-pipe-stats.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-native:
+    name: Source correctness and cost on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile against the production counter helper
+        run: |
+          set -euo pipefail
+          mkdir -p out/draw-pipe
+          uname -m | tee out/draw-pipe/arch.txt
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_draw_pipe_busy_sample.cpp \
+            -o out/draw-pipe/draw-pipe-test
+          out/draw-pipe/draw-pipe-test | tee out/draw-pipe/cost.txt
+          out/draw-pipe/draw-pipe-test | tee out/draw-pipe/repeat.txt
+      - name: Sanitized correctness
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_draw_pipe_busy_sample.cpp \
+            -o out/draw-pipe/draw-pipe-asan
+          out/draw-pipe/draw-pipe-asan --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draw-pipe-cost-${{ matrix.runner }}
+          path: out/draw-pipe/*.txt
+          if-no-files-found: error

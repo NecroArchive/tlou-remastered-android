@@ -1,0 +1,48 @@
+name: TLOU image-write prefilter benchmark native ARM64
+
+on:
+  push:
+    branches: [tlou-image-write-prefilter]
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/texture_cache/tlou_image_write_filter.h'
+      - 'gow3_pc/gpu/shadps4/video_core/texture_cache/texture_cache.*'
+      - 'gow3_pc/tests/test_tlou_image_write_filter.cpp'
+      - '.github/workflows/tlou-image-write-filter-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image-write-negative-filter:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and measure real image page table lookup against negative prefilter
+        run: |
+          set -euo pipefail
+          mkdir -p out/image-filter
+          uname -m | tee out/image-filter/arch.txt
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_image_write_filter.cpp -o out/image-filter/native
+          out/image-filter/native | tee out/image-filter/benchmark.txt
+          out/image-filter/native | tee out/image-filter/benchmark-repeat.txt
+      - name: Sanitized image-base ownership and false-negative tests
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_image_write_filter.cpp -o out/image-filter/native-san
+          out/image-filter/native-san --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-write-native-${{ matrix.runner }}
+          path: out/image-filter/*.txt
+          if-no-files-found: error

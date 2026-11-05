@@ -1011,7 +1011,7 @@ static void cache_region(size_t i);
 int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t size) {
     { const void *fast=cached_backing(address,size); if (fast) { memcpy((void *)fast,data,size); return 1; } }
     read_lock();
-    { size_t first=vma_index(address); if (first<vma_count && vmas[first].start<=address) cache_region(first); }
+    { size_t first=vma_index(address); if (first<vma_count && vmas[first].start<=address) cache_region(first,address); }
     int ok=1;
     for (uintptr_t at=address, end=address+size; at<end && ok;) {
         size_t i=vma_index(at);
@@ -1048,7 +1048,7 @@ void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
     unsigned char *out=dest;
     { const void *fast=cached_backing(address,size); if (fast) { memcpy(dest,fast,size); return; } }
     read_lock();
-    { size_t first=vma_index(address); if (first<vma_count && vmas[first].start<=address) cache_region(first); }
+    { size_t first=vma_index(address); if (first<vma_count && vmas[first].start<=address) cache_region(first,address); }
     for (uintptr_t at=address, end=address+size; at<end;) {
         size_t i=vma_index(at);
         uintptr_t next=end;
@@ -1070,9 +1070,33 @@ void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
 typedef struct { uint64_t generation; uintptr_t start, end; int kind; uint64_t phys; } CachedRegion;
 static __thread CachedRegion region_cache[8];
 static __thread unsigned region_cache_next;
+// Experimental: direct-index second level for the many distinct guest VMAs
+// touched by per-dispatch buffer binds and stream copies. Exact interval +
+// VMA generation on every hit, so collisions can only turn hits into misses.
+#define DIRECT_REGION_CACHE_BITS 8
+static __thread CachedRegion direct_region_cache[1u << DIRECT_REGION_CACHE_BITS];
+static int direct_region_cache_mode = -1;
+static inline int direct_region_cache_enabled(void) {
+    int cached = __atomic_load_n(&direct_region_cache_mode, __ATOMIC_RELAXED);
+    if (cached >= 0) return cached;
+    const char *env=getenv("GOW3_VMA_DIRECT_CACHE");
+    cached=env && env[0]=='1' && env[1]=='\\0';
+    __atomic_store_n(&direct_region_cache_mode,cached,__ATOMIC_RELAXED);
+    return cached;
+}
+static inline unsigned direct_region_bucket(uintptr_t address) {
+    uint64_t hash=(uint64_t)(address >> 16)*UINT64_C(0x9E3779B97F4A7C15);
+    hash^=hash >> 29;
+    return (unsigned)(hash >> (64-DIRECT_REGION_CACHE_BITS));
+}
 static const CachedRegion *cached_region(uintptr_t address) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
     if (generation & 1) return NULL;
+    if (direct_region_cache_enabled()) {
+        const CachedRegion *fast=&direct_region_cache[direct_region_bucket(address)];
+        if (fast->generation==generation && fast->end &&
+            fast->start<=address && address<fast->end) return fast;
+    }
     for (unsigned i=0;i<8;++i) {
         const CachedRegion *c=&region_cache[i];
         if (c->generation==generation && c->end && c->start<=address && address<c->end) return c;
@@ -1087,17 +1111,21 @@ static const void *cached_backing(uintptr_t address, uint64_t size) {
     return backing_base+c->phys+(address-c->start);
 }
 /* Called under the read lock after a lookup of address. */
-static void cache_region(size_t i) {
+static void cache_region(size_t i, uintptr_t requested_at) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
     if (i==vma_count || (generation & 1)) return;
-    region_cache[region_cache_next++ % 8]=(CachedRegion){generation,vmas[i].start,vmas[i].end,vmas[i].kind,vmas[i].phys};
+    const CachedRegion entry={generation,vmas[i].start,vmas[i].end,vmas[i].kind,vmas[i].phys};
+    region_cache[region_cache_next++ % 8]=entry;
+    if (direct_region_cache_enabled()) {
+        direct_region_cache[direct_region_bucket(requested_at)]=entry;
+    }
 }
 /* Mapped length from address, up to size, across adjacent mappings. */
 uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
     const CachedRegion *c=(runtime_disabled_optimizations & 1) ? NULL : cached_region(address);
     if (c && c->kind!=KIND_RESERVED && size<=c->end-address) return size;
     read_lock();
-    { size_t i=vma_index(address); if (i<vma_count && vmas[i].start<=address) cache_region(i); }
+    { size_t i=vma_index(address); if (i<vma_count && vmas[i].start<=address) cache_region(i,address); }
     uint64_t length=0;
     for (size_t i=vma_index(address); i<vma_count && length<size; ++i) {
         if (vmas[i].start>address+length || vmas[i].kind==KIND_RESERVED) break;
@@ -1114,7 +1142,7 @@ int runtime_memory_region(uintptr_t address, uintptr_t *start, uintptr_t *end, i
     size_t i=vma_index(address);
     int found=i<vma_count;
     if (found && vmas[i].start<=address) {
-        cache_region(i);
+        cache_region(i,address);
         *start=vmas[i].start; *end=vmas[i].end; *mapped=vmas[i].kind!=KIND_RESERVED;
     } else if (found) {
         *start=i ? vmas[i-1].end : 0; *end=vmas[i].start; *mapped=0;

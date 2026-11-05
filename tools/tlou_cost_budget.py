@@ -69,7 +69,7 @@ def report(volume, costs):
         f'Scenario binding stages/flip = 2 × {draws:.1f} + {dispatches:.1f} = '
         f'{2*draws+dispatches:.1f}.', '',
         '| Slots / ring bindings per stage | Saved ns/stage | CPU ms/flip, draw thread | '
-        'Relative to 27.4 ms frame duration, NOT FPS gain |',
+        f'Relative to {frame_ms:.1f} ms frame duration, NOT FPS gain |',
         '| --- | ---: | ---: | ---: |',
     ]
     for case in costs['ring_stage']:
@@ -93,11 +93,34 @@ def report(volume, costs):
              '| --- | ---: | ---: | ---: | ---: |']
     for case in costs['memory']:
         delta = saved_ns(case)
+        required = f'{1_000_000/delta:,.0f}' if delta > 0 else 'not achievable (no saving)'
         text.append(f"| {case['case']} | {delta:.2f} | {cpu_ms_per_frame(delta,1000):.4f} ms | "
-                    f"{cpu_ms_per_frame(delta,10000):.4f} ms | {1_000_000/delta:,.0f} |")
+                    f"{cpu_ms_per_frame(delta,10000):.4f} ms | {required} |")
     text += ['', 'The two copy rows are different workloads, not additive savings for one copy. '
              'Each eligible call belongs in one category. Split memory savings by CPU thread; '
-             'do not sum parallel threads into critical-path time.', '',
+             'do not sum parallel threads into critical-path time. In CollectRingBindings, '
+             'clamp comes before copy and warms its backing cache. Independently cold '
+             'clamp and copy timings cannot be added for that sequence.', '']
+    if costs.get('sequence'):
+        text += ['## Actual clamp-before-copy sequence', '',
+                 'This calls the real reference/optimized clamp followed by copy, using the '
+                 'clamped length, and skips copy when clamp returns zero. Timing includes '
+                 'both functions and their shared cache. Counts below are sequence attempts, '
+                 'not independent cold copies. 48 KiB is the requested maximum; holes and '
+                 'reservations truncate it. This is a synthetic mapping distribution. The '
+                 '0.15 ns hot-path difference is too small to support a material saving claim.', '',
+                 '| Sequence workload | Old ns/attempt | New ns/attempt | Saved ns/attempt | '
+                 'CPU ms/flip at 1,000 attempts | CPU ms/flip at 10,000 attempts |',
+                 '| --- | ---: | ---: | ---: | ---: | ---: |']
+        for case in costs['sequence']:
+            delta = saved_ns(case)
+            text.append(f"| {case['case']} | {mean(case['old']):.2f} | {mean(case['new']):.2f} | "
+                        f"{delta:.2f} | {cpu_ms_per_frame(delta,1000):.4f} | {cpu_ms_per_frame(delta,10000):.4f} |")
+        text += ['', 'Do not add the memory rows above to these sequence rows. They measure '
+                 'overlapping work. Phone sequence frequency, sizes and thread split remain '
+                 'unmeasured. These are CPU savings scenarios, not measured FPS.', '',
+                 f'Sequence run: https://github.com/erickmendes22/tlou-remastered-android/actions/runs/{costs["sequence_run"]}', '']
+    text += [
              '## Gate for current and future changes', '',
              'Report before approving an APK: (1) old/new absolute cost and benchmark platform; '
              '(2) actual eligible count per frame, by thread, or explicitly missing coverage; '

@@ -11,6 +11,9 @@ The user explicitly requires absolute per-frame accounting, not isolated percent
 4. Critical-path relevance. A saving on draw/record/helper threads is not automatically
    a saving on the command thread or in end-to-end frame duration.
 5. Regressions, correctness/ownership cases and repeated benchmark results.
+6. The actual caller sequence when one operation warms another's cache. For example,
+   clamp-before-copy must be benchmarked together; independently cold timings cannot
+   be added as though both operations stay cold in the real path.
 
 Every reported percentage must identify its denominator. A function becoming 36% faster
 does not make a frame 36% faster. Do not add parallel CPU threads or overlapping waits.

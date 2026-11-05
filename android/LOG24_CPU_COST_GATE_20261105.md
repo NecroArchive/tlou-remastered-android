@@ -92,7 +92,7 @@ the actual producer/consumer loops meet that contract. Do not use it for arbitra
 old linear search. Deterministic comparison counting through the production template
 requires 820 -> 80 comparisons for 40 bound buffers. ASan/UBSan pass.
 
-ARM64 lookup-only cost in ns/packet, two runs:
+ARM64 lookup-only cost in ns per stage list (not a whole draw), two runs:
 
 | Buffer slots / ring bindings | Old | New |
 | --- | --- | --- |

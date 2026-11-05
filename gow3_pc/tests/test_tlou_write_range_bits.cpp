@@ -166,10 +166,10 @@ int main(int argc,char** argv) {
         std::puts("GPU-written and pending range equivalence/concurrency: PASS");
         return 0;
     }
-    Benchmark("pending-mark",1,PendingCost);
-    Benchmark("pending-mark",512,PendingCost);
-    Benchmark("gpu-atomic-mark",1,AtomicCost);
-    Benchmark("gpu-atomic-mark",512,AtomicCost);
+    for (u64 windows : {1ull,2ull,8ull,64ull,512ull}) {
+        Benchmark("pending-mark",windows,PendingCost);
+        Benchmark("gpu-atomic-mark",windows,AtomicCost);
+    }
     std::puts("512 windows = 32 MiB of *address coverage*, not bytes physically copied.");
     std::puts("For frame-time estimates multiply per-operation delta by the real in-game size histogram; do not sum separate thread times.");
 }

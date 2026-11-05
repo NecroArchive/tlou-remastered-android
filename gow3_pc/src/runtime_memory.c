@@ -1080,7 +1080,7 @@ static inline int direct_region_cache_enabled(void) {
     int cached = __atomic_load_n(&direct_region_cache_mode, __ATOMIC_RELAXED);
     if (cached >= 0) return cached;
     const char *env=getenv("GOW3_VMA_DIRECT_CACHE");
-    cached=env && env[0]=='1' && env[1]=='\\0';
+    cached=env && env[0]=='1' && env[1]==0;
     __atomic_store_n(&direct_region_cache_mode,cached,__ATOMIC_RELAXED);
     return cached;
 }

@@ -6,6 +6,8 @@ on:
     paths:
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_host_copy_batch.h'
       - 'gow3_pc/tests/test_tlou_host_copy_batch.cpp'
+      - 'gow3_pc/tests/test_tlou_real_record_chunk.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.h'
       - '.github/workflows/tlou-host-copy-batch-native.yml'
   workflow_dispatch:
 
@@ -32,6 +34,45 @@ jobs:
             gow3_pc/tests/test_tlou_host_copy_batch.cpp -o out/host-copy-batch/test
           out/host-copy-batch/test | tee out/host-copy-batch/bench.txt
           out/host-copy-batch/test | tee out/host-copy-batch/bench-repeat.txt
+      - name: Extract the production RecordChunk for native scheduling benchmark
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source=Path('gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.h').read_text()
+          start=source.index('class RecordChunk {')
+          end=source.index('\nclass Scheduler {',start)
+          chunk=source[start:end].replace('vk::CommandBuffer','int')
+          prefix="""#pragma once
+          #include <algorithm>
+          #include <array>
+          #include <atomic>
+          #include <cassert>
+          #include <cstddef>
+          #include <cstdint>
+          #include <cstdlib>
+          #include <cstring>
+          #include <memory>
+          #include <new>
+          #include <type_traits>
+          #include <utility>
+          #include <vector>
+          #include "video_core/renderer_vulkan/tlou_host_copy_batch.h"
+          using u64=std::uint64_t;
+          namespace Gow3Toggle { enum Flag { RecordPrefetch }; inline bool Disabled(Flag){return true;} }
+          #define ASSERT(x) assert(x)
+          """
+          Path('out/host-copy-batch/tlou_record_chunk_extracted.h').write_text(prefix+chunk)
+          print('Extracted original RecordChunk code, replacing only Vulkan handle with int')
+          PY
+      - name: Benchmark actual recorder fixed-block scheduling and callback completion
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I out/host-copy-batch -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_real_record_chunk.cpp -o out/host-copy-batch/record-test
+          out/host-copy-batch/record-test | tee out/host-copy-batch/record-benchmark.txt
+          out/host-copy-batch/record-test | tee out/host-copy-batch/record-repeat.txt
       - name: Sanitizer run of copy order/copy count/completion
         run: |
           set -euo pipefail

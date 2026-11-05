@@ -5657,14 +5657,27 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         // has seen any GPU write (after which it may rewrite the memory), can reuse the copy: the
         // guest wrote it before submitting. At 4K: only 12% of the copies, and the
         // lookups cost more than they saved (GOW3_STREAM_REUSE=1: on).
-        static const bool reuse = [] {
+        // 0/default: no reuse (baseline); 1: original unordered_map; 2: exact
+        // direct-mapped cache. Keep mode 1 unchanged for independent comparisons.
+        static const int reuse_mode = [] {
             const char* env = std::getenv("GOW3_STREAM_REUSE");
-            return env && env[0] == '1';
+            return env && (env[0] == '1' || env[0] == '2') && env[1] == '\\0'
+                       ? env[0] - '0' : 0;
         }();
         const u64 key = device_addr ^ (u64(size) << 44);
         const u64 tick = scheduler.CurrentTick();
         const u64 epoch = scheduler.GuestWriteEpoch();
-        if (reuse) {
+        if (reuse_mode == 2) {
+            if (!direct_stream_copies) {
+                direct_stream_copies = std::make_unique<DirectStreamCopyCache<8192>>();
+            }
+            if (const auto offset=direct_stream_copies->Find(
+                    key, tick, epoch, stream_buffer.Wraps())) {
+                ++stream_reused;
+                stream_reused_bytes += size;
+                return {&stream_buffer, *offset};
+            }
+        } else if (reuse_mode == 1) {
             if (const auto it = stream_copies.find(key);
                 it != stream_copies.end() && it->second.tick == tick && it->second.epoch == epoch &&
                 it->second.wraps == stream_buffer.Wraps()) {
@@ -5739,7 +5752,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         if (!stream_buffer.mapped_data.empty() &&
             !Gow3Toggle::Disabled(Gow3Toggle::DeferredStreamCopies)) {
             if (const auto offset = stream_buffer.Reserve(size, instance.UniformMinAlignment())) {
-                if (reuse) {
+                if (reuse_mode == 2) {
+                    direct_stream_copies->Put(key,tick,epoch,stream_buffer.Wraps(),*offset);
+                } else if (reuse_mode == 1) {
                     stream_copies[key] = {tick, epoch, stream_buffer.Wraps(), *offset};
                 }
                 SmallGuestCopy({
@@ -5756,7 +5771,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         const auto [data, offset] = stream_buffer.Map(size, instance.UniformMinAlignment());
         memory->CopySparseMemory(device_addr, data, size);
         stream_buffer.Commit();
-        if (reuse) {
+        if (reuse_mode == 2) {
+            direct_stream_copies->Put(key,tick,epoch,stream_buffer.Wraps(),offset);
+        } else if (reuse_mode == 1) {
             stream_copies[key] = {tick, epoch, stream_buffer.Wraps(), offset};
         }
         return {&stream_buffer, offset};

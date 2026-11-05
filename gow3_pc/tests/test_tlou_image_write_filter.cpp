@@ -32,7 +32,7 @@ struct Scene {
     std::vector<u64> image_bases;
     void Setup() {
         for(u64 i=1;i<=2048;++i) {
-            const u64 address=(u64{0x100}<<32)+i*0x1810000ull;
+            const u64 address=(u64{0x20}<<32)+i*0x1810000ull;
             image_bases.push_back(address);
             filter.Register(address);
             table[address>>20].push_back(static_cast<u32>(i));
@@ -64,7 +64,7 @@ static void Verify(Scene& scene) {
     if(!scene.filter.MayContain(scene.image_bases[100]+1)) std::abort();
     u64 neg=0,positives=0;
     for(u64 i=1;i<50000;++i){
-        const u64 q=(u64{0x180}<<32)+i*0x8110ull;
+        const u64 q=(u64{0x30}<<32)+i*0x8110ull;
         if(scene.filter.MayContain(q))++positives;else ++neg;
     }
     std::printf("correctness: 2048 registered bases, zero false negatives, 50000 unrelated probes: %llu false positives, %llu negatives\\n",
@@ -77,7 +77,7 @@ static double Run(Scene& scene,bool filter,unsigned pages){
     for(unsigned i=0;i<N;++i){
         // Addresses deliberately DO NOT match any registered base;
         // varied over one gigabyte just like disjoint guest buffers.
-        const u64 q=(u64{0x180}<<32)+(u64(i*1349u%16384u)<<20)+0x400;
+        const u64 q=(u64{0x30}<<32)+(u64(i*1349u%16384u)<<20)+0x400;
         if(filter){
             // This early miss is the actual short circuit in TextureCache;
             // if a collision occurs, it must fall back to normal lookup.

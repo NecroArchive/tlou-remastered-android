@@ -1,0 +1,89 @@
+name: TLOU experimental full ARM64 GPU compile (no APK)
+
+on:
+  push:
+    branches: [tlou-draw-pipe-counter-gate]
+    paths:
+      - 'gow3_pc/gpu/**'
+      - 'android/bionic/**'
+      - '.github/workflows/tlou-native-validate-only.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tlou-native-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-gpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TLOU_JOBS: '3'
+      TLOU_ANDROID_API: '30'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: ci/environment.yml
+          cache-environment: true
+          init-shell: bash
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .local-deps/android/bionic-prefix
+            .local-deps/android/bionic-src
+            .local-deps/android/bionic-build
+            .local-deps/FEX
+            ~/.cache/ccache
+          key: tlou-bionic-arm64-v2-${{ runner.os }}-${{ hashFiles('android/bionic/build_deps.sh', 'android/bionic/build_fex.sh') }}
+          save-always: true
+      - name: Setup native toolchain
+        shell: bash -el {0}
+        run: |
+          ccache --set-config=max_size=3G
+          bash ci/setup-deps.sh "$CONDA_PREFIX"
+          echo "TLOU_BIONIC_HEADERS=$CONDA_PREFIX" >> "$GITHUB_ENV"
+          echo "TLOU_NDK=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+      - name: Build exact Bionic ARM64 dependencies
+        shell: bash -el {0}
+        run: bash android/bionic/build_deps.sh
+      - name: Build FEX ARM64 guest translator
+        shell: bash -el {0}
+        run: bash android/bionic/build_fex.sh
+      - name: Configure actual GPU renderer against Bionic
+        shell: bash -el {0}
+        run: bash android/bionic/build_gpu.sh --configure-only
+      - name: Compile actual GPU library including modified filters and timer
+        shell: bash -el {0}
+        run: bash android/bionic/build_gpu.sh
+      - name: Link runtime with real libgow3gpu.so
+        shell: bash -el {0}
+        run: bash android/bionic/build_runtime.sh --link-only
+      - name: Verify ELF ARM64 dependency closure
+        shell: bash -el {0}
+        run: python3 android/bionic/verify_bionic.py --ndk "$TLOU_NDK" --root out/android-bionic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tlou-native-only-arm64
+          path: |
+            out/android-bionic/bin/gow3-probe
+            out/android-bionic/lib/*.so
+          if-no-files-found: error
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlou-native-only-errors
+          path: |
+            .local-deps/android/bionic-build/**/*.log
+            out/android-bionic/gpu/CMakeFiles/CMakeConfigureLog.yaml
+            out/android-bionic/gpu/CMakeCache.txt
+          if-no-files-found: ignore

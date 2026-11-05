@@ -30,8 +30,8 @@ jobs:
           set -euo pipefail
           mkdir -p out/perm-memo
           uname -m | tee out/perm-memo/arch.txt
-          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
-            -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-variable -Wno-reorder -Wno-class-memaccess -pthread \
+            -I gow3_pc/tests/native-shim -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
             gow3_pc/tests/test_tlou_compute_perm_memo.cpp \
             -o out/perm-memo/bench
           out/perm-memo/bench | tee out/perm-memo/bench.txt
@@ -39,9 +39,9 @@ jobs:
       - name: Address and UB checks (correctness only)
         run: |
           set -euo pipefail
-          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-variable -Wno-reorder -Wno-class-memaccess -pthread \
             -fsanitize=address,undefined -fno-omit-frame-pointer \
-            -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            -I gow3_pc/tests/native-shim -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
             gow3_pc/tests/test_tlou_compute_perm_memo.cpp \
             -o out/perm-memo/bench-san
           out/perm-memo/bench-san --correctness-only

@@ -5646,7 +5646,10 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
                 buffer_infos.emplace_back(VK_NULL_HANDLE, 0, VK_WHOLE_SIZE);
             } else {
-                const u64 size = memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize());
+                // mapped_size is already the result of ClampRangeSize for this
+                // descriptor in the validation above. Do not query the guest VMA
+                // tree a second time just before binding, on every shader buffer.
+                const u64 size = mapped_size;
                 // gow3 diagnostics (GOW3_TRACE_BIND_RANGE=<lo>:<hi> hex): bindings that overlap
                 // the range, by shader and slot, 5 s statistics.
                 {

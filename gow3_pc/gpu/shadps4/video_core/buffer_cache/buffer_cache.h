@@ -29,6 +29,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/fault_manager.h"
 #include "video_core/buffer_cache/range_set.h"
+#include "video_core/buffer_cache/tlou_direct_stream_copy_cache.h"
 #include "video_core/renderer_vulkan/tlou_write_range_bits.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
@@ -446,6 +447,8 @@ private:
         u64 offset;
     };
     std::unordered_map<u64, StreamCopy> stream_copies;
+    // 2: opt-in direct-mapped alternative to the map; allocated only when enabled.
+    std::unique_ptr<DirectStreamCopyCache<8192>> direct_stream_copies;
     u64 stream_copied = 0, stream_copied_bytes = 0, stream_reused = 0, stream_reused_bytes = 0;
     /// gow3: small read-only ranges bound in several submissions (static mesh data) go to the
     /// arena, where CPU write tracking keeps them, instead of a copy per bind (UseArenaForStatic).

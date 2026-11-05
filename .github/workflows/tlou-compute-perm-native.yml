@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install native shader header prerequisites
-        run: sudo apt-get update -qq && sudo apt-get install -qq -y libboost-dev
+        run: sudo apt-get update -qq && sudo apt-get install -qq -y libboost-dev libspdlog-dev libfmt-dev libvulkan-dev
       - name: Build against actual production specialization constructor
         run: |
           set -euo pipefail

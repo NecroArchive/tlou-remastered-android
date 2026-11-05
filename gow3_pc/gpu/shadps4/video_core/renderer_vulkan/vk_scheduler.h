@@ -22,6 +22,7 @@
 #include <queue>
 
 #include "gow3_toggles.h"
+#include "video_core/renderer_vulkan/tlou_host_copy_batch.h"
 #include "common/assert.h"
 #include "common/interval_set.h"
 #include "common/unique_function.h"
@@ -594,6 +595,7 @@ public:
     /// Returns false (and leaves `func` untouched) when the chunk has no room.
     template <typename Func>
     bool Push(Func&& func) {
+        last_host_batch = nullptr; // a different Vulkan command breaks copy adjacency
         using Command = TypedCommand<std::decay_t<Func>>;
         static_assert(sizeof(Command) <= Capacity, "recorded command is too large");
         const size_t offset = (used + alignof(Command) - 1) & ~(alignof(Command) - 1);
@@ -612,8 +614,34 @@ public:
         return true;
     }
 
+    // Only the current, unpublished chunk can be appended to. On a KickRecording
+    // the chunk is moved away and the next call accesses a different chunk.
+    [[nodiscard]] bool PushHostCopy(const Gow3Copy::Item& item, u64 sequence,
+                                    std::atomic<u64>& completed) {
+        if (last_host_batch && last_host_batch->batch.Append(item, sequence)) {
+            return true;
+        }
+        using Command = HostCopyBatchCommand;
+        const size_t offset = (used + alignof(Command) - 1) & ~(alignof(Command) - 1);
+        if (offset + sizeof(Command) > Capacity) {
+            return false;
+        }
+        auto* command = new (storage + offset) Command(completed, item, sequence);
+        if (last) {
+            last->next = command;
+        } else {
+            first = command;
+        }
+        last = command;
+        last_host_batch = command;
+        used = offset + sizeof(Command);
+        PrefetchAhead();
+        return true;
+    }
+
     /// Raw storage in the chunk for a command's variable-length data; null when full.
     void* Allocate(size_t bytes, size_t align) {
+        last_host_batch = nullptr; // conservative boundary for record-data ownership
         const size_t offset = (used + align - 1) & ~(align - 1);
         if (offset + bytes > Capacity) {
             return nullptr;
@@ -631,6 +659,7 @@ public:
             command = next;
         }
         first = last = nullptr;
+        last_host_batch = nullptr;
         used = 0;
     }
 
@@ -668,10 +697,19 @@ private:
         Func func;
     };
 
+    struct HostCopyBatchCommand final : CommandBase {
+        explicit HostCopyBatchCommand(std::atomic<u64>& done, const Gow3Copy::Item& first,
+                                      u64 sequence)
+            : batch{done, first, sequence} {}
+        void Execute(vk::CommandBuffer) override { batch.Execute(); }
+        Detail::HostCopyBatch<> batch;
+    };
+
     alignas(64) std::byte storage[Capacity];
     size_t used = 0;
     CommandBase* first{};
     CommandBase* last{};
+    HostCopyBatchCommand* last_host_batch{};
 };
 
 class Scheduler {
@@ -843,6 +881,20 @@ public:
     /// guest memory may change once the guest has seen one.
     u64 GuestWriteEpoch() const {
         return guest_write_epoch.load(std::memory_order_relaxed);
+    }
+
+    /// Runs a contiguous batch of guest memory copies through the current
+    /// recording chunk, preserving intervening Vulkan-command boundaries.
+    void RecordHostCopyItem(const Gow3Copy::Item& item) {
+        ASSERT(IsRecordingDeferred());
+        ++record_serial;
+        const u64 sequence = ++host_copies_issued;
+        if (!record_chunk->PushHostCopy(item, sequence, host_copies_done)) {
+            full_chunks.push_back(std::move(record_chunk));
+            record_chunk = AcquireChunk();
+            const bool pushed = record_chunk->PushHostCopy(item, sequence, host_copies_done);
+            ASSERT(pushed);
+        }
     }
 
     /// Runs `copy` on the recording thread in order with the commands (the thread spins for

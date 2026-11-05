@@ -16,6 +16,7 @@
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/recompiler.h"
 #include "shader_recompiler/specialization.h"
+#include "video_core/renderer_vulkan/tlou_compute_perm_memo.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
@@ -59,6 +60,7 @@ struct Program {
     Shader::Info info;
     ModuleList modules{};
     size_t last_used = 0; ///< gow3: permutation of the previous lookup, compared first
+    Detail::ExactComputePermutationMemo<Shader::RuntimeInfo> compute_perm_memo;
     /// gow3: `info` as translated, for draw-preparation workers (they must not read `info`,
     /// whose user data the GPU thread rewrites every draw). Guarded by programs_mutex.
     std::unique_ptr<Shader::Info> info_template;
@@ -78,6 +80,7 @@ struct Program {
                       size_t perm_idx) {
         modules.resize(std::max(modules.size(), perm_idx + 1)); // <-- beware of realloc
         modules[perm_idx] = {module, std::move(spec)};
+        compute_perm_memo.Invalidate();
     }
 };
 

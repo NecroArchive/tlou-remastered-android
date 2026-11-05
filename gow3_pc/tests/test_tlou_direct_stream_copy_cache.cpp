@@ -78,7 +78,7 @@ Measurement Run(Mode mode,unsigned pct,unsigned frames=80){
     for(unsigned frame=0;frame<frames;++frame){
         const u64 tick=frame+1,epoch=frame+1,wraps=frame/25;
         for(unsigned i=0;i<4000;++i){
-            const u64 key=(u64(frame)<<40) + u64(i)<<7 ^ (u64(1+i%6)<<44);
+            const u64 key=((u64(frame) << 40) + (u64(i) << 7)) ^ (u64(1+i%6) << 44);
             bool hit=false;
             if(mode==Mode::Hash)hit=map->Find(key,tick,epoch,wraps).has_value();
             if(mode==Mode::Direct)hit=cache->Find(key,tick,epoch,wraps).has_value();
@@ -90,7 +90,7 @@ Measurement Run(Mode mode,unsigned pct,unsigned frames=80){
             }
         }
         for(unsigned i=0;i<repeated;++i){
-            const u64 key=(u64(frame)<<40) + u64(i)<<7 ^ (u64(1+i%6)<<44);
+            const u64 key=((u64(frame) << 40) + (u64(i) << 7)) ^ (u64(1+i%6) << 44);
             bool hit=false;
             if(mode==Mode::Hash)hit=map->Find(key,tick,epoch,wraps).has_value();
             if(mode==Mode::Direct)hit=cache->Find(key,tick,epoch,wraps).has_value();

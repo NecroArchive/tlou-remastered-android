@@ -14,6 +14,14 @@ on:
       - 'gow3_pc/tests/test_memory_walk_cost.c'
       - 'gow3_pc/tests/test_ring_binding_cursor.cpp'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/ring_binding_cursor.h'
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/gpu_window_bits.h'
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.h'
+      - 'gow3_pc/tests/test_gpu_range_cost.cpp'
+      - 'gow3_pc/tests/extract_gpu_range_test.py'
+      - 'gow3_pc/tests/fixtures/gpu_ranges_add_v030.inc'
+      - 'gow3_pc/tests/test_pending_write_cost.cpp'
+      - 'gow3_pc/tests/fixtures/pending_writes_v030.inc'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/pending_write_filter.h'
       - '.github/workflows/tlou-pm4-cost.yml'
   workflow_dispatch:
 
@@ -21,6 +29,46 @@ permissions:
   contents: read
 
 jobs:
+  gpu-range:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile actual registry methods and compare absolute frame budgets
+        run: |
+          set -euo pipefail
+          mkdir -p out/gpu-range
+          python3 gow3_pc/tests/extract_gpu_range_test.py out/gpu-range
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I out/gpu-range -I gow3_pc/tests gow3_pc/tests/test_gpu_range_cost.cpp \
+            -o out/gpu-range/cost
+          out/gpu-range/cost | tee out/gpu-range/result.txt
+          out/gpu-range/cost | tee out/gpu-range/repeat.txt
+          GOW3_GPU_RANGE_CACHE=0 out/gpu-range/cost --correctness-only
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I out/gpu-range -I gow3_pc/tests gow3_pc/tests/test_gpu_range_cost.cpp \
+            -o out/gpu-range/cost-asan
+          out/gpu-range/cost-asan --correctness-only
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I out/gpu-range -I gow3_pc/tests gow3_pc/tests/test_pending_write_cost.cpp \
+            -o out/gpu-range/pending
+          out/gpu-range/pending | tee out/gpu-range/pending.txt
+          out/gpu-range/pending | tee out/gpu-range/pending-repeat.txt
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I out/gpu-range -I gow3_pc/tests gow3_pc/tests/test_pending_write_cost.cpp \
+            -o out/gpu-range/pending-asan
+          out/gpu-range/pending-asan --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gpu-range-${{ matrix.runner }}
+          path: out/gpu-range/*.txt
+          if-no-files-found: error
   checksum:
     strategy:
       fail-fast: false

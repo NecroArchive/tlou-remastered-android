@@ -42,6 +42,7 @@
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
 #include "video_core/renderer_vulkan/ring_binding_cursor.h"
+#include "video_core/renderer_vulkan/pending_write_filter.h"
 #include "shader_recompiler/backend/spirv/tlou_split_compute.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_threads.h"
@@ -1581,31 +1582,12 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
 }
 
 void Rasterizer::FilterPendingRange(VAddr begin, VAddr end) {
-    const u64 first = begin >> PendingGranuleBits;
-    const u64 last = (end - 1) >> PendingGranuleBits;
-    if (last - first >= PendingFilterBits) {
-        pending_filter.fill(~u64{0});
-        return;
-    }
-    for (u64 granule = first; granule <= last; ++granule) {
-        const u32 bit = u32(granule % PendingFilterBits);
-        pending_filter[bit / 64] |= u64{1} << (bit % 64);
-    }
+    static_assert(PendingFilterBits == std::tuple_size_v<decltype(pending_filter)> * 64);
+    Detail::MarkPendingFilter<PendingGranuleBits>(pending_filter, begin, end);
 }
 
 bool Rasterizer::PendingFilterHit(VAddr begin, VAddr end) const {
-    const u64 first = begin >> PendingGranuleBits;
-    const u64 last = (end - 1) >> PendingGranuleBits;
-    if (last - first >= PendingFilterBits) {
-        return true;
-    }
-    for (u64 granule = first; granule <= last; ++granule) {
-        const u32 bit = u32(granule % PendingFilterBits);
-        if ((pending_filter[bit / 64] >> (bit % 64)) & 1) {
-            return true;
-        }
-    }
-    return false;
+    return Detail::PendingFilterIntersects<PendingGranuleBits>(pending_filter, begin, end);
 }
 
 bool Rasterizer::PendingCopyWriteOverlaps(VAddr address, u64 size) {

@@ -29,6 +29,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/fault_manager.h"
 #include "video_core/buffer_cache/range_set.h"
+#include "video_core/buffer_cache/gpu_window_bits.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
 namespace AmdGpu {
@@ -475,13 +476,7 @@ private:
         if (size) {
             const u64 first = address >> 16;
             const u64 last = std::min<u64>((address + size - 1) >> 16, GpuWindowBits - 1);
-            for (u64 w = first; w <= last; ++w) {
-                auto& word = gpu_window_bits[w >> 6];
-                const u64 bit = 1ull << (w & 63);
-                if (!(word.load(std::memory_order_relaxed) & bit)) {
-                    word.fetch_or(bit, std::memory_order_relaxed);
-                }
-            }
+            Detail::MarkGpuWindowBits(gpu_window_bits.get(), first, last);
         }
         std::unique_lock lock{gpu_ranges_mutex};
         // gow3 20 Oct 2026 (laptop CPUs): a game may dispatch ~1,300 compute jobs a frame,

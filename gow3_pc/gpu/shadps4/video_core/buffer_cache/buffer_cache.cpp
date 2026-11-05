@@ -5661,7 +5661,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         // direct-mapped cache. Keep mode 1 unchanged for independent comparisons.
         static const int reuse_mode = [] {
             const char* env = std::getenv("GOW3_STREAM_REUSE");
-            return env && (env[0] == '1' || env[0] == '2') && env[1] == '\\0'
+            return env && (env[0] == '1' || env[0] == '2') && env[1] == '\0'
                        ? env[0] - '0' : 0;
         }();
         const u64 key = device_addr ^ (u64(size) << 44);

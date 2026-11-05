@@ -1,0 +1,136 @@
+name: TLOU performance native validation (no APK)
+
+on:
+  push:
+    branches: ['perf/pm4-checksum-validation']
+    paths: ['.github/workflows/tlou-perf-native.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tlou-perf-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TLOU_JOBS: '3'
+      TLOU_ANDROID_API: '30'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test clocks, job fiber migration, services and automatic preparation
+        run: |
+          bash android/bionic/test_runtime_contracts.sh
+          python3 -m unittest discover -s android/tests -v
+          python3 -m pip install unicorn==2.1.4
+          python3 gow3_pc/tests/test_srt_arm64.py -v
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: ci/environment.yml
+          cache-environment: true
+          init-shell: bash
+      - name: Restore Bionic dependency/FEX source and native compiler cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .local-deps/android/bionic-prefix
+            .local-deps/android/bionic-src
+            .local-deps/android/bionic-build
+            .local-deps/FEX
+            ~/.cache/ccache
+          key: tlou-bionic-arm64-v2-${{ runner.os }}-${{ hashFiles('android/bionic/build_deps.sh', 'android/bionic/build_fex.sh') }}
+          save-always: true
+      # Ccache is incremental across source-fix commits, unlike the pinned dependency archive.
+      - name: Restore incremental ARM64 native object cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: tlou-arm64-ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            tlou-arm64-ccache-${{ runner.os }}-
+      - name: Report compiler cache
+        shell: bash -el {0}
+        run: |
+          command -v ccache
+          ccache --set-config=max_size=3G
+          ccache -s
+      - name: Cross-compile host utilities
+        shell: bash -el {0}
+        run: |
+          bash ci/setup-deps.sh "$CONDA_PREFIX"
+          echo "TLOU_BIONIC_HEADERS=$CONDA_PREFIX" >> "$GITHUB_ENV"
+          echo "TLOU_NDK=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+      - name: Build real Bionic target dependencies
+        shell: bash -el {0}
+        run: bash android/bionic/build_deps.sh
+      - name: Build actual TLOU FEX ARM64 native translator
+        shell: bash -el {0}
+        run: bash android/bionic/build_fex.sh
+      - name: Configure TLOU-specific native Vulkan GPU
+        shell: bash -el {0}
+        run: bash android/bionic/build_gpu.sh --configure-only
+      - name: Compile TLOU Vulkan GPU and HLE
+        shell: bash -el {0}
+        run: bash android/bionic/build_gpu.sh
+      - name: Link real TLOU Bionic runtime and AHB present
+        shell: bash -el {0}
+        run: bash android/bionic/build_runtime.sh --link-only
+      - name: Restore Python and Rust compiler caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .local-deps/android/bionic-src/python-3.13.7
+            .local-deps/android/bionic-build/python-host-isolated-v1
+            .local-deps/android/bionic-build/python-android-isolated-v1
+            out/android-bionic/python
+            out/android-bionic/orbis-cargo
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tlou-install-tools-v1-${{ hashFiles('android/bionic/build_python.sh', 'android/bionic/build_pkg.sh') }}
+      - name: Build on-device Bionic Python and PKG installer
+        shell: bash -el {0}
+        run: |
+          bash android/bionic/build_python.sh
+          bash android/bionic/build_pkg.sh
+      - name: Verify ARM64 executable and native symbols
+        shell: bash -el {0}
+        run: |
+          python3 android/bionic/verify_bionic.py --ndk "$TLOU_NDK" --root out/android-bionic
+      - name: Publish built native binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-performance-native-arm64
+          path: |
+            out/android-bionic/bin/gow3-probe
+            out/android-bionic/lib/*.so
+          if-no-files-found: error
+      - name: Save incremental native compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: tlou-arm64-ccache-${{ runner.os }}-${{ github.sha }}
+      - name: Save native failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-performance-native-diagnostics
+          path: |
+            .local-deps/android/bionic-build/**/*.log
+            .local-deps/android/bionic-build/ffmpeg-configure.log
+            out/android-bionic/gpu/CMakeFiles/CMakeConfigureLog.yaml
+            out/android-bionic/gpu/CMakeCache.txt
+            out/android-bionic/fex/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore

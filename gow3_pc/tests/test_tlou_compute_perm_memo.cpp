@@ -10,8 +10,12 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <vector>
 #include <cstdint>
+
+void assert_fail_impl() { std::abort(); }
+[[noreturn]] void unreachable_impl() { std::abort(); }
 
 namespace Shader::Gcn {
 std::optional<FetchShaderData> ParseFetchShader(const Shader::Info&) {

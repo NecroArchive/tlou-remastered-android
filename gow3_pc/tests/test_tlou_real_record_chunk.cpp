@@ -11,6 +11,7 @@
 #include <memory>
 #include <vector>
 
+using Vulkan::RecordChunk;
 using Clock=std::chrono::steady_clock;
 using u64=std::uint64_t;
 

@@ -725,7 +725,21 @@ void BufferCache::RunGuestCopy(const Gow3Copy::Item& item) {
 // idle most of the time); PoolSmallCopies (toggle 524288) batches them for the copy threads.
 void BufferCache::SmallGuestCopy(const Gow3Copy::Item& item) {
     if (scheduler.IsRecordingDeferred() && !Gow3Toggle::Disabled(Gow3Toggle::PoolSmallCopies)) {
-        scheduler.RecordHostCopy([item] { item.run(item); });
+        // Experimental: avoid a virtual record command and a release-store
+        // for every stream buffer. Only consecutive host copies in the same
+        // unpublished Vulkan command chunk can be grouped. On any other
+        // command, record-data allocation, or submission the group ends.
+        // The guest's source bytes are copied at the SAME recorder position;
+        // no shader/readback coherency semantics are relaxed.
+        static const bool batch = [] {
+            const char* env = std::getenv("GOW3_TLOU_HOST_COPY_BATCH");
+            return env && env[0] == '1' && env[1] == 0;
+        }();
+        if (batch) {
+            scheduler.RecordHostCopyItem(item);
+        } else {
+            scheduler.RecordHostCopy([item] { item.run(item); });
+        }
         return;
     }
     Gow3Copy::QueueCopy(item);

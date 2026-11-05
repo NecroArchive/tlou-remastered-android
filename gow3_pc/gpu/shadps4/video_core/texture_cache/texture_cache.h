@@ -11,6 +11,7 @@
 #include <array>
 #include <atomic>
 #include "video_core/texture_cache/readback_queue.h"
+#include "video_core/texture_cache/tlou_image_write_filter.h"
 #include "video_core/texture_cache/readback_sources.h"
 #include <chrono>
 #include "gow3_toggles.h"
@@ -588,6 +589,9 @@ private:
     ReadbackSourceStats readback_sources;
     void RetireReadbacks();
     PageTable page_table;
+    // Only used as an opt-in negative filter for exact guest BASE address
+    // matches. Never use it for overlap/readback queries.
+    Detail::ImageBaseWriteFilter image_base_write_filter;
     std::mutex mutex;
     /// gow3: images with the same guest address (guarded by `mutex`). `backing` holds the
     /// complete contents; `writer` is a newer write not yet copied into it.

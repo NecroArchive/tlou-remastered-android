@@ -12,11 +12,11 @@ namespace Vulkan::Detail {
 // A 4,096-bit modulo-address filter; it only returns "maybe" and must never
 // introduce a false negative. The caller still tests the exact intervals.
 // A range is already expressed as inclusive 64-KiB granule indices.
-template<std::size_t Bits>
-void SetPendingRangeBits(std::array<std::uint64_t, Bits / 64>& bits,
+template<std::size_t Words>
+void SetPendingRangeBits(std::array<std::uint64_t, Words>& bits,
                          std::uint64_t first, std::uint64_t last) noexcept {
-    static_assert(Bits >= 64 && (Bits & (Bits - 1)) == 0);
-    static_assert(Bits % 64 == 0);
+    constexpr std::size_t Bits = Words * 64;
+    static_assert(Words != 0 && (Bits & (Bits - 1)) == 0);
     if (last - first >= Bits) {
         bits.fill(~std::uint64_t{0});
         return;
@@ -33,11 +33,11 @@ void SetPendingRangeBits(std::array<std::uint64_t, Bits / 64>& bits,
     }
 }
 
-template<std::size_t Bits>
-bool PendingRangeBitsMayHit(const std::array<std::uint64_t, Bits / 64>& bits,
+template<std::size_t Words>
+bool PendingRangeBitsMayHit(const std::array<std::uint64_t, Words>& bits,
                             std::uint64_t first, std::uint64_t last) noexcept {
-    static_assert(Bits >= 64 && (Bits & (Bits - 1)) == 0);
-    static_assert(Bits % 64 == 0);
+    constexpr std::size_t Bits = Words * 64;
+    static_assert(Words != 0 && (Bits & (Bits - 1)) == 0);
     if (last - first >= Bits) {
         return true;
     }

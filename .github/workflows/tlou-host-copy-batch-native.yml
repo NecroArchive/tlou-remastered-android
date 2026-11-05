@@ -62,7 +62,7 @@ jobs:
           namespace Gow3Toggle { enum Flag { RecordPrefetch }; inline bool Disabled(Flag){return true;} }
           #define ASSERT(x) assert(x)
           """
-          Path('out/host-copy-batch/tlou_record_chunk_extracted.h').write_text(prefix+chunk)
+          Path('out/host-copy-batch/tlou_record_chunk_extracted.h').write_text(prefix+'\nnamespace Vulkan {\n'+chunk+'\n} // namespace Vulkan\n')
           print('Extracted original RecordChunk code, replacing only Vulkan handle with int')
           PY
       - name: Benchmark actual recorder fixed-block scheduling and callback completion

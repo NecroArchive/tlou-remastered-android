@@ -637,7 +637,41 @@ size_t TextureCache::DebugInvalidateAll() {
 
 void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
     // Partial buffer writes still need the image's untouched bytes in guest memory.
+    // IMPORTANT: never let the image registry prefilter bypass this readback!
     ResolveReadbacks(address, max_size, true, ReadbackSource::GpuPartialWrite);
+    // The invalidation loop below changes only images whose guest_address
+    // equals 'address', even though the page-table scan finds overlaps.
+    // A negative exact-base registry test therefore skips ONLY that scan.
+    // The registry is monotonic: eviction and address reuse can create false
+    // positives, never false negatives. GOW3_TLOU_IMAGE_WRITE_PREFILTER=1.
+    static const bool use_image_filter = [] {
+        const char* env = std::getenv("GOW3_TLOU_IMAGE_WRITE_PREFILTER");
+        return env && env[0] == '1' && env[1] == 0;
+    }();
+    const bool skip_scan = use_image_filter && !image_base_write_filter.MayContain(address);
+    static const bool report_filter = [] {
+        const char* env = std::getenv("GOW3_TLOU_IMAGE_WRITE_FILTER_STATS");
+        return env && env[0] == '1' && env[1] == 0;
+    }();
+    if (report_filter) {
+        static std::atomic<u64> checks{0}, misses{0};
+        static std::atomic<s64> last_report{0};
+        if (skip_scan) misses.fetch_add(1, std::memory_order_relaxed);
+        const u64 total = checks.fetch_add(1, std::memory_order_relaxed) + 1;
+        if ((total & 8191) == 0) {
+            const s64 now = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            s64 old = last_report.load(std::memory_order_relaxed);
+            if (now - old >= 5 && last_report.compare_exchange_strong(old, now)) {
+                const u64 count = checks.exchange(0, std::memory_order_relaxed);
+                const u64 rejected = misses.exchange(0, std::memory_order_relaxed);
+                std::printf("TLOU image write prefilter (interval): calls=%llu negative=%llu scanned=%llu\\n",
+                    (unsigned long long)count, (unsigned long long)rejected,
+                    (unsigned long long)(count-rejected));
+            }
+        }
+    }
+    if (skip_scan) return;
     std::scoped_lock lock{mutex};
     ForEachImageInRegion(address, max_size, [&](ImageId image_id, Image& image) {
         // Only consider images that match base address.
@@ -1585,6 +1619,9 @@ vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sampler,
 void TextureCache::RegisterImage(ImageId image_id) {
     Gow3Stats::images_registered.fetch_add(1, std::memory_order_relaxed);
     Image& image = slot_images[image_id];
+    // Before publishing this image in the page table, remember its base
+    // permanently. A filtered write still performs ResolveReadbacks above.
+    image_base_write_filter.Register(image.info.guest_address);
     ASSERT_MSG(False(image.flags & ImageFlagBits::Registered),
                "Trying to register an already registered image");
     image.flags |= ImageFlagBits::Registered;

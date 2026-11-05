@@ -1,0 +1,47 @@
+name: TLOU host-copy batching native ARM64 benchmark (no APK)
+
+on:
+  push:
+    branches: [tlou-host-copy-batch]
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_host_copy_batch.h'
+      - 'gow3_pc/tests/test_tlou_host_copy_batch.cpp'
+      - '.github/workflows/tlou-host-copy-batch-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  copy-batch:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile actual copy-batch helper and measure callback/atomic cost
+        run: |
+          set -euo pipefail
+          mkdir -p out/host-copy-batch
+          uname -m | tee out/host-copy-batch/arch.txt
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_host_copy_batch.cpp -o out/host-copy-batch/test
+          out/host-copy-batch/test | tee out/host-copy-batch/bench.txt
+          out/host-copy-batch/test | tee out/host-copy-batch/bench-repeat.txt
+      - name: Sanitizer run of copy order/copy count/completion
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_host_copy_batch.cpp -o out/host-copy-batch/test-san
+          out/host-copy-batch/test-san --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: copy-batch-${{ matrix.runner }}
+          path: out/host-copy-batch/*.txt
+          if-no-files-found: error

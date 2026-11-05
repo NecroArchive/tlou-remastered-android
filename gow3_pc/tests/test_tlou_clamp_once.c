@@ -35,8 +35,10 @@ static void Verify(void) {
     for(unsigned i=0;i<1024;++i) {
         const uintptr_t addr=vmas[i].start+256;
         assert(runtime_memory_clamp(addr,4096)==4096);
-        assert(runtime_memory_clamp(addr,0xFFFE0)==0xFFFE0);
         const uint64_t max_available=(1024ull-i)*0x100000ull-256;
+        const uint64_t near_end=0xFFFE0ull;
+        assert(runtime_memory_clamp(addr,near_end)==
+               (near_end<max_available?near_end:max_available));
         const uint64_t requested=0x1FFFFFull;
         assert(runtime_memory_clamp(addr,requested)==(requested<max_available?requested:max_available));
     }

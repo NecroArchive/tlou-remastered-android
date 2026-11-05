@@ -21,6 +21,9 @@ namespace Shader::Gcn {
 std::optional<FetchShaderData> ParseFetchShader(const Shader::Info&) {
     return std::nullopt; // compute shaders have no fetch shader
 }
+AmdGpu::Buffer VertexAttribute::GetSharp(const Shader::Info&) const noexcept {
+    return AmdGpu::Buffer::Null(); // unreachable for any compute shader
+}
 }
 using u32=std::uint32_t;
 using u64=std::uint64_t;

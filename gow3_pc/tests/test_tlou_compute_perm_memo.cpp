@@ -31,6 +31,7 @@ static Shader::Info MakeInfo() {
     info.hw_stage=Shader::HwStage::Compute;
     info.has_fetch_shader=false;
     info.pgm_hash=0x22e6e19e;
+    info.pgm_base=0;
     info.flattened_ud_buf.resize(64);
     for(u32 i=0;i<8;++i) {
         Shader::BufferResource b{};

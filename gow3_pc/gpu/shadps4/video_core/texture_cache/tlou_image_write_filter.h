@@ -2,6 +2,8 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
+#include <utility>
 #include <atomic>
 #include <cstdint>
 

@@ -1,0 +1,53 @@
+name: TLOU stream-copy exact-key cache: CPU-only validation
+
+on:
+  push:
+    branches: [tlou-stream-copy-directcache]
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/tlou_direct_stream_copy_cache.h'
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.h'
+      - 'gow3_pc/tests/test_tlou_direct_stream_copy_cache.cpp'
+      - '.github/workflows/tlou-direct-stream-cost.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04,ubuntu-24.04-arm]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and benchmark standalone production cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/stream-cache
+          uname -m | tee out/stream-cache/arch.txt
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_direct_stream_copy_cache.cpp \
+            -o out/stream-cache/test-cache
+          out/stream-cache/test-cache | tee out/stream-cache/cost.txt
+          out/stream-cache/test-cache | tee out/stream-cache/repeat.txt
+      - name: Memory and UB safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_direct_stream_copy_cache.cpp \
+            -o out/stream-cache/test-cache-asan
+          out/stream-cache/test-cache-asan --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stream-cache-cpu-cost-${{ matrix.runner }}
+          path: out/stream-cache/*.txt
+          if-no-files-found: error

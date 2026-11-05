@@ -614,19 +614,34 @@ public:
         return true;
     }
 
-    // Only the current, unpublished chunk can be appended to. On a KickRecording
-    // the chunk is moved away and the next call accesses a different chunk.
+    // Only the current unpublished chunk can receive new copy items.
+    // Command headers and items are placed directly in RecordChunk::storage:
+    // 1 item costs only sizeof(Item), not a reserved 16-item array.
     [[nodiscard]] bool PushHostCopy(const Gow3Copy::Item& item, u64 sequence,
                                     std::atomic<u64>& completed) {
-        if (last_host_batch && last_host_batch->batch.Append(item, sequence)) {
+        static_assert(std::is_trivially_destructible_v<Gow3Copy::Item>);
+        if (last_host_batch) {
+            const size_t at = (used + alignof(Gow3Copy::Item) - 1) &
+                              ~(alignof(Gow3Copy::Item) - 1);
+            if (at + sizeof(Gow3Copy::Item) > Capacity) {
+                return false;
+            }
+            auto* next = new (storage + at) Gow3Copy::Item(item);
+            const bool appended = last_host_batch->batch.Append(next, sequence);
+            ASSERT(appended);
+            used = at + sizeof(Gow3Copy::Item);
+            PrefetchAhead();
             return true;
         }
         using Command = HostCopyBatchCommand;
         const size_t offset = (used + alignof(Command) - 1) & ~(alignof(Command) - 1);
-        if (offset + sizeof(Command) > Capacity) {
+        const size_t item_offset = (offset + sizeof(Command) + alignof(Gow3Copy::Item) - 1) &
+                                   ~(alignof(Gow3Copy::Item) - 1);
+        if (item_offset + sizeof(Gow3Copy::Item) > Capacity) {
             return false;
         }
-        auto* command = new (storage + offset) Command(completed, item, sequence);
+        auto* first_item = new (storage + item_offset) Gow3Copy::Item(item);
+        auto* command = new (storage + offset) Command(completed, first_item, sequence);
         if (last) {
             last->next = command;
         } else {
@@ -634,7 +649,7 @@ public:
         }
         last = command;
         last_host_batch = command;
-        used = offset + sizeof(Command);
+        used = item_offset + sizeof(Gow3Copy::Item);
         PrefetchAhead();
         return true;
     }
@@ -698,11 +713,11 @@ private:
     };
 
     struct HostCopyBatchCommand final : CommandBase {
-        explicit HostCopyBatchCommand(std::atomic<u64>& done, const Gow3Copy::Item& first,
+        explicit HostCopyBatchCommand(std::atomic<u64>& done, Gow3Copy::Item* first,
                                       u64 sequence)
             : batch{done, first, sequence} {}
         void Execute(vk::CommandBuffer) override { batch.Execute(); }
-        Detail::HostCopyBatch<> batch;
+        Detail::HostCopyBatch batch;
     };
 
     alignas(64) std::byte storage[Capacity];

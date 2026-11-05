@@ -1,0 +1,48 @@
+name: TLOU real VMA clamp hot-path cost on native ARM64
+
+on:
+  push:
+    branches: [tlou-buffer-bind-clamp-once]
+    paths:
+      - 'gow3_pc/src/runtime_memory.c'
+      - 'gow3_pc/tests/test_tlou_clamp_once.c'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
+      - '.github/workflows/tlou-clamp-cost.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-vma-clamp:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and benchmark the actual C runtime memory clamp
+        run: |
+          set -euo pipefail
+          mkdir -p out/clamp-cost
+          uname -m | tee out/clamp-cost/arch.txt
+          gcc -std=gnu11 -O2 -pthread -ffunction-sections -fdata-sections \
+            -Wl,--gc-sections \
+            gow3_pc/tests/test_tlou_clamp_once.c -o out/clamp-cost/test
+          out/clamp-cost/test | tee out/clamp-cost/benchmark.txt
+          out/clamp-cost/test | tee out/clamp-cost/repeat.txt
+      - name: Sanitized VMA range semantics
+        run: |
+          set -euo pipefail
+          gcc -std=gnu11 -O1 -g -pthread -ffunction-sections -fdata-sections \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Wl,--gc-sections \
+            gow3_pc/tests/test_tlou_clamp_once.c -o out/clamp-cost/test-san
+          out/clamp-cost/test-san --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-clamp-cost-${{ matrix.runner }}
+          path: out/clamp-cost/*.txt
+          if-no-files-found: error

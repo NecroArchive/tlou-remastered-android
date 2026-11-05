@@ -8,6 +8,10 @@ on:
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_draw_pipe_busy_sample.h'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_draw_pipe.h'
       - 'gow3_pc/tests/test_draw_pipe_busy_sample.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_write_range_bits.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.h'
+      - 'gow3_pc/tests/test_tlou_write_range_bits.cpp'
       - '.github/workflows/tlou-draw-pipe-stats.yml'
   workflow_dispatch:
 
@@ -36,6 +40,12 @@ jobs:
             -o out/draw-pipe/draw-pipe-test
           out/draw-pipe/draw-pipe-test | tee out/draw-pipe/cost.txt
           out/draw-pipe/draw-pipe-test | tee out/draw-pipe/repeat.txt
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_write_range_bits.cpp \
+            -o out/draw-pipe/range-test
+          out/draw-pipe/range-test | tee out/draw-pipe/range-cost.txt
+          out/draw-pipe/range-test | tee out/draw-pipe/range-repeat.txt
       - name: Sanitized correctness
         run: |
           set -euo pipefail
@@ -45,6 +55,12 @@ jobs:
             gow3_pc/tests/test_draw_pipe_busy_sample.cpp \
             -o out/draw-pipe/draw-pipe-asan
           out/draw-pipe/draw-pipe-asan --correctness-only
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_write_range_bits.cpp \
+            -o out/draw-pipe/range-asan
+          out/draw-pipe/range-asan --correctness-only
       - uses: actions/upload-artifact@v4
         with:
           name: draw-pipe-cost-${{ matrix.runner }}

@@ -4,6 +4,8 @@
 // creating physical mappings. Other sections are discarded at link time.
 #define _GNU_SOURCE
 #include "../src/runtime_memory.c"
+// Link stub only for a discarded mmap syscall in sanitizer-instrumented builds.
+int32_t *runtime_errno(void) { static __thread int32_t err; return &err; }
 
 #include <assert.h>
 #include <stdio.h>

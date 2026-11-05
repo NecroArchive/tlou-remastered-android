@@ -1,38 +1,31 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include "gow3_copy.h"
 
-// A contiguous sequence of guest-to-host copies within ONE deferred Vulkan
-// command chunk. No Vulkan command, data reservation, flush, guest-visible
-// fence or scheduler operation may be interleaved in a batch.
+// Does NOT allocate a fixed 16-slot array per batch. Instead it owns a
+// pointer to contiguous Gow3Copy::Item records in the CURRENT unpublished
+// Vulkan RecordChunk. On another command or a chunk flush no more records
+// are appended. Items remain live until this command executes.
 //
-// host_copies_issued still increments for each copy. Publishing last_sequence
-// *after all copies* is conservative: waiters for intermediate sequences wait
-// longer, never see guest bytes early. No guest-memory snapshots are reused.
+// host_copies_issued still increments for every individual copy. The final
+// release-store publishes last_sequence only after ALL the batch's copies
+// have run, which is conservative for waiters on intermediate sequences.
 namespace Vulkan::Detail {
-template<std::size_t Capacity = 16>
 class HostCopyBatch {
 public:
-    HostCopyBatch(std::atomic<std::uint64_t>& done, const Gow3Copy::Item& first,
+    HostCopyBatch(std::atomic<std::uint64_t>& done, Gow3Copy::Item* first,
                   std::uint64_t sequence) noexcept
-        : completed{&done}, last_sequence{sequence}, used{1} {
-        copies[0] = first;
-    }
+        : copies{first}, completed{&done}, last_sequence{sequence}, used{1} {}
 
-    [[nodiscard]] bool Append(const Gow3Copy::Item& item, std::uint64_t sequence) noexcept {
-        if (used == Capacity) {
+    [[nodiscard]] bool Append(Gow3Copy::Item* next, std::uint64_t sequence) noexcept {
+        if (next != copies + used || sequence <= last_sequence) {
             return false;
         }
-        // Sequences are issued in submission order on the recording caller.
-        if (sequence <= last_sequence) {
-            return false;
-        }
-        copies[used++] = item;
+        ++used;
         last_sequence = sequence;
         return true;
     }
@@ -49,7 +42,7 @@ public:
     [[nodiscard]] std::uint64_t LastSequence() const noexcept { return last_sequence; }
 
 private:
-    std::array<Gow3Copy::Item, Capacity> copies{};
+    Gow3Copy::Item* copies;
     std::atomic<std::uint64_t>* completed;
     std::uint64_t last_sequence;
     std::size_t used;

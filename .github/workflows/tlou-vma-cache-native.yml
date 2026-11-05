@@ -1,0 +1,45 @@
+name: TLOU experimental VMA cache native ARM64 measured costs
+
+on:
+  push:
+    branches: [tlou-vma-directcache]
+    paths:
+      - 'gow3_pc/src/runtime_memory.c'
+      - 'gow3_pc/tests/test_tlou_vma_direct_cache.c'
+      - '.github/workflows/tlou-vma-cache-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-vma-cache:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Benchmark real runtime_memory_clamp and copy_backing under actual cache lookup
+        run: |
+          set -euo pipefail
+          mkdir -p out/vma-cost
+          uname -m | tee out/vma-cost/arch.txt
+          gcc -std=gnu11 -O2 -pthread -ffunction-sections -fdata-sections -Wl,--gc-sections \
+            gow3_pc/tests/test_tlou_vma_direct_cache.c -o out/vma-cost/test
+          out/vma-cost/test | tee out/vma-cost/benchmark.txt
+          out/vma-cost/test | tee out/vma-cost/benchmark-repeat.txt
+      - name: Sanitized cache invalidation and guest mapping correctness
+        run: |
+          set -euo pipefail
+          gcc -std=gnu11 -O1 -g -pthread -ffunction-sections -fdata-sections \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -Wl,--gc-sections \
+            gow3_pc/tests/test_tlou_vma_direct_cache.c -o out/vma-cost/test-san
+          out/vma-cost/test-san --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-tlou-vma-cost-${{ matrix.runner }}
+          path: out/vma-cost/*.txt
+          if-no-files-found: error

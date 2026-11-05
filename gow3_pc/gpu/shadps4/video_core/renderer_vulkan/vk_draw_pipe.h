@@ -24,6 +24,7 @@
 #include <thread>
 #include "common/arch.h"
 #include "common/rdtsc.h"
+#include "video_core/renderer_vulkan/vk_draw_pipe_busy_sample.h"
 
 #include "common/assert.h"
 #include "common/thread.h"
@@ -174,6 +175,9 @@ private:
 #endif
         on_stage_b = true;
         stage_b_tid.store(static_cast<u32>(gettid()), std::memory_order_release);
+        // The optional pipe report is the only reader of busy_cycles. Cache its
+        // status once instead of serializing two CPU-counter reads per packet.
+        const bool sample_busy = std::getenv("GOW3_FRAME_STATS") != nullptr;
         u64 at = 0;
         while (true) {
             // Packets follow each other within microseconds while a frame is decoded: spin,
@@ -212,7 +216,7 @@ private:
                 consumed.store(at, std::memory_order_release);
                 continue;
             }
-            const u64 start = Common::FencedRDTSC();
+            const u64 start = Detail::BeginDrawPipeBusySample(sample_busy);
             // gow3 21 Oct 2026, TEST KNOB (default off): GOW3_TEST_PIPE_DELAY_NS=<n> makes stage B
             // busy-wait n ns before each packet, like a slower or loaded CPU (laptops). Used to
             // reproduce the multithreaded late-constants race: stage A walks a draw's tables
@@ -229,7 +233,7 @@ private:
                 }
             }
             handler(context, reinterpret_cast<const u8*>(header + 1), header->payload);
-            busy_cycles.fetch_add(Common::FencedRDTSC() - start, std::memory_order_relaxed);
+            Detail::EndDrawPipeBusySample(sample_busy, start, busy_cycles);
             at += header->size;
             consumed.store(at, std::memory_order_release);
         }

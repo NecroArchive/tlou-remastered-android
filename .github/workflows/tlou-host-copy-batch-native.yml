@@ -7,6 +7,9 @@ on:
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_host_copy_batch.h'
       - 'gow3_pc/tests/test_tlou_host_copy_batch.cpp'
       - 'gow3_pc/tests/test_tlou_real_record_chunk.cpp'
+      - 'gow3_pc/tests/test_tlou_threaded_record_chunk.cpp'
+      - 'gow3_pc/tests/extract_host_copy_chunks.py'
+      - 'gow3_pc/tests/fixtures/tlou_record_chunk_v030.inc'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.h'
       - '.github/workflows/tlou-host-copy-batch-native.yml'
   workflow_dispatch:
@@ -81,6 +84,20 @@ jobs:
             -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
             gow3_pc/tests/test_tlou_host_copy_batch.cpp -o out/host-copy-batch/test-san
           out/host-copy-batch/test-san --correctness-only
+      - name: Compare original and batched chunks across physical CPU cores
+        run: |
+          set -euo pipefail
+          python3 gow3_pc/tests/extract_host_copy_chunks.py out/host-copy-batch
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I out/host-copy-batch -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_threaded_record_chunk.cpp -o out/host-copy-batch/threaded
+          out/host-copy-batch/threaded | tee out/host-copy-batch/threaded.txt
+          out/host-copy-batch/threaded | tee out/host-copy-batch/threaded-repeat.txt
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I out/host-copy-batch -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_threaded_record_chunk.cpp -o out/host-copy-batch/threaded-asan
+          out/host-copy-batch/threaded-asan --correctness-only
       - uses: actions/upload-artifact@v4
         with:
           name: copy-batch-${{ matrix.runner }}

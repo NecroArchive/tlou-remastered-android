@@ -74,7 +74,7 @@ static void Benchmark() {
             if(r) {old[r-1]=a;next[r-1]=b;}
         }
         std::sort(old.begin(),old.end());std::sort(next.begin(),next.end());
-        std::printf("buffers=%u ring=%zu old_ns/packet=%.2f new_ns/packet=%.2f reduction=%.1f%%\n",count,bindings.size(),old[3],next[3],100*(old[3]-next[3])/old[3]);
+        std::printf("buffers=%u ring=%zu old_ns/stage=%.2f new_ns/stage=%.2f saved_ns/stage=%.2f reduction=%.1f%%\n",count,bindings.size(),old[3],next[3],old[3]-next[3],100*(old[3]-next[3])/old[3]);
     }
 }
 int main(int argc,char**argv) {

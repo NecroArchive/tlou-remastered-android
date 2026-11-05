@@ -84,6 +84,12 @@ static void correctness(void) {
         assert(!memcmp(a,b,MAX_COPY+32));
         runtime_memory_copy_backing(at,b+16,size);
         assert(!memcmp(a,b,MAX_COPY+32));
+        memset(a,0xa5,MAX_COPY+32); memset(b,0xa5,MAX_COPY+32);
+        cold_cache(); uint64_t clipped=reference_clamp(at,size);
+        if(clipped) reference_copy(at,a+16,clipped);
+        cold_cache(); assert(runtime_memory_clamp(at,size)==clipped);
+        if(clipped) runtime_memory_copy_backing(at,b+16,clipped);
+        assert(!memcmp(a,b,MAX_COPY+32));
         if(i%127==0) {
             /* Real write-lock generation invalidation, including alias and reservation changes. */
             size_t index=random_value()%vma_count;
@@ -125,23 +131,36 @@ static __attribute__((noinline)) double run_copy(Copy fn,unsigned workload) {
     }
     uint64_t end=now_ns(); result_sink=sum; return (double)(end-begin)/100000;
 }
+/* CollectRingBindings clamps before CopySparseMemory: the clamp warms the same
+ * thread's backing cache. Do not add independently cold clamp/copy savings. */
+static __attribute__((noinline)) double run_clamp_then_copy(Clamp clamp,Copy copy,unsigned workload) {
+    unsigned char out[4*16384]; uint64_t sum=0; cold_cache();
+    uint64_t begin=now_ns();
+    for(unsigned j=0;j<100000;++j) {
+        size_t i=workload==0?1:((j*17)%512);
+        uintptr_t at=vmas[i].start+64;
+        uint64_t size=clamp(at,workload==2?PAGE*3:128);
+        if(size) { copy(at,out,size); sum+=out[0]; }
+    }
+    uint64_t end=now_ns(); result_sink=sum; return (double)(end-begin)/100000;
+}
 static void benchmark(void) {
     const char *names[]={"cache-hot-128B","rotating-512-128B","cross-regions-48KiB"};
-    for(unsigned kind=0;kind<2;++kind) for(unsigned w=0;w<3;++w) {
+    for(unsigned kind=0;kind<3;++kind) for(unsigned w=0;w<3;++w) {
         double old[9],next[9];
         for(unsigned repeat=0;repeat<10;++repeat) {
             double a,b;
             if(repeat%2) {
-                b=kind?run_copy(runtime_memory_copy_backing,w):run_clamp(runtime_memory_clamp,w);
-                a=kind?run_copy(reference_copy,w):run_clamp(reference_clamp,w);
+                b=kind==2?run_clamp_then_copy(runtime_memory_clamp,runtime_memory_copy_backing,w):kind?run_copy(runtime_memory_copy_backing,w):run_clamp(runtime_memory_clamp,w);
+                a=kind==2?run_clamp_then_copy(reference_clamp,reference_copy,w):kind?run_copy(reference_copy,w):run_clamp(reference_clamp,w);
             } else {
-                a=kind?run_copy(reference_copy,w):run_clamp(reference_clamp,w);
-                b=kind?run_copy(runtime_memory_copy_backing,w):run_clamp(runtime_memory_clamp,w);
+                a=kind==2?run_clamp_then_copy(reference_clamp,reference_copy,w):kind?run_copy(reference_copy,w):run_clamp(reference_clamp,w);
+                b=kind==2?run_clamp_then_copy(runtime_memory_clamp,runtime_memory_copy_backing,w):kind?run_copy(runtime_memory_copy_backing,w):run_clamp(runtime_memory_clamp,w);
             }
             if(repeat) { old[repeat-1]=a; next[repeat-1]=b; }
         }
         qsort(old,9,sizeof(double),compare_double); qsort(next,9,sizeof(double),compare_double);
-        printf("%s %-23s old_ns=%.2f new_ns=%.2f reduction=%.1f%%\n",kind?"copy":"clamp",names[w],old[4],next[4],100*(old[4]-next[4])/old[4]);
+        printf("%s %-23s old_ns=%.2f new_ns=%.2f saved_ns/call=%.2f reduction=%.1f%%\n",kind==2?"clamp+copy":kind?"copy":"clamp",names[w],old[4],next[4],old[4]-next[4],100*(old[4]-next[4])/old[4]);
     }
 }
 static void count_work(void) {
@@ -153,7 +172,14 @@ static void count_work(void) {
     cold_cache(); lookup_count=0; reference_copy(vmas[1].start,out,3*PAGE); uint64_t old=lookup_count;
     cold_cache(); lookup_count=0; runtime_memory_copy_backing(vmas[1].start,out,3*PAGE);
     assert(old==4 && lookup_count==1);
+    cold_cache(); lookup_count=0;
+    reference_clamp(vmas[1].start,128); reference_copy(vmas[1].start,out,128);
+    assert(lookup_count==2);
+    cold_cache(); lookup_count=0;
+    runtime_memory_clamp(vmas[1].start,128); runtime_memory_copy_backing(vmas[1].start,out,128);
+    assert(lookup_count==1);
     puts("Lookup work gate passed: clamp miss 2->1, hot 0->0, three-region copy 4->1 binary searches");
+    puts("Sequence work gate passed: clamp+128B copy 2->1 binary searches total, NOT 4->2; copy already cache-hot after clamp");
 #endif
 }
 int main(int argc,char **argv) {

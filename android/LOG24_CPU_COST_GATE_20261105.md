@@ -7,6 +7,11 @@ The new tests establish lower work and lower native ARM64 cost for specific func
 they do not establish a substantial reduction of the game's command-thread bottleneck.
 The Android release branch and v0.30 APK remain unchanged.
 
+**Per-frame follow-up:** [LOG24_PER_FRAME_BUDGET_20261105.md](LOG24_PER_FRAME_BUDGET_20261105.md)
+converts absolute saved ns/call into CPU ms/flip scenarios using observed draw/dispatch
+rates. The original ring benchmark's `ns/packet` label refers to ONE stage list, not
+a complete draw. Its output now says `ns/stage`. Missing device coverage is explicit.
+
 ## Separate archive comparison
 
 Read `tlou/runtime.log` separately from log archives 22(2), 23 and 24(1).

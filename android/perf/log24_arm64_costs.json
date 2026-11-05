@@ -1,0 +1,94 @@
+{
+  "source_run": 42018906780,
+  "source_job_arm64": 127216363964,
+  "measurement_platform": "GitHub ubuntu-24.04-arm; not the phone",
+  "unit": "ns/call",
+  "ring_stage": [
+    {
+      "slots": 4,
+      "ring": 2,
+      "old": [
+        8.0,
+        8.0
+      ],
+      "new": [
+        3.83,
+        3.83
+      ]
+    },
+    {
+      "slots": 8,
+      "ring": 4,
+      "old": [
+        19.75,
+        19.45
+      ],
+      "new": [
+        7.65,
+        7.66
+      ]
+    },
+    {
+      "slots": 16,
+      "ring": 16,
+      "old": [
+        62.51,
+        62.23
+      ],
+      "new": [
+        19.48,
+        18.87
+      ]
+    },
+    {
+      "slots": 40,
+      "ring": 40,
+      "old": [
+        320.09,
+        319.68
+      ],
+      "new": [
+        48.66,
+        47.97
+      ]
+    }
+  ],
+  "memory": [
+    {
+      "case": "clamp miss, rotating 512 mappings",
+      "role": "split between threads unknown",
+      "old": [
+        70.95,
+        70.43
+      ],
+      "new": [
+        45.01,
+        45.01
+      ]
+    },
+    {
+      "case": "128 B copy, rotating mappings",
+      "role": "split between threads unknown",
+      "old": [
+        82.46,
+        81.84
+      ],
+      "new": [
+        56.84,
+        55.48
+      ]
+    },
+    {
+      "case": "48 KiB copy, across mappings/gaps",
+      "role": "split between threads unknown",
+      "old": [
+        851.63,
+        873.34
+      ],
+      "new": [
+        733.99,
+        757.94
+      ]
+    }
+  ]
+}

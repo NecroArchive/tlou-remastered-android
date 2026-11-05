@@ -32,18 +32,25 @@ static void Verify() {
     u64 count=0,sum=0;
     Context ctx{&count,&sum};
     {
-        Batch b{complete,ItemFor(ctx,1),1};
+        std::array<Gow3Copy::Item,16> items{};
+        items[0]=ItemFor(ctx,1);
+        Batch b{complete,items.data(),1};
         assert(b.Size()==1);
-        for(u64 i=2;i<=16;++i)assert(b.Append(ItemFor(ctx,i),i));
-        assert(!b.Append(ItemFor(ctx,17),17));
-        assert(!b.Append(ItemFor(ctx,19),16));
+        for(u64 i=2;i<=16;++i){
+            items[i-1]=ItemFor(ctx,i);
+            assert(b.Append(&items[i-1],i));
+        }
+        auto misplaced=ItemFor(ctx,17);
+        assert(!b.Append(&misplaced,17));
+        assert(!b.Append(&items[15],16));
         assert(complete.load()==0); // guest-visible done must not advance until Execute
         b.Execute();
         assert(count==16 && complete.load(std::memory_order_acquire)==16);
     }
     // A new batch after an intervening Vulkan command begins independently;
     // old completed order is visible first.
-    Batch other{complete,ItemFor(ctx,17),17};
+    auto seventeenth=ItemFor(ctx,17);
+    Batch other{complete,&seventeenth,17};
     assert(complete.load(std::memory_order_acquire)==16);
     other.Execute();
     assert(count==17 && complete.load(std::memory_order_acquire)==17);
@@ -60,9 +67,12 @@ static double Benchmark(bool batched) {
     for(u64 frame=0;frame<Repetitions;++frame) {
         if(batched) {
             for(u64 begin=0;begin<Copies;begin+=16) {
-                Batch batch{done,ItemFor(ctx,frame*Copies+begin+1),frame*Copies+begin+1};
+                std::array<Gow3Copy::Item,16> items{};
+                items[0]=ItemFor(ctx,frame*Copies+begin+1);
+                Batch batch{done,items.data(),frame*Copies+begin+1};
                 for(u64 x=begin+1;x<std::min(Copies,begin+16);++x) {
-                    assert(batch.Append(ItemFor(ctx,frame*Copies+x+1),frame*Copies+x+1));
+                    items[x-begin]=ItemFor(ctx,frame*Copies+x+1);
+                    assert(batch.Append(&items[x-begin],frame*Copies+x+1));
                 }
                 batch.Execute();
             }

@@ -1006,7 +1006,7 @@ void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalid
  * GPU thread copies through the backing view for every upload and every landed readback; the
  * read-write lock there cost ~15% of the GPU thread (winpthreads, 16 Oct). */
 static const void *cached_backing(uintptr_t address, uint64_t size);
-static void cache_region(size_t i);
+static void cache_region(size_t i, uintptr_t requested_at);
 /* Writes through the backing view; 0 when part of the range has no backing. */
 int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t size) {
     { const void *fast=cached_backing(address,size); if (fast) { memcpy((void *)fast,data,size); return 1; } }

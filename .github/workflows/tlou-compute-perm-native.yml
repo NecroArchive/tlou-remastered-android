@@ -1,0 +1,52 @@
+name: TLOU exact compute permutation native-only validation
+
+on:
+  push:
+    branches: [tlou-compute-perm-memo]
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_compute_perm_memo.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.*'
+      - 'gow3_pc/tests/test_tlou_compute_perm_memo.cpp'
+      - '.github/workflows/tlou-compute-perm-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-specialization-benchmark:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native shader header prerequisites
+        run: sudo apt-get update -qq && sudo apt-get install -qq -y libboost-dev
+      - name: Build against actual production specialization constructor
+        run: |
+          set -euo pipefail
+          mkdir -p out/perm-memo
+          uname -m | tee out/perm-memo/arch.txt
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+            -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_compute_perm_memo.cpp \
+            -o out/perm-memo/bench
+          out/perm-memo/bench | tee out/perm-memo/bench.txt
+          out/perm-memo/bench | tee out/perm-memo/bench-repeat.txt
+      - name: Address and UB checks (correctness only)
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_compute_perm_memo.cpp \
+            -o out/perm-memo/bench-san
+          out/perm-memo/bench-san --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compute-perm-native-${{ matrix.runner }}
+          path: out/perm-memo/*.txt
+          if-no-files-found: error

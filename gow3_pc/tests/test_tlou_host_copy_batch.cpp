@@ -12,7 +12,7 @@
 #include <vector>
 
 using Clock = std::chrono::steady_clock;
-using Batch = Vulkan::Detail::HostCopyBatch<16>;
+using Batch = Vulkan::Detail::HostCopyBatch;
 using u64 = std::uint64_t;
 
 struct Context { u64* count; u64* sum; };

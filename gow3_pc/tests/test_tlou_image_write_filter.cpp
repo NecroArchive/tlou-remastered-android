@@ -98,7 +98,7 @@ static double Median(Scene& scene,bool use_filter,unsigned pages){
     return values[3];
 }
 }
-int main(int argc,char**argv){
+int main(int argc,char**){
     Scene scene;
     Verify(scene);
     if(argc>1) {

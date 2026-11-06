@@ -166,7 +166,7 @@ s32 VdecDecoder::Decode(const OrbisVideodec2InputData& input_data,
     // With a copy scaled to the movie display size the frame is reported at that size: the movie
     // player's conversion shader spans the frame size it is given (gow3_movie.h).
     u32 shown_width = (u32)frame->width, shown_height = (u32)frame->height;
-    if (WriteMovieCopy(*frame, (u64)frame_buffer.frame_buffer)) {
+    if (WriteMovieCopy(*frame, (u64)frame_buffer.frame_buffer, frame_buffer.frame_buffer_size - info_size)) {
         Gow3Movie::DisplaySize(shown_width, shown_height);
     }
     frame_buffer.is_accepted = true;
@@ -280,7 +280,7 @@ s32 VdecDecoder::Flush(OrbisVideodec2FrameBuffer& frame_buffer,
     // With a copy scaled to the movie display size the frame is reported at that size: the movie
     // player's conversion shader spans the frame size it is given (gow3_movie.h).
     u32 shown_width = (u32)frame->width, shown_height = (u32)frame->height;
-    if (WriteMovieCopy(*frame, (u64)frame_buffer.frame_buffer)) {
+    if (WriteMovieCopy(*frame, (u64)frame_buffer.frame_buffer, frame_buffer.frame_buffer_size - info_size)) {
         Gow3Movie::DisplaySize(shown_width, shown_height);
     }
     frame_buffer.is_accepted = true;
@@ -347,14 +347,17 @@ s32 VdecDecoder::Reset() {
     return ORBIS_OK;
 }
 
-// GOW3_MOVIE_SIZE (gow3_movie.h): the frame also scaled to the display size the movie player reads
-// it with, into the scratch frame of the game's frame buffer at base. True when written.
-bool VdecDecoder::WriteMovieCopy(const AVFrame& frame, u64 base) {
+// Downscaled frames live in the existing decoder-owned guest buffer when there is room. This
+// avoids guest flexible-memory exhaustion (335 MiB in the TLOU 720p movie logs). Oversized
+// frames retain the existing separate scratch-frame path.
+bool VdecDecoder::WriteMovieCopy(const AVFrame& frame, u64 base, u64 available_bytes) {
     u32 width = 0, height = 0;
     if (!Gow3Movie::DisplaySize(width, height) || ((u32)frame.width == width && (u32)frame.height == height)) {
         return false;
     }
-    u8* dst = Gow3Movie::ScratchFrame(base);
+    const bool inplace = Gow3Movie::CanWriteInPlace((u32)frame.width, (u32)frame.height,
+                                                   available_bytes);
+    u8* dst = inplace ? reinterpret_cast<u8*>(base) : Gow3Movie::ScratchFrame(base);
     if (!dst) {
         return false;
     }
@@ -424,6 +427,18 @@ bool VdecDecoder::WriteMovieCopy(const AVFrame& frame, u64 base) {
         std::memcpy(dst, copy, bytes);
     }
     memory->InvalidateMemory(address, bytes);
+    if (inplace) {
+        // CopyNV12Data initially recorded the original 1920x1088 padded planes. Both the
+        // luma and chroma now live at the scaled pitch/rows inside this same buffer.
+        Gow3Movie::RecordFrame(base, width, height, pitch, rows);
+        static int logged = 0;
+        if (logged++ < 4) {
+            std::printf("Movie: in-place NV12 %dx%d -> %ux%u; Y pitch=%u rows=%u UV offset=%llu bytes=%llu\n",
+                        frame.width, frame.height, width, height, pitch, rows,
+                        (unsigned long long)((u64)pitch * rows), (unsigned long long)bytes);
+            std::fflush(stdout);
+        }
+    }
     return true;
 }
 

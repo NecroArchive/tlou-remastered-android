@@ -3,9 +3,10 @@
 // texel for texel with the display size it renders at (luma W x H, chroma W/2 x H/2 after
 // W * align(H, 64) bytes), assuming movies are as large as the screen; its movies are 1080p and
 // its frame buffers 4 MiB each, so above 1080p they came out green and tiled. The decoder
-// (shim/videodec2) also writes each frame scaled to the display size into a scratch frame of
-// guest memory, and the texture cache (ImageInfo) reads the planes from there. Without a scratch
-// frame the planes are read as decoded (right colors, 1:1 in a corner).
+// (shim/videodec2) writes downscaled NV12 frames in-place when they fit in the decoder's already
+// allocated frame buffer, leaving the picture-info reservation untouched. Larger output sizes
+// still use a separate scratch frame. The texture cache (ImageInfo) remaps both Y and UV planes
+// to the layout actually written; a failed scratch allocation leaves original frames intact.
 // GOW3_MOVIE_SIZE=<width>x<height> is that display size; unset, nothing
 // changes.
 
@@ -32,6 +33,10 @@ std::uint32_t ScaledRows();
 std::uint32_t ScaledChromaPitch();
 /// Bytes of a scratch frame: luma, then the chroma plane (ScaledRows() / 2 rows).
 std::uint64_t ScaledFrameBytes();
+// True when a scaled movie fits safely inside the existing decoder frame buffer (excluding
+// the reserved picture-info suffix). The source must not be smaller than the target.
+bool CanWriteInPlace(std::uint32_t source_width, std::uint32_t source_height,
+                     std::uint64_t available_bytes);
 
 // The movie player's conversion shader samples a frame at u = (x + 0.5) / 1920 and
 // v = (y + 0.5) / 1088 with those factors as literals, so above 1080p it covers only the top-left

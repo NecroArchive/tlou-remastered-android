@@ -83,6 +83,16 @@ std::uint64_t ScaledFrameBytes() {
     return std::uint64_t(ScaledPitch()) * ScaledRows() + std::uint64_t(ScaledChromaPitch()) * ScaledRows() / 2;
 }
 
+// Avoid reserving extra guest flexible memory for a downscaled NV12 movie. Each decoder frame
+// already owns a 4 MiB guest buffer; a 1280x720 NV12 frame fits in the first 1,474,560 bytes.
+// Never overwrite a larger source with a larger target or cross the picture-info reservation.
+bool CanWriteInPlace(std::uint32_t source_width, std::uint32_t source_height,
+                     std::uint64_t available_bytes) {
+    const Size& display = Display();
+    return display.width && display.height && source_width >= display.width &&
+           source_height >= display.height && ScaledFrameBytes() <= available_bytes;
+}
+
 void RecordFrame(std::uint64_t base, std::uint32_t width, std::uint32_t height, std::uint32_t pitch,
                  std::uint32_t rows) {
     if (!Display().width || !base) {

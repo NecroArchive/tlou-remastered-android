@@ -15,6 +15,11 @@ g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -I gow3_pc -I gow3_pc/src \
 g++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_image_copy_plan.cpp -o "$test_dir/image-copies"
 "$test_dir/image-copies"
 
+# Movie source is 1920x1088 padded NV12; 720p must use the existing 4 MiB decoder buffer.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread -I gow3_pc/gpu/shim \
+  gow3_pc/gpu/shim/gow3_movie.cpp gow3_pc/tests/test_movie_inplace.cpp -o "$test_dir/movie-inplace"
+"$test_dir/movie-inplace"
+
 g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread gow3_pc/tests/test_cache_io_queue.cpp -o "$test_dir/cache-io"
 "$test_dir/cache-io"
 

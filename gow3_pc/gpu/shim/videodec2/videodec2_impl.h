@@ -28,7 +28,7 @@ public:
 
 private:
     AVFrame* ConvertNV12Frame(AVFrame& frame);
-    bool WriteMovieCopy(const AVFrame& frame, u64 base);
+    bool WriteMovieCopy(const AVFrame& frame, u64 base, u64 available_bytes);
 
 private:
     AVCodecContext* m_codec_context = nullptr;

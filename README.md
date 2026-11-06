@@ -1,133 +1,117 @@
-# The Last of Us Remastered — PC port
+# The Last of Us Remastered — Daedalus Android
 
-Runs the PS4 **The Last of Us Remastered** (CUSA00552, with its update 1.11) natively on Windows.
-The game's own x86-64 code runs directly on the PC; a runtime supplies the PS4 system libraries,
-and a Vulkan renderer (the shadPS4 video core) executes the PS4 GPU work.
+An Android adaptation of the PS4 **The Last of Us Remastered**, based on
+[ravencaio's PC port](https://github.com/ravencaio/tlou-remastered-pc).
+The game runs through an ARM64 Bionic runtime, FEX CPU translation and Vulkan rendering.
 
-> **No game files are in this repository.** You need your own copy of the game (the dumped
-> CUSA00552 folder, and its update). This project is not affiliated with Sony Interactive
-> Entertainment or Naughty Dog.
+**Version 0.1 · First public Android build**
 
-## Status
+[Português (Brasil)](README.pt-BR.md) · [Release notes](RELEASE_NOTES.md) ·
+[Releases](https://github.com/erickmendes22/tlou-remastered-android/releases) · [Android source](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-ui-approval-log32-20261105) ·
+[YouTube — @daedalusemulator](https://www.youtube.com/@daedalusemulator)
 
-Work in progress, playable from the prologue on, with rough edges.
+## What is included
 
-- **Frame rate:** on a laptop with a Core i7-8750H and a GTX 1050 Ti Mobile (4 GB), 60 FPS in light
-  areas and about 40-44 FPS in the heaviest area tested, where the CPU side of the renderer is the
-  limit (the draw recording thread at about 87%): lowering the resolution barely helps there.
-- **Frame pacing:** frame times swing while the game runs below its limit, and a fixed 30 FPS limit
-  (launcher, or the in-game menu) makes motion clearly more even.
-- **Known issues:**
-  - NPCs sometimes move in jumps. It comes and goes between runs of the same build; the cause is
-    not settled. The bursts of long frames that seemed to go with it shrank with the faster guest
-    condition variables, and a fixed 30 FPS limit had no jumps in the sessions tried.
-  - A frame that compiles many new shaders can pause the game for a moment, mostly the first time
-    an area is played. The game's own frame watchdog is patched from 2 s to 20 s for that
-    (`TLOU_FIXES=none` leaves the game unpatched). If a load ever hangs, start with
-    `GOW3_FRAMES_IN_FLIGHT=0` (slower).
-- **Not available for this game yet:** mouse camera (the mouse drives the right stick instead),
-  the draw distance sliders and keyboard button prompts, which need the game's own camera code,
-  settings block and prompt textures to be located.
+- TLOU-themed launcher and app icon; automatic game preparation on the phone.
+- Installation from PKG or selection of an extracted game folder.
+- Touch controls and physical controller support; in-game menu opened by swiping
+  from the left edge toward the right.
+- Fullscreen display modes that can be changed while playing.
+- Compact single-line FPS/GPU/CPU overlay, with position and visibility settings.
+- Original rendering resolution plus 720p, 540p and 360p patches; optional SSAO,
+  motion blur, depth of field, bloom, sunlight-shadow and subsurface patches.
+- 30 or 60 FPS limit and VSync settings. Actual performance depends on the scene
+  and device; the 60 FPS limit is not a performance guarantee.
+- Bundled Vulkan drivers and driver import from ZIP or SO files.
+- Save import/export as ZIP, plus an in-game save selector with actual slot
+  metadata and thumbnails when supplied by the game.
+- App interface in Brazilian Portuguese, English, Spanish, French, German,
+  Italian, Turkish, Polish, Russian and Hindi. The system language is selected
+  automatically, with English as fallback; game language is selected inside the game.
+- Log viewing and ZIP export for troubleshooting.
 
-## Requirements
+The tested performance settings are applied internally. Experimental benchmark
+switches are not exposed in the public interface.
 
-- Windows 10 or 11 (64-bit).
-- A CPU from Intel's 4th-generation Core (Haswell) or newer, or any AMD Ryzen: the game needs
-  AVX, F16C, BMI1, MOVBE and LZCNT.
-- A graphics card or integrated GPU with Vulkan 1.3 and a current driver.
-- About 6 GB of free RAM for the game.
+## Requirements and supported game
 
-## Playing
+- **Android 11 or later**, with a 64-bit ARM Android environment and Vulkan support.
+- Your own PS4 game dump. The verified Android executable profile is **version
+  01.00**, SHA-256
+  `e5f0aa322f60bd90637cc10d83de08c77885b1921084021c630e04ed3d6febf7`.
+- The reference title is **CUSA00552**. Other regional title IDs are accepted
+  when they contain the same verified executable; a title ID alone does not
+  establish patch compatibility.
+- Enough storage for the extracted game. PKG installation also needs room for
+  extraction while the original package is present.
 
-**From a release:** extract the zip, open `TLOU Launcher.exe`, choose the game folder under Folders
-and press Play. Nothing else needs installing. After that, a shortcut with the game's icon appears
-beside the launcher.
+Android gameplay testing has focused on **Redmagic 10 Pro / Snapdragon 8 Elite /
+Adreno 830**. Compatibility and performance across other devices are still being
+expanded. The Windows port's 01.11 requirements and PC FPS measurements do not
+represent this Android build.
 
-**From this repository** (needs Python 3.10 or newer):
+### Bundled driver selection
 
-1. Put the game folder `CUSA00552` next to this repository's folder, and the update next to it as
-   `CUSA00552-patch` (or name another update folder with `TLOU_UPDATE=<folder>`). An update you
-   only have as a PKG unpacks there with `python tools/install_update.py <update.pkg> <game folder>`.
-2. Build the runtime (below), then start the game with `launcher/TLOU Launcher.exe`,
-   `Start-TLOU.cmd`, or `python tools/probe_tlou.py --boot --seconds 0 [--game <game folder>]`.
-3. Saves and settings stay in `analysis/tlou-user`; the log is `analysis/tlou/boot.log`. Each
-   session also records your controller input (`analysis/tlou/pad-record-*.txt`, the newest 5),
-   so a crash can be replayed on the same route; `TLOU_RECORD_PAD=0` turns that off.
-4. With this repository on a hard disk, put the shader cache (`analysis/tlou-user/cache`, about
-   250 MB in some 12,000 files) on an SSD: the game reads all of it in its first seconds, and
-   from a hard disk that takes long enough for the game to build pipelines itself, pausing for
-   seconds. With the game closed, move the folder, then link it back:
-   `mklink /J analysis\tlou-user\cache <folder on the SSD>` (in `cmd`).
+| GPU family | Default bundled driver |
+| --- | --- |
+| Adreno 8xx | Turnip Gen8 V38 Patched |
+| Adreno 7xx / 6xx | Turnip 27.0.0 R1 |
 
-The launcher sets the display, frame limit and folders, in nine languages; its Debug menu switches
-each optimization off, some of them while the game runs. The in-game menu (Insert, or R3+L2 on a
-controller) holds the graphics, controls and frame rate settings.
+Driver selection/import remains available in settings. These defaults do not
+constitute validation of every GPU in those families.
 
-**Without a DualShock 4:** the touchpad (backpack, crafting) is Tab / Backspace on the keyboard
-or Back/View on an Xbox-style controller. Shaking the controller is G on the keyboard or the
-Share/Capture button (`GOW3_KEY_MAP` / `GOW3_PAD_MAP` `shake=...` rebind it). The flashlight
-never flickers out by default, so it needs no shake: Celogamez's GoldHEN cheat "Flashlight Does
-Not Turn Off" (`TLOU_CHEATS=none` turns it off).
+## Installation
 
-## Building
+1. Install the APK from the project distribution. To update a previous compatible
+   build, install over it to retain app data and saves.
+2. Grant the requested file access, then choose the extracted game folder or
+   install your PKG from the launcher.
+3. Let automatic preparation finish and select **Play**.
+4. Adjust resolution, patches and controls as needed. Swipe right from the left
+   edge during gameplay to open the menu.
 
-From an MSYS2 **CLANG64** shell:
+Use the app's save export before uninstalling or clearing its data.
 
-```bash
-pacman -S --needed git patch \
-  mingw-w64-clang-x86_64-{toolchain,cmake,ninja,pkgconf,python} \
-  mingw-w64-clang-x86_64-{vulkan-headers,vulkan-loader,vulkan-memory-allocator,glslang} \
-  mingw-w64-clang-x86_64-{sdl3,fmt,boost,robin-map,xxhash,ffmpeg,zydis} \
-  mingw-w64-clang-x86_64-{spirv-tools,spirv-headers,spirv-cross}
-git submodule update --init --recursive
-gow3_pc/build.sh                 # the runtime: gow3_pc/out/gow3-probe.exe
-```
+## Status of version 0.1
 
-Clone with `core.autocrlf=false`: line-ending conversion breaks the FSR-Vulkan patches.
+This is an initial public build, with gameplay demonstrated on Android, rather
+than a claim of complete compatibility or a full-game playthrough.
 
-`gow3_pc/build.sh` also builds `launcher/TLOU Launcher.exe`. With a profile in
-`gow3_pc/pgo/tlou.profdata` it builds with PGO and LTO (about 10% more FPS in the heaviest area
-tested); the profile is not in the repository, and without it the build is plain. `GOW3_PGO=off`
-gives quicker development builds. A new profile needs a clean build.
+- Shader compilation can cause pauses, especially on first visits to an area.
+- Selective physics-result synchronization addresses the reported character
+  deformation while keeping **Readback 1**. Readback 2 is not used by this build.
+- A bounds guard prevents the identified static ray-hit path from accessing an
+  invalid submesh. It preserves valid hits and skips the invalid result; the
+  latest guard passed automated tests but still needs confirmation on the
+  previously crashing device route.
+- Other scene-specific graphics, collision or stability issues may remain.
 
-`tools/package_windows.sh` builds `dist/TLOU-Remastered-windows.zip`, the release: the runtime and
-its DLLs, the launcher, the scripts and a Python of its own. `tools/package_check.py` refuses game
-files and paths of the build machine.
+For a bug report, export logs through **About → Export logs ZIP**, describe the
+scene and steps, and specify whether the problem belongs to the current or
+previous execution. Include the device, GPU, driver, game version and settings.
+[Report an issue](https://github.com/erickmendes22/tlou-remastered-android/issues).
 
-The launcher reads its background and icon from the player's own copy of the game. A local icon goes
-in `launcher/assets/icon.ico` (not in the repository).
+## Development
 
-## Repository layout
-
-| Path | Contents |
-|---|---|
-| `gow3_pc/` | The runtime: C runtime (`src/`), GPU library (`gpu/`: shadPS4 video core and shims), preparation scripts (`scripts/`). Diagnostics settings: [gow3_pc/README.md](gow3_pc/README.md). |
-| `launcher/` | The launcher (`tlou_launcher.pyw`, Tkinter) and its starter (`tlou-launcher.c`). |
-| `tools/package_windows.sh` | The Windows release zip. |
-| `tools/probe_tlou.py` | Prepares the game's executable (with its update) and starts the runtime with this game's settings. |
-| `tools/tlou_pad.py`, `tools/tlou_bench.py` | Scripted controller input, frame captures and analysis; a repeatable frame rate measurement on a test profile. |
-| `tools/decode_dump.py`, other `tools/` | Image dump decoding and other diagnostics. |
-| `tools/install_update.py` | Unpacks an update PKG next to the game folder (PkgTool, `tools/pkgtool`). |
+The Android implementation and verified build workflow are in the
+[Android source tree](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-ui-approval-log32-20261105). See the [Android build guide](android/README.md).
+The repository's historical Windows code remains available; it is not the APK
+build procedure. Documentation changes alone do not require generating an APK.
 
 ## Credits and license
 
-- The runtime comes from BilalReloaded's PS4 port runtime
-  ([GitHub](https://github.com/bc160201983)), which started from FelipePrado0's
-  [SpartanPort](https://github.com/FelipePrado0/SpartanPort) (gow3_pc; whose internal names, such as
-  `GOW3_*` settings, it keeps), and the [shadPS4](https://github.com/shadps4-emu/shadPS4) video core.
-- The camera motion for temporal anti-aliasing (`CameraMotion::OnVelocityConstants` and the motion
-  vector mode) comes from SuperMedo's PS4 port ([GitHub](https://github.com/Supermedo), GPL v2).
-- Windows red-zone protection and the reader-preferring memory table lock come from HayatoG's
-  [tlou_pc](https://github.com/HayatoG/tlou_pc) (GPL-2.0-or-later); the protection follows
-  shadPS4's design.
-- The 1 ms timer, the power throttling opt-out, the faster guest condition variables, the idle job
-  worker patch's method and the package's Python copy come from BilalReloaded's
-  [Uncharted: The Nathan Drake Collection port](https://github.com/bc160201983/Uncharted-The-Nathan-Drake-Collection-PC-port).
-- **NVIDIA DLSS:** DLAA uses NVIDIA DLSS technology through the DLSS bridge adapted from
-  [IFreemz/shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR)
-  (MIT). NVIDIA, RTX and DLSS are trademarks of NVIDIA Corporation.
-- AMD FSR 4: the v07 INT8 model as built by [Q2RTX](https://github.com/FireBurn/Q2RTX) from AMD's
-  MIT-licensed FidelityFX SDK source.
-- Third-party code: FSR (AMD), imgui, magic_enum, miniz, xbyak, LibAtrac9, FFmpeg, SDL3, PkgTool
-  (LibOrbisPkg, LGPL-3.0).
-- Licensed under the GNU GPL v2 or later (see `LICENSE`).
+- **Android adaptation:** Erick Mendes / Daedalus Emulator.
+- **PC reference:** [ravencaio/tlou-remastered-pc](https://github.com/ravencaio/tlou-remastered-pc).
+- **CPU translation:** [FEX-Emu](https://github.com/FEX-Emu/FEX).
+- **Vulkan drivers:** [Mesa / Turnip](https://gitlab.freedesktop.org/mesa/mesa) and
+  [libadrenotools](https://github.com/bylaws/libadrenotools).
+- Runtime foundations and contributions: BilalReloaded / bc160201983,
+  FelipePrado0 / SpartanPort, SuperMedo, HayatoG and the shadPS4 video core.
+- Other bundled components retain their own licenses, including SDL3, FFmpeg,
+  CPython, LibAtrac9 and the PKG extraction tools. See [LICENSE](LICENSE) and
+  the licenses shipped with the installer components. Detailed inherited attribution
+  is retained in the [historical PC documentation](docs/PC_PORT_REFERENCE.md).
+
+Project code is licensed under **GPL-2.0-or-later**. No game files are included
+in this repository or APK. This is an unofficial project, unaffiliated with
+Sony Interactive Entertainment or Naughty Dog.

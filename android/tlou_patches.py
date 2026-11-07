@@ -26,6 +26,21 @@ BASE_PATCHES = {
         (0xF6BEB0, "8b3383feff4c89f8", None),
         (0x92C942, "488b5330488b8a800000004883c260", None),
     ],
+    # Static ray-hit processing lacks the invalid-submesh skip already present
+    # in the dynamic-mesh path at 0xF753BE. Reject an unavailable/static mesh's
+    # hit before computing its submesh address; continue with the next result.
+    # Keep every valid hit on the original path. Do not suppress global asserts.
+    "static-ray-hit-submesh-bounds": [
+        (0xF7516C, "0f849e020000", "0f8e9e020000"),
+        (0xF7517F, "39c87f33e81865b3ff", "39c87733e988020000"),
+        (0xF7512F, "438b8435d80d00004c69e0f0030000", None),
+        (0xF75162, "428b8423f002000085c0", None),
+        (0xF75172, "4b638c35dc0d000048894c2418", None),
+        (0xF751B6, "4869442418900300004a038423f8020000", None),
+        (0xF753BE, "39c3734e", None),
+        (0xF75410, "488b5c242848ffc3413b5d100f8cbefbffff", None),
+        (0xF7665F, "e85ce8ffff", None),
+    ],
     # WaitOnContextDone's compare and diagnostic both read 20 seconds rather than
     # 2. Reuse existing immutable constants; do not alter a shared constant pool.
     "frame-timeout": [
@@ -51,11 +66,57 @@ BASE_PATCHES = {
 }
 
 
+# Profiles validated against the original 24,220,371-byte user-provided SELF files.
+# The second hash is an independently patched variant; file size is NOT an identity.
+SELF_SHA256_111 = {
+    "3cfa475f88ca68485b6b9230e62b84e195cdbe19e6f7295c110b8dcf8f20884e",
+    "31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7",
+}
+KNOWN_SELF_SHA256 = frozenset({BASE_SELF_SHA256} | SELF_SHA256_111)
+
+BASE_PATCHES_111 = {
+    "frame-timeout": [
+        (0xB3D887, "c5f82e05819f6300", "c5f82e05194d5c00"),
+        (0xB3D92F, "c5fb1005f19e6300", "c5fb1005a13d5900"),
+        (0x11025A8, "0000a041", None),
+        (0x10D16D8, "0000000000003440", None),
+    ],
+    "job-sleep": [
+        (0xC87D63, "7304", "eb04"),
+        (0xC87D96, "741b", "9090"),
+        (0xC873E1, "742d", "9090"),
+    ],
+}
+# Original-byte guards checked independently in BOTH supplied 01.11 ELFs.
+PERFORMANCE_EFFECTS_111 = {
+    "ssao": [(0xAEB0CC,"c7834b01000001010101","c7834b01000000010101")],
+    "motion_blur": [
+        (0xAEB14B,"c6836d01000001","c6836d01000000"),
+        (0x758691,"c6830e04000001","c6830e04000000"),
+    ],
+    "depth_of_field": [(0xAEB167,"c6837101000001","c6837101000000")],
+    "bloom": [(0xAEB202,"c783b401000001010101","c783b401000001000101")],
+    "sunlight_shadows": [
+        (0xA905B5,"0f85f6010000","e9f701000090"),
+        (0xA905AE,"80b89c000000000f85f6010000",None),
+    ],
+    "subsurface": [
+        (0xA9250A,"0f840c060000","e90d06000090"),
+        (0xA92500,"488b0080b8942e0000000f840c060000",None),
+    ],
+}
+
+def known_profile(digest):
+    return "01.00" if digest == BASE_SELF_SHA256 else "01.11" if digest in SELF_SHA256_111 else None
+
 def select(eboot, fallback):
     digest = hashlib.sha256(eboot.read_bytes()).hexdigest()
     if digest == BASE_SELF_SHA256:
-        print("Perfil TLOU verificado: entrada 0x56d9f0; patches próprios do executável.", flush=True)
+        print("Perfil TLOU 01.00 validado por SHA-256.", flush=True)
         return dict(BASE_PATCHES)
+    if digest in SELF_SHA256_111:
+        print("Perfil TLOU 01.11 validado por SHA-256.", flush=True)
+        return dict(BASE_PATCHES_111)
     return fallback
 
 # Adapted from Bachata S4+ P36 performance XMLs. Addresses are ELF-relative
@@ -183,7 +244,136 @@ PERFORMANCE_RESOLUTIONS = {
 }
 
 
-def selected_options(options):
+# CUSA00552 01.00: give the in-game scene, depth, HUD, reticle and
+# full/half-size postprocessing a SINGLE resolution domain.
+# The 2026-11-06 Android log proved 720p depth alongside 1080p color.
+# Disassembly of the user's original ELF at 0x92EF1A..0x92F00D confirms
+# these are paired full/half framebuffer creations (0x9CC310 calls):
+# the old performance profile incorrectly pinned them to 1920x1080
+# and 960x540, independent of the selected 720/540/360 resolution.
+#
+# This profile does NOT modify video content, movie decoder, codecs or source
+# frame dimensions. The video path may still present a native-size frame.
+LOW_RES_SCENE = {"720": (1280, 720), "540": (960, 540), "360": (640, 360)}
+# 01.11 verified from the user's original 24,220,371-byte CUSA00552 SELF.
+# The previous 01.00 32-site table is NOT reused here. The newer executable
+# stores dimensions in screeninfo.cfg defaults and a preset selector at
+# 0xAB0600, while its framebuffer creation sites moved to 0xAD47xx.
+# Every original span below has been checked against this exact SELF.
+# Other 01.11 variants deliberately retain Original until independently checked.
+# The owner's second 01.11 ELF differs by only 28 bytes in the
+# 0x6C74E9 -> 0xC2C860 pointer-guard trampoline, outside ALL 24 validated
+# 01.11 stability, effects, and unified-resolution patch spans.
+# Both SELF variants were independently checked (24/24 original byte guards).
+RESOLUTION_111_SELF_SHA256 = frozenset({
+    "3cfa475f88ca68485b6b9230e62b84e195cdbe19e6f7295c110b8dcf8f20884e",
+    "31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7",
+})
+RESOLUTION_111_GUARDS = {
+    0xAB05D6: "c7470880070000c7470c38040000",  # screen-info instance
+    0xAB095D: "c7400880070000c7400c38040000",  # global screen-info
+    0x116BF10: "8007000038040000f00000000e010000",  # screen-info defaults
+    0x116BF30: "8007000038040000f00000000e010000",  # persistent defaults
+    0xAB0600: "ffce83fe0777194863ce488d058fb9",  # screen-info mode selector
+    0xAD478C: "b98007000041b838040000",  # full-size framebuffer
+    0xAD47E7: "b9c003000041b81c020000",  # half-size framebuffer
+    0x115FB9C: "d6b9723a00008744",  # HUD coordinate height inverse / height
+}
+
+
+def scene_aim_resolution_patches_111(resolution):
+    """Version-guarded 01.11 scene/HUD/post targets; keep video sources native."""
+    width, height = LOW_RES_SCENE[resolution]
+    u32 = lambda n: struct.pack("<I", n)
+    # Skip the old preset lookup entirely (its smallest preset is 1920x1080).
+    # mov eax,width; mov ecx,height; jmp 0xAB062A (original field stores and
+    # ratio/quarter-resolution calculations remain untouched).
+    selector = (b"\xb8" + u32(width) + b"\xb9" + u32(height) +
+                b"\xe9" + struct.pack("<i", 0xAB062A - (0xAB0600 + 15)))
+    replacements = {
+        0xAB05D6: bytes.fromhex("c74708") + u32(width) + bytes.fromhex("c7470c") + u32(height),
+        0xAB095D: bytes.fromhex("c74008") + u32(width) + bytes.fromhex("c7400c") + u32(height),
+        0x116BF10: struct.pack("<4I", width, height, width // 8, height // 4),
+        0x116BF30: struct.pack("<4I", width, height, width // 8, height // 4),
+        0xAB0600: selector,
+        0xAD478C: b"\xb9" + u32(width) + b"\x41\xb8" + u32(height),
+        0xAD47E7: b"\xb9" + u32(width // 2) + b"\x41\xb8" + u32(height // 2),
+        0x115FB9C: struct.pack("<ff", 1.0 / height, float(height)),
+    }
+    if replacements.keys() != RESOLUTION_111_GUARDS.keys():
+        raise ValueError("Perfil 01.11 de resolução incompleto")
+    out = []
+    for address, original in RESOLUTION_111_GUARDS.items():
+        before, after = bytes.fromhex(original), replacements[address]
+        if len(before) != len(after):
+            raise ValueError(f"01.11: tamanho inválido em {address:#x}")
+        out.append((address, original, after.hex()))
+    return out
+
+
+AIM_NORMALIZATION_ADDRESS = 0x9D4023
+GAME_UI_NATIVE_OVERRIDES = {
+    0x91F6E8: "41bf8007000041bc38040000909090",
+    0x910580: "be80070000ba38040000e9610e0800",
+    0x91A37A: "b980070000c4e1fa2ad1b838040000c4e1fa2ad8909090",
+}
+POSTPROCESS_FULL_SITES = (0x92EF1A, 0x92EFC0)
+POSTPROCESS_HALF_SITES = (0x92EF7D, 0x92F00D)
+
+
+def scene_aim_resolution_patches(resolution):
+    """Guarded CUSA00552 1.00 scene/UI/post unified resolution profile."""
+    width, height = LOW_RES_SCENE[resolution]
+    scene_width, scene_height = struct.pack("<I", width).hex(), struct.pack("<I", height).hex()
+    half_width = struct.pack("<I", width // 2).hex()
+    half_height = struct.pack("<I", height // 2).hex()
+    patches = []
+    visited = set()
+    for at, original, raw in PERFORMANCE_RESOLUTIONS[resolution]:
+        replacement = raw
+        if at in GAME_UI_NATIVE_OVERRIDES:
+            if raw != GAME_UI_NATIVE_OVERRIDES[at]:
+                raise ValueError("Patch UI/resolução fora do perfil CUSA00552 verificado")
+            if raw.count("80070000") != 1 or raw.count("38040000") != 1:
+                raise ValueError("Constantes de viewport da UI não reconhecidas")
+            replacement = raw.replace("80070000", scene_width).replace("38040000", scene_height)
+            visited.add(at)
+        elif at in POSTPROCESS_FULL_SITES or at in POSTPROCESS_HALF_SITES:
+            # Replace just the mov ecx,width / mov r8d,height argument pair
+            # to the frame allocator. Preserve call displacement and all
+            # alignment/flags/target format arguments byte for byte.
+            full = at in POSTPROCESS_FULL_SITES
+            expected = "b98007000041b838040000" if full else "b9c003000041b81c020000"
+            scaled = ("b9" + (scene_width if full else half_width) +
+                      "41b8" + (scene_height if full else half_height))
+            if raw.count(expected) != 1:
+                raise ValueError("Alocação de framebuffer full/half fora do perfil verificado")
+            replacement = raw.replace(expected, scaled)
+            visited.add(at)
+        elif at == AIM_NORMALIZATION_ADDRESS:
+            insn = bytearray.fromhex(raw)
+            if (len(insn) < 18 or insn[0] != 0xBE or
+                    insn[5:10] != bytes.fromhex("c5f96ec6ba") or
+                    insn[14:18] != bytes.fromhex("c5f96eca")):
+                raise ValueError("Instruções de normalização da mira desconhecidas")
+            y, x = struct.unpack_from("<f", insn, 1)[0], struct.unpack_from("<f", insn, 10)[0]
+            if abs(y - 1.0 / 1080.0) > 1e-9 or abs(x - 1.0 / 1920.0) > 1e-9:
+                raise ValueError("Constantes anteriores da mira são diferentes do esperado")
+            struct.pack_into("<f", insn, 1, 1.0 / height)
+            struct.pack_into("<f", insn, 10, 1.0 / width)
+            replacement = insn.hex()
+            visited.add(at)
+        if len(replacement) != len(raw):
+            raise ValueError("Tamanho do patch de resolução modificado")
+        patches.append((at, original, replacement))
+    required = {*GAME_UI_NATIVE_OVERRIDES, *POSTPROCESS_FULL_SITES,
+                *POSTPROCESS_HALF_SITES, AIM_NORMALIZATION_ADDRESS}
+    if visited != required:
+        raise ValueError("Perfil de resolução unificada incompleto")
+    return patches
+
+
+def selected_options(options, profile="01.00", self_sha=None):
     options = options or {}
     if not isinstance(options, dict):
         raise ValueError("Configuração de patches inválida")
@@ -192,13 +382,33 @@ def selected_options(options):
         raise ValueError("Resolução não suportada")
     selected = {}
     if resolution != "original":
-        selected["resolution-" + resolution] = PERFORMANCE_RESOLUTIONS[resolution]
-    for name, changes in PERFORMANCE_EFFECTS.items():
+        if profile == "01.00":
+            selected["resolution-" + resolution] = scene_aim_resolution_patches(resolution)
+        elif profile == "01.11" and self_sha in RESOLUTION_111_SELF_SHA256:
+            selected["resolution-" + resolution] = scene_aim_resolution_patches_111(resolution)
+        else:
+            raise ValueError("Patch de resolução 01.11 ainda não validado para este SHA-256")
+    effects = PERFORMANCE_EFFECTS if profile == "01.00" else PERFORMANCE_EFFECTS_111
+    for name, changes in effects.items():
         if type(options.get(name, False)) is not bool:
             raise ValueError("Opção de patch inválida: " + name)
         if options.get(name, False):
             selected["disable-" + name] = changes
     return selected
+
+
+def base_patches_for(options, profile="01.00"):
+    patches = dict(BASE_PATCHES if profile == "01.00" else BASE_PATCHES_111)
+    # The 01.00 job-sleep patch forces three formerly conditional wake paths.
+    # Snapdragon 7+ Gen 2 had a persistent job-counter deadlock while the
+    # presentation thread kept flipping; retain the original game branches
+    # on this device instead of globally disabling the job watchdog.
+    job_sleep = (options or {}).get("job_sleep", True)
+    if type(job_sleep) is not bool:
+        raise ValueError("Opção de workers inválida")
+    if not job_sleep:
+        patches.pop("job-sleep")
+    return patches
 
 
 def write_selected(source, prepared, options):
@@ -207,16 +417,30 @@ def write_selected(source, prepared, options):
     import json
     from pathlib import Path
     prepared, source = Path(prepared), Path(source)
-    requested = selected_options(options)
     game_self = prepared / "tlou-view/eboot.bin"
     if not game_self.is_file():
-        if requested:
-            raise ValueError("Esta pasta preparada não contém o eboot original para validar os patches")
+        raise ValueError("Esta pasta preparada não contém eboot original")
+    digest = hashlib.sha256(game_self.read_bytes()).hexdigest()
+    profile = known_profile(digest)
+    if profile is None:
+        if (options or {}).get("resolution", "original") != "original" or any(
+            (options or {}).get(name, False) for name in PERFORMANCE_EFFECTS
+        ):
+            raise ValueError("Eboot não reconhecido: patches exigem SHA-256 validado")
+        # A prepared directory may be manually reused after replacing the game:
+        # never leave a stale patches.bin from a different executable active.
+        (prepared / "patches.bin").unlink(missing_ok=True)
+        (prepared / "patch-validation.json").unlink(missing_ok=True)
+        print("Eboot sem perfil Android de patches conhecido; removidos patches antigos.", flush=True)
         return
-    if hashlib.sha256(game_self.read_bytes()).hexdigest() != BASE_SELF_SHA256:
-        if requested:
-            raise ValueError("Patches disponíveis apenas para o eboot CUSA00552 1.00 validado; restaure o perfil Original")
-        return
+    effective = dict(options or {})
+    # Never apply 01.00 offsets to an unknown 01.11 binary variant.
+    # The supplied 3cfa... SELF has a separately validated guarded layout.
+    if (profile == "01.11" and digest not in RESOLUTION_111_SELF_SHA256 and
+            effective.get("resolution", "original") != "original"):
+        print("Aviso: resolução reduzida sem assinatura validada nesta variante do eboot 01.11; usando Original.", flush=True)
+        effective["resolution"] = "original"
+    requested = selected_options(effective, profile, digest)
     spec = importlib.util.spec_from_file_location("tlou_patch_writer", source / "tools/probe_tlou.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -240,7 +464,7 @@ def write_selected(source, prepared, options):
             if kind == 1 and start <= at and at + length <= start + filesz:
                 return elf[offset + at-start:offset + at-start+length]
         return b""
-    patches = dict(BASE_PATCHES)
+    patches = base_patches_for(effective, profile)
     patches.update(requested)
     for name, changes in patches.items():
         for at, expected, _ in changes:
@@ -249,7 +473,9 @@ def write_selected(source, prepared, options):
     temp = prepared / "patches.bin.new"
     module.image_patches(elf_path, temp, patches)
     temp.replace(prepared / "patches.bin")
-    report = {"profile": BASE_SELF_SHA256, "selected": list(requested),
-              "resolution": (options or {}).get("resolution", "original"), "validated": True}
+    report = {"profile": digest, "game_version": profile, "selected": list(requested),
+              "resolution": effective.get("resolution", "original"),
+              "requested_resolution": (options or {}).get("resolution", "original"),
+              "validated": True}
     (prepared / "patch-validation.json").write_text(json.dumps(report, indent=2)+"\n")
     print("Patches validados: " + (", ".join(requested) or "Original; correções de estabilidade"), flush=True)

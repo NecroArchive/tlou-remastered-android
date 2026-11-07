@@ -4,6 +4,7 @@
 // while it is open the game gets no pad/keyboard input. Settings live in gow3_settings.h.
 
 #pragma once
+struct Gow3SaveChoiceEntry;
 
 #include <string>
 #include <vector>
@@ -49,6 +50,10 @@ void SetTextEntry(bool active, const std::string& prompt, const std::string& tex
 /// The game's save list: shown until the player chooses (arrows/D-pad, Enter/Cross) or
 /// cancels (Esc/Circle). `pictures`: one per item (empty = none), drawn beside its text.
 /// PollChoice: -1 while open, -2 cancelled, else the chosen index.
+#ifdef __ANDROID__
+void BeginSaveChoice(const std::string& title, const Gow3SaveChoiceEntry* entries, int count, int focus);
+void CancelSaveChoice();
+#endif
 void BeginChoice(const std::string& title, const std::vector<std::string>& items,
                  std::vector<Gow3Png::Image> pictures, int focus);
 int PollChoice();

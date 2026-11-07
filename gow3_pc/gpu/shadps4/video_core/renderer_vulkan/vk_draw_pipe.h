@@ -113,7 +113,11 @@ public:
         ++drains;
         const u32 slot = reason < NumReasons ? reason : ReasonRasterizer;
         ++drains_by_reason[slot];
-        const u64 start = Common::FencedRDTSC();
+        // The Android release does not enable GOW3_FRAME_STATS. Two serializing
+        // counter reads on every waiting drain add CPU cost without measuring
+        // useful emulator work. Preserve exact timings when explicitly profiling.
+        static const bool profile_drains = std::getenv("GOW3_FRAME_STATS") != nullptr;
+        const u64 start = profile_drains ? Common::FencedRDTSC() : 0;
         for (u32 spins = 0; consumed.load(std::memory_order_acquire) != head; ++spins) {
             if (spins < 4096) {
                 COMMON_CPU_RELAX();
@@ -121,9 +125,11 @@ public:
                 std::this_thread::yield();
             }
         }
-        const u64 waited = Common::FencedRDTSC() - start;
-        drain_cycles += waited;
-        cycles_by_reason[slot] += waited;
+        if (profile_drains) {
+            const u64 waited = Common::FencedRDTSC() - start;
+            drain_cycles += waited;
+            cycles_by_reason[slot] += waited;
+        }
     }
 
     /// Stage A: position after the last committed packet; Reached(position) once B ran it.

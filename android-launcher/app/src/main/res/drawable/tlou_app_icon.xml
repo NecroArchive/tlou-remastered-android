@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- TLOU-themed launcher mark: charcoal, olive and worn ivory. -->
+    <path android:fillColor="#131B16"
+        android:pathData="M0,0H108V108H0Z" />
+    <path android:fillColor="#273628"
+        android:pathData="M0,0H108V12H0Z M0,96H108V108H0Z"/>
+    <path android:fillColor="#788B60"
+        android:pathData="M11,16H97V19H11Z M11,88H97V91H11Z"/>
+    <!-- Abstract overgrowth/fungal spore emblem, not a game asset. -->
+    <path android:fillColor="#576B4D" android:fillAlpha="0.65"
+        android:pathData="M54,13L58,27L70,19L64,32L81,31L65,39L83,43L65,44L58,53L51,43L35,47L45,35L30,27L48,30Z"/>
+    <path android:fillColor="#E5E9D9"
+        android:pathData="M14,46H33V53H27V78H20V53H14Z
+                          M36,46H43V71H53V78H36Z
+                          M76,46H83V68Q83,72 87,72Q91,72 91,68V46H98V69Q98,79 87,79Q76,79 76,69Z"/>
+    <path android:fillColor="#E5E9D9" android:fillType="evenOdd"
+        android:pathData="M55,46H73V78H55Z M62,53V71H66V53Z"/>
+    <path android:fillColor="#B2C596"
+        android:pathData="M15,84H93V87H15Z"/>
+</vector>

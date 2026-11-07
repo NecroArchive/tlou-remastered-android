@@ -322,10 +322,14 @@ static ABI int32_t msg_result(unsigned char *out) { return dialog_result(1,out,0
 static struct {
     uint32_t mode, result;
     void *user_data;
-    char dirs[32][32];
+    char dirs[255][32];
     int dir_count, has_new, choosing;
 } save_dialog;
-static char save_labels[33][200], save_icons[33][720];
+static char save_labels[256][200], save_icons[256][720];
+#if defined(__ANDROID__) || defined(GOW3_ANDROID_CHOICES_TEST)
+static unsigned char save_parameters[256][RUNTIME_SAVE_PARAM_SIZE];
+static char save_titles[256][129],save_subtitles[256][129],save_details[256][1025];
+#endif
 static void save_label(char *out, size_t size, const char *dir) {
     unsigned char param[RUNTIME_SAVE_PARAM_SIZE];
     if (runtime_savedata_param(USER_ID,dir,param)) { snprintf(out,size,"%s",dir); return; }
@@ -352,12 +356,13 @@ static ABI int32_t save_open(const unsigned char *p) {
     if (items) {
         const char *dirs; uint32_t count; const void *new_item;
         memcpy(&dirs,items+16,8); memcpy(&count,items+24,4); memcpy(&new_item,items+32,8);
-        for (uint32_t i=0;dirs && i<count && save_dialog.dir_count<32;++i)
+        if(count>255)return DIALOG_PARAM_INVALID;
+        for (uint32_t i=0;dirs && i<count && save_dialog.dir_count<255;++i)
             if (dirs[i*32]) memcpy(save_dialog.dirs[save_dialog.dir_count++],dirs+i*32,31);
         save_dialog.has_new=new_item!=NULL;
     }
     if (save_dialog.mode!=SAVE_MODE_LIST) return dialog_open_mode(2,p,52,5);
-    const char *labels[33], *icons[33]; int n=0;
+    const char *labels[256], *icons[256]; int n=0;
     if (save_dialog.has_new) { snprintf(save_labels[n],sizeof(save_labels[n]),"New save"); labels[n]=save_labels[n]; icons[n]=NULL; ++n; }
     for (int i=0;i<save_dialog.dir_count;++i) {
         save_label(save_labels[n],sizeof(save_labels[n]),save_dialog.dirs[i]); labels[n]=save_labels[n];
@@ -366,7 +371,28 @@ static ABI int32_t save_open(const unsigned char *p) {
     }
     uint32_t type; memcpy(&type,p+56,4);
     const char *title=type==1 ? "Save game" : type==2 ? "Load game" : "Delete save";
-    if (!n || !gow3gpu_choice_begin(title,labels,icons,n,0)) {
+    int choice_started=0;
+#if defined(__ANDROID__) || defined(GOW3_ANDROID_CHOICES_TEST)
+    (void)labels;
+    Gow3SaveChoiceEntry entries[256]={0};
+    for(int index=0;index<n;++index) {
+        if(save_dialog.has_new && index==0){entries[index].is_new=1;entries[index].title="New save";continue;}
+        const char* directory=save_dialog.dirs[index-save_dialog.has_new];
+        entries[index].directory=directory;entries[index].icon_path=icons[index];
+        if(runtime_savedata_param(USER_ID,directory,save_parameters[index])==0) {
+            memcpy(save_titles[index],save_parameters[index],128);save_titles[index][128]=0;
+            memcpy(save_subtitles[index],save_parameters[index]+128,128);save_subtitles[index][128]=0;
+            memcpy(save_details[index],save_parameters[index]+256,1024);save_details[index][1024]=0;
+            entries[index].title=save_titles[index];entries[index].subtitle=save_subtitles[index];entries[index].detail=save_details[index];
+            memcpy(&entries[index].user_param,save_parameters[index]+1280,4);
+            memcpy(&entries[index].modified_time,save_parameters[index]+1288,8);
+        }
+    }
+    if(n)choice_started=gow3gpu_save_choice_begin(title,entries,n,0);
+#else
+    if(n)choice_started=gow3gpu_choice_begin(title,labels,icons,n,0);
+#endif
+    if (!n || !choice_started) {
         printf("Runtime: SaveDataDialog list (%s): %s\n",title,n ? "no window, cancelled" : "no saves, cancelled");
         save_dialog.result=SAVE_RESULT_CANCELED;
         dialogs[2].status=DIALOG_FINISHED; dialogs[2].button=0;
@@ -398,8 +424,13 @@ static ABI int32_t save_status(void) {
     }
     return dialog_status(2);
 }
-static ABI int32_t save_term(void) { return dialog_term(2); }
-static ABI int32_t save_close(void) { return dialog_close(2); }
+static void save_cancel_pending_choice(void) {
+#if defined(__ANDROID__) || defined(GOW3_ANDROID_CHOICES_TEST)
+    if(save_dialog.choosing){gow3gpu_save_choice_cancel();save_dialog.choosing=0;save_dialog.result=SAVE_RESULT_CANCELED;}
+#endif
+}
+static ABI int32_t save_term(void) { int32_t r=dialog_term(2);if(!r)save_cancel_pending_choice();return r; }
+static ABI int32_t save_close(void) { int32_t r=dialog_close(2);if(!r)save_cancel_pending_choice();return r; }
 static ABI int32_t save_progress(uint32_t target, uint32_t rate) { (void)rate; return dialog_progress(2,target); }
 /* OrbisSaveDataDialogResult: mode, result, buttonId, dirName* @16, param* @24, userData @32. */
 static ABI int32_t save_result(unsigned char *out) {

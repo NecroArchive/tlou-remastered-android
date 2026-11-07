@@ -93,6 +93,8 @@ std::pair<u32, u32> Swapchain::ReleaseQueues() const {
 void Swapchain::Create(u32 width_, u32 height_) {
     width = width_;
     height = height_;
+    crop_offset = crop_extent = 0;
+    crop_pending = false;
     needs_recreation = false;
     // A 0x0 output (no screen size) has no buffers; they come when the size is back.
     if (width == 0 || height == 0) {
@@ -405,7 +407,13 @@ bool Swapchain::Present() {
     const int fence_fd = ExportPresentReady();
     ++frame_counter;
     if (client.Connected()) {
-        if (!client.SendFrame(generation, image_index, frame_counter, width, height, fence_fd)) {
+        // The previous Presenter::MakeImageBlitFit identified the exact
+        // viewport. Other producers/blank frames send a full-buffer rect.
+        const u32 sent_offset = crop_pending ? crop_offset : 0;
+        const u32 sent_extent = crop_pending ? crop_extent : 0;
+        crop_pending = false;
+        if (!client.SendFrame(generation, image_index, frame_counter, width, height,
+                              fence_fd, sent_offset, sent_extent)) {
             PeerGone();
         }
         // The buffer is the app's until its release.

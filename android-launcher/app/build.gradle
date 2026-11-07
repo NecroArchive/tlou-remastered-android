@@ -10,8 +10,8 @@ android {
         // Android 10/11 allow execution of extracted native payload in app-private files
         // for legacy target SDK. Keep separate from SDK version for compilation.
         targetSdk 28
-        versionCode 33
-        versionName '0.31-bionic-experimental'
+        versionCode 39
+        versionName '0.1.1'
     }
     buildTypes {
         release { minifyEnabled false }
@@ -38,3 +38,9 @@ android {
         jniLibs { useLegacyPackaging = true }
     }
 }
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+}
+android.testOptions.unitTests.includeAndroidResources = true

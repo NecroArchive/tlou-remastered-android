@@ -51,6 +51,24 @@ static uint64_t reference_clamp(uintptr_t address, uint64_t size) {
     return length<size ? length : size;
 }
 
+/* Independent original 8-slot scan, to test the hot region hint
+ * against every cache generation and mapped/partially unmapped range. */
+static const CachedRegion *reference_cached_region(uintptr_t address) {
+    uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
+    if(generation&1)return NULL;
+    for(unsigned i=0;i<8;++i){
+        const CachedRegion *c=&region_cache[i];
+        if(c->generation==generation && c->end && c->start<=address && address<c->end)return c;
+    }
+    return NULL;
+}
+static void check_region_hint(uintptr_t address) {
+    const CachedRegion *a=reference_cached_region(address),*b=cached_region(address);
+    assert((a!=NULL)==(b!=NULL));
+    if(a&&b) {
+        assert(a->start==b->start && a->end==b->end && a->kind==b->kind && a->phys==b->phys);
+    }
+}
 static uint64_t rng=0xd48b36aa19ULL;
 static uint64_t random_value(void) { rng^=rng<<13; rng^=rng>>7; rng^=rng<<17; return rng; }
 static void cold_cache(void) { memset(region_cache,0,sizeof(region_cache)); region_cache_next=0; }
@@ -75,10 +93,19 @@ static void correctness(void) {
     for(unsigned i=0;i<50000;++i) {
         uintptr_t at=USER_MIN+random_value()%(vmas[vma_count-1].end-USER_MIN+PAGE);
         uint64_t size=random_value()%(MAX_COPY+1);
+        check_region_hint(at);
         cold_cache(); uint64_t expected=reference_clamp(at,size);
         cold_cache(); assert(runtime_memory_clamp(at,size)==expected);
         /* Exercise a generation-valid cache as well as misses, holes and reservations. */
         assert(runtime_memory_clamp(at,size)==expected);
+        check_region_hint(at);
+        /* For a read-only ring buffer the only decision is whether the
+         * contiguous mapped extent is <=16KiB; if so copy exactly that
+         * extent. A clamp capped at threshold+1 has the same result. */
+        const uint64_t cap=size<(16u*1024+1u)?size:(16u*1024+1u);
+        const uint64_t capped=runtime_memory_clamp(at,cap);
+        assert((expected>16u*1024 && capped>16u*1024) ||
+               (expected<=16u*1024 && capped==expected));
         memset(a,0xa5,MAX_COPY+32); memset(b,0xa5,MAX_COPY+32);
         cold_cache(); reference_copy(at,a+16,size);
         cold_cache(); runtime_memory_copy_backing(at,b+16,size);
@@ -114,6 +141,43 @@ static int compare_double(const void *a,const void *b) {
 /* Function pointers preserve the public call boundary for both versions. */
 typedef uint64_t (*Clamp)(uintptr_t,uint64_t);
 typedef void (*Copy)(uintptr_t,void *,uint64_t);
+/* Native cache-last validation uses the production function and the
+ * exact old 8-way scan with the same TLS table and generation. */
+typedef const CachedRegion *(*RegionLookup)(uintptr_t);
+static __attribute__((noinline)) double run_region_lookup(RegionLookup lookup,unsigned pattern) {
+    uint64_t sum=0;
+    cold_cache();
+    for(unsigned i=0;i<8;++i) {
+        (void)runtime_memory_clamp(vmas[i].start+64,128);
+    }
+    const uintptr_t last=vmas[7].start+64;
+    const uint64_t begin=now_ns();
+    for(unsigned i=0;i<1000000;++i) {
+        const uintptr_t at=pattern==0?last:
+                           pattern==1?vmas[i%8].start+64:
+                                      (i%10<7?last:vmas[i%8].start+64);
+        const CachedRegion *c=lookup(at);
+        sum+=c?c->phys:0;
+    }
+    result_sink=sum;
+    return (double)(now_ns()-begin)/1000000.0;
+}
+static void benchmark_region_hint(void) {
+    const char *names[]={"last-inserted","rotating-eight","last-70pct"};
+    for(unsigned p=0;p<3;++p) {
+        double old[9],now[9];
+        for(unsigned i=0;i<9;++i) {
+            if(i%2) {now[i]=run_region_lookup(cached_region,p);
+                     old[i]=run_region_lookup(reference_cached_region,p);}
+            else {old[i]=run_region_lookup(reference_cached_region,p);
+                  now[i]=run_region_lookup(cached_region,p);}
+        }
+        qsort(old,9,sizeof(double),compare_double);
+        qsort(now,9,sizeof(double),compare_double);
+        printf("cached-region-hint %-18s old_ns=%.2f new_ns=%.2f ratio=%.3f\n",
+               names[p],old[4],now[4],now[4]/old[4]);
+    }
+}
 static __attribute__((noinline)) double run_clamp(Clamp fn,unsigned workload) {
     uint64_t sum=0; cold_cache();
     uint64_t begin=now_ns();
@@ -134,6 +198,41 @@ static __attribute__((noinline)) double run_copy(Copy fn,unsigned workload) {
 }
 /* CollectRingBindings clamps before CopySparseMemory: the clamp warms the same
  * thread's backing cache. Do not add independently cold clamp/copy savings. */
+/* Every valid shader buffer used to clamp twice: first to reject garbage
+ * descriptors and then to obtain the same extent for Vulkan binding.
+ * Model that exact hot path with the real runtime_memory_clamp, including
+ * cache-hot and rotating VMA layouts. Both versions must produce equal ranges.
+ */
+static __attribute__((noinline)) double run_shader_buffer_clamp(int repeated,unsigned workload) {
+    uint64_t sum=0; cold_cache();
+    const uint64_t begin=now_ns();
+    for(unsigned j=0;j<400000;++j) {
+        size_t i=workload==0?1:((j*17)%512);
+        uintptr_t address=vmas[i].start+64;
+        uint64_t requested=workload==2?PAGE*3:128;
+        uint64_t mapped=runtime_memory_clamp(address,requested);
+        /* Exactly the second clamp that BindBuffers removed. */
+        uint64_t bound=repeated?runtime_memory_clamp(address,requested):mapped;
+        assert(bound==mapped);
+        sum+=bound;
+    }
+    result_sink=sum;
+    return (double)(now_ns()-begin)/400000;
+}
+static void benchmark_shader_buffer_clamp(void) {
+    const char *names[]={"cache-hot-128B","rotating-512-128B","cross-regions-48KiB"};
+    for(unsigned w=0;w<3;++w) {
+        double old[9],next[9];
+        for(unsigned i=0;i<9;++i) {
+            if(i%2) { next[i]=run_shader_buffer_clamp(0,w); old[i]=run_shader_buffer_clamp(1,w); }
+            else    { old[i]=run_shader_buffer_clamp(1,w); next[i]=run_shader_buffer_clamp(0,w); }
+        }
+        qsort(old,9,sizeof(double),compare_double); qsort(next,9,sizeof(double),compare_double);
+        printf("shader-buffer-clamp %-22s two_ns=%.2f one_ns=%.2f saved_ns/bind=%.2f reduction=%.1f%%\n",
+               names[w],old[4],next[4],old[4]-next[4],
+               100*(old[4]-next[4])/old[4]);
+    }
+}
 static __attribute__((noinline)) double run_clamp_then_copy(Clamp clamp,Copy copy,unsigned workload) {
     unsigned char out[4*16384]; uint64_t sum=0; cold_cache();
     uint64_t begin=now_ns();
@@ -186,6 +285,10 @@ static void count_work(void) {
 int main(int argc,char **argv) {
     setup(); count_work(); correctness();
     tlou_memory_walk_once=0; correctness(); tlou_memory_walk_once=1;
-    if(argc<2 || strcmp(argv[1],"--correctness-only")) benchmark();
+    if(argc<2 || strcmp(argv[1],"--correctness-only")) {
+        benchmark();
+        benchmark_shader_buffer_clamp();
+        benchmark_region_hint();
+    }
     free(vmas); free(backing_base); return 0;
 }

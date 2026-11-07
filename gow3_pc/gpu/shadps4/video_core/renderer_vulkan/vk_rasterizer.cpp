@@ -39,6 +39,8 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/tlou_physics_readback.h"
+#include "video_core/renderer_vulkan/tlou_auto_readback.h"
 #include "video_core/renderer_vulkan/ring_binding_cursor.h"
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
@@ -938,6 +940,25 @@ static bool TlouResultShader(u64 hash) {
                                [hash](const auto& b) { return b.first == hash; });
 }
 
+// Android 01.00 emits the same 4272/6480-byte compute result sizes with a
+// different shader hash (697cfcc4), slot 6 and raw 4-byte V# stride.
+// Only that observed hash AND its exact layouts qualify for fallback.
+// This is not Precise/Readback 2: the normal EOP path queues a range-limited
+// asynchronous readback, and its watched pages wait only for their producer.
+// When disabled or on desktop, hashes remain the sole recognition method.
+static bool TlouAndroidPhysicsShape(u64 hash, u32 slot, u32 stride, u32 records, u64 bytes) {
+#ifdef __ANDROID__
+    static const bool enabled = [] {
+        const char* env = std::getenv("TLOU_PHYSICS_SHAPE_READBACK");
+        return !env || env[0] != '0';
+    }();
+    return enabled && TlouPhysicsReadback::Shape(hash, slot, stride, records, bytes);
+#else
+    (void)hash; (void)slot; (void)stride; (void)records; (void)bytes;
+    return false;
+#endif
+}
+
 static const std::vector<std::pair<u64, u32>>& TlouEopReadbackList() {
     static const std::vector<std::pair<u64, u32>> bindings = [] {
         std::vector<std::pair<u64, u32>> list{{0x106beafd, 6}, {0xe30509e8, 5}};
@@ -1547,34 +1568,75 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
             pending_copy_writes.push_back({address, end, copy_position});
         }
     }
-    // gow3 31 Oct 2026: 9% of the GPU command thread in a heavy area was this walk. A range no
-    // pending write can touch skips it (one that only touches an entry across a granule stays a
-    // new entry, which is harmless), and the walk starts at the entry found last.
-    const u32 count = PendingFilterHit(address, end)
-                          ? static_cast<u32>(pending_writes.size())
-                          : 0;
-    const u32 first = pending_hint < count ? pending_hint : 0;
-    for (u32 step = 0; step < count; ++step) {
-        const u32 i = first + step < count ? first + step : first + step - count;
+    // A pending output range is often repeated by successive compute dispatches.
+    // Reusing a previously found interval avoids the 64 KiB bloom walk and the
+    // search through the pending vector. For multiple overlapping intervals the
+    // indexed lookup must select the SAME cyclic-first candidate as the old scan.
+    // GOW3_PENDING_WRITE_INDEX=0 restores the original algorithm for A/B tests.
+    static const bool indexed = [] {
+        const char* env = std::getenv("GOW3_PENDING_WRITE_INDEX");
+        return !(env && env[0] == '0');
+    }();
+    const auto merge = [&](u32 i) {
         auto& write = pending_writes[i];
-        if (address <= write.end && write.begin <= end) {
-            pending_hint = i;
-            write.begin = std::min(write.begin, address);
-            write.end = std::max(write.end, end);
-            write.position = position;
-            pending_min = std::min(pending_min, address);
-            pending_max = std::max(pending_max, end);
+        const bool covered = Detail::PendingWriteAlreadyCovered(write, address, end);
+        pending_hint = i;
+        write.begin = std::min(write.begin, address);
+        write.end = std::max(write.end, end);
+        write.position = position;
+        pending_min = std::min(pending_min, address);
+        pending_max = std::max(pending_max, end);
+        // If the old range already covered the new one, all its filter bits
+        // are already set (including after a pruning rebuild). Otherwise
+        // publish the expanded spatial membership and filter bits.
+        if (indexed && !covered) {
+            pending_write_index.Set(i, write);
+        }
+        if (!indexed || !covered) {
             FilterPendingRange(address, end);
-            if (uncommitted) {
-                uncommitted_indices.push_back(i);
-            }
+        }
+        if (uncommitted) {
+            uncommitted_indices.push_back(i);
+        }
+    };
+    // The legacy 64 KiB bloom check is authoritative. It excludes some
+    // adjacent writes that touch exactly at a window boundary; bypassing it
+    // would merge intervals that the original code intentionally kept apart.
+    const u32 count = PendingFilterHit(address, end)
+                          ? static_cast<u32>(pending_writes.size()) : 0;
+    if (indexed && count &&
+        Detail::PendingWriteHintOverlaps(pending_writes, pending_hint, address, end)) {
+        merge(pending_hint);
+        return;
+    }
+    if (indexed && pending_write_index.CanQuery(count)) {
+        if (const auto hit = pending_write_index.FirstOverlap(pending_writes, pending_hint,
+                                                               address, end)) {
+            merge(*hit);
             return;
+        }
+        // With <=2048 entries every interval is in the index: no match means
+        // the original full scan would find none. Hash collisions are harmless.
+    } else {
+        const u32 candidates = count;
+        const u32 first = pending_hint < candidates ? pending_hint : 0;
+        for (u32 step = 0; step < candidates; ++step) {
+            const u32 i = first + step < candidates ? first + step
+                                                    : first + step - candidates;
+            auto& write = pending_writes[i];
+            if (address <= write.end && write.begin <= end) {
+                merge(i);
+                return;
+            }
         }
     }
     if (uncommitted) {
         uncommitted_indices.push_back(static_cast<u32>(pending_writes.size()));
     }
     pending_writes.push_back({address, end, position});
+    if (indexed) {
+        pending_write_index.Set(pending_writes.size() - 1, pending_writes.back());
+    }
     pending_min = std::min(pending_min, address);
     pending_max = std::max(pending_max, end);
     FilterPendingRange(address, end);
@@ -1653,9 +1715,15 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
     // Now and then drop entries whose writes the recording thread has done: the bounds shrink.
     // (Not while PostDraw notes a packet: uncommitted_indices point into the vector.)
     if ((++pending_checks & 63) == 0 && uncommitted_indices.empty()) {
+        const size_t before_erase = pending_writes.size();
         std::erase_if(pending_writes, [&](const PendingWrite& write) {
             return draw_pipe->Reached(write.position);
         });
+        // Erasing shifts vector indices. Rebuild only when at least one
+        // interval was removed; a no-op pruning pass must remain cheap.
+        if (before_erase != pending_writes.size()) {
+            pending_write_index.Rebuild(pending_writes);
+        }
         pending_min = ~VAddr{0};
         pending_max = 0;
         pending_filter.fill(0);
@@ -1670,6 +1738,20 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
     // command thread in The Last of Us, a check per read-only constant buffer).
     if (!PendingFilterHit(address, end)) {
         return false;
+    }
+    // For large sets, use the same spatial index maintained by
+    // NotePendingGpuWrite. It answers the strictly-overlapping, not-yet-
+    // recorded predicate without walking all pending writes on every
+    // read-only constant in the hot ring path. Below 128 entries the
+    // original linear scan is cheaper; above 2048 it is the fallback.
+    static const bool indexed = [] {
+        const char* env = std::getenv("GOW3_PENDING_WRITE_INDEX");
+        return !(env && env[0] == '0');
+    }();
+    if (indexed && pending_write_index.CanQueryLive(pending_writes.size())) {
+        return pending_write_index.AnyLiveOverlap(
+            pending_writes, address, end,
+            [this](const PendingWrite& write) { return !draw_pipe->Reached(write.position); });
     }
     for (const auto& write : pending_writes) {
         if (address < write.end && write.begin < end && !draw_pipe->Reached(write.position)) {
@@ -1740,7 +1822,16 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         } else {
             memory->CopySparseMemory(address, dst, size);
         }
-        constant_ring->Flush(*offset, size);
+        // The batch path flushes all packet snapshots once, before the
+        // draw pipe publishes the packet to the Vulkan recording thread.
+        // A/B fallback preserves the original per-buffer flush behavior.
+        static const bool batch_flush = [] {
+            const char* env = std::getenv("GOW3_RING_BATCH_FLUSH");
+            return !(env && env[0] == '0');
+        }();
+        if (!batch_flush) {
+            constant_ring->Flush(*offset, size);
+        }
         if (LateConstantsEnabled()) {
             // gow3 21 Oct 2026: checked at the submission of this draw (its ring position).
             const u64 due = constant_ring->Position();
@@ -1769,7 +1860,21 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         if (address == 0 || vsharp.GetSize() == 0) {
             continue;
         }
-        const u64 size = memory->ClampRangeSize(address, vsharp.GetSize());
+        // Stage A only snapshots read-only V# ranges of at most 16KiB.
+        // For larger declarations, scanning guest VMAs beyond the first
+        // 16KiB+1 is wasted: a mapped prefix longer than the stream limit
+        // will not be copied, while any shorter contiguous prefix is
+        // identical to the original full-size clamp. Written bindings
+        // still require the EXACT full extent for pending-write tracking.
+        const u64 raw_size = vsharp.GetSize();
+        static const bool clamp_cap = [] {
+            const char* env = std::getenv("GOW3_RING_CLAMP_CAP");
+            return !(env && env[0] == '0');
+        }();
+        const u64 query_size = !desc.is_written && clamp_cap
+            ? std::min<u64>(raw_size, VideoCore::BufferCache::STREAM_THRESHOLD + 1)
+            : raw_size;
+        const u64 size = memory->ClampRangeSize(address, query_size);
         if (desc.is_written) {
             NotePendingGpuWrite(address, size);
             continue;
@@ -1787,6 +1892,16 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
 void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_prepared,
                           bool is_indexed, u32 index_offset, const AmdGpu::ComputeProgram* cs,
                           const IndirectDraw* indirect, const void* pending) {
+    // This is the saturated command thread's most expensive sampled phase:
+    // 4-5us per dispatched compute packet in TLOU gameplay. Attribute the
+    // cost to register delta, constant-ring capture, packet encoding and
+    // final bookkeeping without timing every dispatch.
+    static thread_local Detail::CpuPhaseSampler<5> cpu_sampler{CpuPhaseSamplingEnabled()};
+    auto cpu_sample = cpu_sampler.Begin([](const auto& stats, u64 wall_ns) {
+        constexpr std::array<const char*, 5> names{
+            "reg-delta", "ring-collect", "packet-encode", "commit", "bookkeeping"};
+        ReportCpuPhases<5>("command-postdraw", names, stats, wall_ns);
+    });
     auto& dirty = liverpool->pipe_dirty;
     if (!pipe_synced) {
         // Stage B has not run yet: its register copy starts as this one.
@@ -1797,6 +1912,7 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     std::array<u16, AmdGpu::RegDirty::NumBlocks> blocks;
     u32 num_blocks = 0;
     dirty.ForEach([&](u32 block) { blocks[num_blocks++] = static_cast<u16>(block); });
+    cpu_sample.Phase(1);
     const auto stages = pipeline  ? pipeline->GetStages()
                         : pending ? PipelineCache::PendingStages(pending)
                                   : std::span<const Shader::Info* const>{};
@@ -1805,6 +1921,7 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
                             Shader::MaxStageTypes>
         rings;
     u32 num_stages = 0;
+    const u64 ring_batch_start = constant_ring ? constant_ring->Position() : 0;
     u32 size = sizeof(DrawPacket) + AlignPacket(num_blocks * sizeof(u16)) +
                num_blocks * AmdGpu::RegDirty::BlockWords * sizeof(u32);
     for (const auto* stage : stages) {
@@ -1830,12 +1947,24 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     if (indirect) {
         size += AlignPacket(sizeof(IndirectDraw));
     }
+    // Every ring snapshot was captured at its original point in guest
+    // command order. Flush non-coherent host memory once per packet before
+    // Stage B can observe any of its descriptor bindings; never defer the
+    // actual guest snapshot, only the host-to-device visibility barrier.
+    static const bool batch_ring_flush = [] {
+        const char* env = std::getenv("GOW3_RING_BATCH_FLUSH");
+        return !(env && env[0] == '0');
+    }();
+    if (constant_ring && batch_ring_flush) {
+        constant_ring->FlushPacket(ring_batch_start);
+    }
     const u32 interval = VerifyInterval();
     const bool verify = interval && (draw_pipe->packets % interval) == 0;
     if (verify) {
         size += sizeof(AmdGpu::Regs);
     }
 
+    cpu_sample.Phase(2);
     u8* out = draw_pipe->Begin(size);
     u8* const start = out;
     auto& packet = *reinterpret_cast<DrawPacket*>(out);
@@ -1898,8 +2027,10 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         std::memcpy(out, &liverpool->regs, sizeof(AmdGpu::Regs));
         out += sizeof(AmdGpu::Regs);
     }
+    cpu_sample.Phase(3);
     dirty.Clear();
     draw_pipe->Commit(static_cast<u32>(out - start));
+    cpu_sample.Phase(4);
     if (!uncommitted_indices.empty() || copy_uncommitted) {
         // GOW3_PIPE_WRITE_END: this packet's writes are done once stage B is past its end.
         const u64 end = draw_pipe->Head();
@@ -5670,7 +5801,11 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
                 buffer_infos.emplace_back(VK_NULL_HANDLE, 0, VK_WHOLE_SIZE);
             } else {
-                const u64 size = memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize());
+                // This address and extent were already clamped for the invalid/garbage
+                // V# checks above. The guest mapping table has not been mutated by
+                // this path. Reusing the result removes one cached VMA lookup per
+                // live buffer, including the 300k dispatches/5s in TLOU gameplay.
+                const u64 size = mapped_size;
                 // gow3 diagnostics (GOW3_TRACE_BIND_RANGE=<lo>:<hi> hex): bindings that overlap
                 // the range, by shader and slot, 5 s statistics.
                 {
@@ -5722,12 +5857,23 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
 
                 const bool reads_new_cloth = ClothTrace(stage.pgm_hash, buffer_index, vsharp.base_address,
                                                         size, desc.is_written, compute_stage);
-                VideoCore::g_stream_stats_key = stage.pgm_hash << 8 | (buffer_index & 0xff);
-                VideoCore::g_stream_stats_used =
-                    desc.access_extent != 0 && desc.access_extent != ~0u && vsharp.stride != 0 &&
-                            vsharp.num_records != 0 && !vsharp.swizzle_enable
-                        ? u64(vsharp.num_records - 1) * vsharp.stride + desc.access_extent
-                        : 0;
+                // Stream binding breakdown is explicitly diagnostic, and is
+                // OFF in the Android release profile. On that hot path these
+                // thread-local stores, branches and extent multiplications
+                // were computed for every V#, even though no reader uses
+                // either value. Keep the exact old values when enabled.
+                static const bool stream_stats = [] {
+                    const char* env = std::getenv("GOW3_STREAM_STATS");
+                    return env && env[0] == '1';
+                }();
+                if (stream_stats) {
+                    VideoCore::g_stream_stats_key = stage.pgm_hash << 8 | (buffer_index & 0xff);
+                    VideoCore::g_stream_stats_used =
+                        desc.access_extent != 0 && desc.access_extent != ~0u && vsharp.stride != 0 &&
+                                vsharp.num_records != 0 && !vsharp.swizzle_enable
+                            ? u64(vsharp.num_records - 1) * vsharp.stride + desc.access_extent
+                            : 0;
+                }
                 const auto [buffer, offset] = buffer_cache.ObtainBuffer(
                     vsharp.base_address, size, desc.is_written, desc.is_formatted);
                 // gow3 26 Oct 2026 diagnostics (GOW3_BONE_TRACE=1): The Last of Us's skinning
@@ -5809,18 +5955,94 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     bound_buffers.emplace_back(buffer, offset, tracked_size, desc.is_written);
                 }
                 if (desc.is_written) {
+                    const bool physics_shape_fallback =
+                        compute_stage && EopReadbackMode() != 0 &&
+                        !TlouEopReadbackBinding(stage.pgm_hash, binding.buffer) &&
+                        TlouAndroidPhysicsShape(stage.pgm_hash, binding.buffer, vsharp.stride,
+                                                vsharp.num_records, size);
+                    const bool exact_result =
+                        IsEopReadbackBinding(stage.pgm_hash, binding.buffer, size) ||
+                        physics_shape_fallback;
+                    // Unlike a per-character/per-shader fix, this recognizes tiny
+                    // writable compute buffers by ownership and descriptor layout,
+                    // regardless of their shader hash. Existing EOPs retain half
+                    // the event's slots, avoiding starvation and global Readback 2.
+#ifdef __ANDROID__
+                    // User-verified Full policy only. It keeps the known exact
+                    // EOP physics results and covers small GPU-written compute
+                    // outputs regardless of shader identity. Fast and Balanced
+                    // were removed; both 720p and 1080p logs used Full.
+                    const u32 queued = u32(eop_readbacks.size() + eop_open_readbacks.size());
+                    const bool automatic_result =
+                        EopReadbackMode() == 1 &&
+                        TlouAutoReadback::Eligible(
+                            compute_stage, desc.is_written, exact_result,
+                            vsharp.stride, vsharp.num_records, size, queued);
+                    if (compute_stage && desc.is_written) {
+                        static std::atomic<u32> accepted{0};
+                        static std::atomic<s64> last_report{0};
+                        static std::atomic<u32> report_probes{0};
+                        if (automatic_result) accepted.fetch_add(1, std::memory_order_relaxed);
+                        if ((report_probes.fetch_add(1, std::memory_order_relaxed) & 511u) == 0u) {
+                            const s64 now = std::chrono::duration_cast<std::chrono::seconds>(
+                                std::chrono::steady_clock::now().time_since_epoch()).count();
+                            if (s64 last = last_report.load(std::memory_order_relaxed);
+                                now - last >= 5 && last_report.compare_exchange_strong(last, now)) {
+                                std::printf("TLOU automatic small compute readbacks (5 s): %u "
+                                            "accepted; mode=full\n",
+                                            accepted.exchange(0, std::memory_order_relaxed));
+                                std::fflush(stdout);
+                            }
+                        }
+                    }
+#else
+                    constexpr bool automatic_result = false;
+#endif
+                    // One bounded diagnostic window for the Android game: the PC
+                    // hash pair may differ from the CUSA00552 01.00 guest shader.
+                    // Record candidate compute outputs even when the known hashes
+                    // and the exact Android shader/binding signature do NOT match. No GPU
+                    // copies, waits or extra barriers are introduced here.
+#ifdef __ANDROID__
+                    static const bool trace_physics_coverage = [] {
+                        const char* env = std::getenv("TLOU_PHYSICS_COVERAGE");
+                        return env && env[0] == '1';
+                    }();
+                    if (trace_physics_coverage && compute_stage &&
+                        (binding.buffer == 5 || binding.buffer == 6) &&
+                        size && size <= 64_KB &&
+                        (vsharp.stride == 48 || (size >= 4096 && size <= 8192))) {
+                        const u64 identity = (u64(stage.pgm_hash) << 32) |
+                                             (u64(binding.buffer) << 24) |
+                                             (u64(vsharp.stride & 0xff) << 16) |
+                                             (u64(vsharp.num_records) & 0xffff);
+                        static std::array<std::atomic<u64>, 64> observed{};
+                        const u32 index = u32((identity * 0x9e3779b97f4a7c15ull) >> 58);
+                        if (observed[index].exchange(identity, std::memory_order_relaxed) != identity) {
+                            static std::atomic<u32> reported{0};
+                            if (reported.fetch_add(1, std::memory_order_relaxed) < 40) {
+                                std::printf("TLOU physics coverage: hash=%08llx slot=%u stride=%u records=%u bound=%llu pc=%u shape=%u\n",
+                                            static_cast<unsigned long long>(stage.pgm_hash),
+                                            binding.buffer, vsharp.stride, vsharp.num_records,
+                                            static_cast<unsigned long long>(size),
+                                            TlouEopReadbackBinding(stage.pgm_hash, binding.buffer),
+                                            physics_shape_fallback);
+                            }
+                        }
+                    }
+#endif
                     Gow3WatchRange::Note("storage", stage.pgm_hash, binding.buffer,
                                          vsharp.base_address, size);
                     VideoCore::NoteGpuWriter(vsharp.base_address, size, stage.pgm_hash);
                     VideoCore::NoteRecentGpuWrite(vsharp.base_address, size,
                                                   (u64(stage.pgm_hash) << 8) | (binding.buffer & 0xff));
                     if (VideoCore::BufferCache::ShareUnfinishedWrites() &&
-                        TlouResultShader(stage.pgm_hash)) {
+                        (TlouResultShader(stage.pgm_hash) || physics_shape_fallback || automatic_result)) {
                         buffer_cache.NoteResultPages(vsharp.base_address, size);
                     }
                     // gow3 24 Oct 2026 diagnostics: The Last of Us's result bindings left without
                     // a readback (too large, or past the 256 ranges an event holds), every 5 s.
-                    if (TlouEopReadbackBinding(stage.pgm_hash, binding.buffer)) {
+                    if (TlouEopReadbackBinding(stage.pgm_hash, binding.buffer) || physics_shape_fallback) {
                         static std::atomic<u32> results{0}, too_large{0}, over_cap{0};
                         static std::atomic<s64> last_report{0};
                         ++results;
@@ -5841,7 +6063,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                             std::fflush(stdout);
                         }
                     }
-                    if (IsEopReadbackBinding(stage.pgm_hash, binding.buffer, size) &&
+                    if ((exact_result || automatic_result) &&
                         eop_readbacks.size() + eop_open_readbacks.size() < 256) {
                         // The whole bound buffer counts as GPU-written (up to 9 MiB for
                         // 6a6422a9); read back only what this dispatch writes: dword i for

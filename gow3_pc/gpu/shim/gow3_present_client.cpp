@@ -192,7 +192,7 @@ bool Client::SendBuffer(u32 generation, u32 index, u32 width, u32 height, u32 fo
 }
 
 bool Client::SendFrame(u32 generation, u32 index, u64 frame, u32 width, u32 height,
-                       int acquire_fd) {
+                       int acquire_fd, u32 crop_offset, u32 crop_extent) {
     if (fd < 0) {
         return false;
     }
@@ -202,6 +202,9 @@ bool Client::SendFrame(u32 generation, u32 index, u64 frame, u32 width, u32 heig
     msg.frame = frame;
     msg.width = width;
     msg.height = height;
+    // FRAME uses two otherwise-unused fields; no wire ABI/version change.
+    msg.format = crop_offset; // low16 x, high16 y
+    msg.count = crop_extent; // low16 width, high16 height
     std::scoped_lock lock{send_mutex};
     return SendRaw(&msg, acquire_fd);
 }

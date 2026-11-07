@@ -676,6 +676,14 @@ extern "C" int gow3gpu_choice_begin(const char* title, const char* const* items,
     return 1;
 }
 
+#ifdef __ANDROID__
+extern "C" void gow3gpu_save_choice_cancel(){Gow3Overlay::CancelSaveChoice();}
+extern "C" int gow3gpu_save_choice_begin(const char* title,const Gow3SaveChoiceEntry* entries,int count,int focus) {
+    if(!g_window || !entries || count<1 || count>256)return 0;
+    Gow3Overlay::BeginSaveChoice(title?title:"",entries,count,focus);return 1;
+}
+#endif
+
 extern "C" void gow3gpu_trophy_list(const char* pack_path, int list, const uint32_t earned[4]) {
     Gow3Trophies::SetList(pack_path ? pack_path : "", list, earned);
 }

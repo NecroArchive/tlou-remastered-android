@@ -29,6 +29,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/fault_manager.h"
 #include "video_core/buffer_cache/range_set.h"
+#include "video_core/buffer_cache/gpu_range_cache_index.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
 namespace AmdGpu {
@@ -472,17 +473,6 @@ private:
     /// gow3: held exclusively while gpu_modified_ranges changes, shared by IsRangeGpuWrittenShared.
     mutable std::shared_mutex gpu_ranges_mutex;
     void GpuRangesAdd(VAddr address, u64 size) {
-        if (size) {
-            const u64 first = address >> 16;
-            const u64 last = std::min<u64>((address + size - 1) >> 16, GpuWindowBits - 1);
-            for (u64 w = first; w <= last; ++w) {
-                auto& word = gpu_window_bits[w >> 6];
-                const u64 bit = 1ull << (w & 63);
-                if (!(word.load(std::memory_order_relaxed) & bit)) {
-                    word.fetch_or(bit, std::memory_order_relaxed);
-                }
-            }
-        }
         std::unique_lock lock{gpu_ranges_mutex};
         // gow3 20 Oct 2026 (laptop CPUs): a game may dispatch ~1,300 compute jobs a frame,
         // most writing the ranges they wrote before; adding a range the set already holds cost
@@ -496,16 +486,28 @@ private:
         }();
         const u64 tick = size && range_cache ? RangeTick() : 0;
         if (range_cache && size) {
-            auto& entry = gpu_add_cache[((address >> 6) ^ (address >> 18) ^ size) & (GpuAddCacheSize - 1)];
+            const size_t slot = ((address >> 6) ^ (address >> 18) ^ size) & (GpuAddCacheSize - 1);
+            auto& entry = gpu_add_cache[slot];
             if (entry.address == address && entry.size == size) {
+                // The bitmap is monotonic. The first insertion already marked
+                // every window, and GpuRangesSubtract invalidates this entry
+                // on *any* overlapping removal. A repeated hit cannot add new
+                // windows: avoid re-scanning their atomics on the hot path.
                 if (entry.tick != tick) {
                     entry.tick = tick;
                     NoteGpuWriteWindows(address, size);
                 }
                 return;
             }
+            // A cache MISS updates the spatial index. The common repeated-add
+            // path stays unchanged; a subtraction no longer scans all 512 slots.
+            gpu_add_index.Replace(slot, address, size);
             entry = {address, size, tick};
         }
+        // Publish all conservative GPU-written windows BEFORE adding the
+        // interval to gpu_modified_ranges. Keeping this under its write lock
+        // ensures lock-free MayBeGpuWritten never misses a published range.
+        Detail::MarkGpuWriteWindows(gpu_window_bits.get(), GpuWindowBits, address, size);
         gpu_modified_ranges.Add(address, size);
         if (size) {
             NoteGpuWriteWindows(address, size);
@@ -520,6 +522,7 @@ private:
     };
     static constexpr u32 GpuAddCacheSize = 512;
     std::array<GpuAddCacheEntry, GpuAddCacheSize> gpu_add_cache{};
+    Detail::GpuRangeCacheIndex<GpuAddCacheSize> gpu_add_index{};
     void NoteGpuWriteWindows(VAddr address, u64 size);
     /// gow3: the scheduler tick NoteGpuWriteWindows records (out of line: Scheduler is
     /// incomplete here).
@@ -557,13 +560,18 @@ private:
     void GpuRangesSubtract(VAddr address, u64 size) {
         std::unique_lock lock{gpu_ranges_mutex};
         gpu_modified_ranges.Subtract(address, size);
-        // gow3 20 Oct 2026: cached adds overlapping the range are no longer whole in the set.
+        // Cached adds that overlap the subtracted range are no longer whole.
+        // The 1 MiB bucket index only returns POSSIBLE overlaps: perform the
+        // original exact interval check, then remove the slot from all its
+        // buckets. The index lives under gpu_ranges_mutex with the RangeSet.
         const VAddr end = address + size;
-        for (auto& entry : gpu_add_cache) {
+        gpu_add_index.ForCandidates(address, size, [&](size_t slot) {
+            auto& entry = gpu_add_cache[slot];
             if (entry.size && entry.address < end && address < entry.address + entry.size) {
                 entry = {};
+                gpu_add_index.Clear(slot);
             }
-        }
+        });
     }
 
     std::unique_ptr<FaultManager> fault_manager;

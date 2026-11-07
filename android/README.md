@@ -1,42 +1,46 @@
-# The Last of Us Remastered — Android/Bionic
+# Android build and validation
 
-**Status: etapa 2 (CPU FEX ARM64 + ponte de renderização AHB em integração). Sem APK ou gameplay Android validados.**
+**Current release: v0.1, ARM64 Bionic / FEX / Vulkan.** APK builds and Android
+gameplay have been tested; this is no longer an unbuilt integration stage.
+User installation and compatibility: [English](../README.md) /
+[Português](../README.pt-BR.md). See [release notes](../RELEASE_NOTES.md).
 
-This port must preserve the TLOU-specific runtime and Vulkan changes already in the repository. We use the other Android projects for portable infrastructure, not as a substitute for TLOU graphics.
+## Android source
 
-## Integration sources
+Use the [Android source tree](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-ui-approval-log32-20261105) when building. The historical Windows
+branch is not the Android APK implementation.
 
-| Existing port | What to reuse | Status |
-|---|---|---|
-| erickmendes22/gow3_android_daedalus_fork, branch android | ARM64 FEX ABI, Android/Bionic build, native renderer bridge, driver selection, PKG, launcher | Native adaptation pending |
-| erickmendes22/uncharted-android | Naughty Dog engine compatibility, worker scheduling, ARM64 graphics and input patterns | Source review pending |
-| erickmendes22/iss_android | PS4 imports, controller integration and game-specific frontend patterns | Source review pending |
-| This repository | CUSA00552 prepared image, verified patch definitions, TLOU graphics and runtime fixes | Stage 1 implemented |
+```sh
+git clone --recurse-submodules --branch tlou-ui-approval-log32-20261105 https://github.com/erickmendes22/tlou-remastered-android.git
+cd tlou-remastered-android
+```
 
-## Implemented
+The existing branch name is a development identifier, not a user-facing setting.
 
-android/tlou_bionic.py is a Python 3 standard-library game preparation tool. It checks TITLE_ID=CUSA00552 in both base and update, makes a read-only overlay in app-private storage, uses this repository's own prepare.py, link_modules.py and content_profile.py, and writes the boot-linked.bin and content.bin files. It invokes the existing byte-signature-checked G3PATCH2 generator and never applies a patch for an unknown executable version. The optional flashlight patch needs --flashlight.
+## Build workflow
 
-Example using a legally dumped game:
+The [verified Android workflow](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-ui-approval-log32-20261105/.github/workflows/tlou-native-apk.yml)
+selects a full native build when native inputs change, or reuses a pinned,
+verified native payload when allowed inputs remain compatible. It runs
+preparation tests, Android UI tests and release lint, assembles and signs the
+APK, then verifies ELF dependencies, JNI, installer components and drivers.
 
-    python3 android/tlou_bionic.py --source . \
-      --game /path/to/CUSA00552 \
-      --update /path/to/CUSA00552-patch \
-      --out /path/to/private-preparation
+The source checks also execute the production x86 submesh-guard bytes under
+Unicorn. APK signing identity is preserved for compatible updates.
 
-The --out directory must support symlinks (app-private Android storage). Input game folders are not modified. If an update has dvdroot_ps4 content, this tool refuses it until native app0 content overlay support is ready, rather than running a mixed game/update.
+For an executable-patch-table update, only the explicitly allowed Python source
+member is refreshed in the installer archive. Other installer members and the
+native/runtime/driver payload are compared byte-for-byte against the pinned
+build. A renderer or runtime change still requires a native build.
 
-## Etapa 2 — código integrado na branch experimental
+Documentation edits do not require a new APK. This repository does not publish
+a new APK solely because a microbenchmark is faster.
 
-- CPU: `gow3_pc/src/guest_cpu.h`, `runtime_cpu.c`, `cpu/guest_cpu_fex.cpp` e `host_call_arm64.S` portados do GoW3 Bionic; o loader do TLOU agora encaminha inicializadores, callbacks, importações e entrada de jogo via `guest_cpu_call` / `guest_cpu_host_function`.
-- Bionic: gerenciamento de thread, GS/TLS e endereços guest baixos; tratamento de SIGSEGV e frame de exceção ARM64; áudio Android sem SDL pelo mixer `runtime_audio_bionic.c` com saída PCM/FIFO.
-- GPU do TLOU preservada: selecionador Vulkan nativo (`vk_driver_loader`), janela Android sem SDL, protocolo de apresentação AHardwareBuffer, swapchain AHB, ownership de filas Vulkan e controle de fences no presenter; Vulkan do TLOU não foi substituído pelo renderer de GoW3.
-- Compilação nativa: `android/bionic/build_deps.sh` prepara bibliotecas ARM64, `build_fex.sh` compila o FEX embutido, `build_gpu.sh` compila o renderer específico e `build_runtime.sh` liga a camada nativa Bionic. Esses scripts ainda não constituem um APK.
-- CI: `android-cpu-source.yml` usa Clang/NDK ARM64 real para validar os módulos sem dependências externas de FFmpeg e a ponte AHB. `runtime_mp3.c` e `runtime_videodec.c` precisam do FFmpeg Android compilado antes da validação nativa final.
+## Local native build
 
-A preparação do jogo (`tlou_bionic.py`) está separada dos componentes binários. O loader do GoW3 não pode simplesmente substituir o do TLOU: as opções específicas (`--low-image`, `--guest-path`, `--app0-overlay`) e os patches continuam sendo preservados.
-
-## Comandos de build nativa ARM64 (infraestrutura, não APK)
+The scripts require a Linux build host, Android SDK/NDK, JDK 17, Gradle and the
+build dependencies configured by the workflow. Consult that workflow for exact
+versions and setup before running the commands.
 
 ```sh
 export TLOU_NDK=/path/to/android-ndk-r29
@@ -44,21 +48,46 @@ bash android/bionic/build_deps.sh
 bash android/bionic/build_fex.sh
 bash android/bionic/build_gpu.sh
 bash android/bionic/build_runtime.sh --link-only
+bash android/bionic/build_python.sh
+bash android/bionic/build_pkg.sh
+python3 android/bionic/stage_tools.py
+bash android/bionic/package_apk.sh
 ```
 
-A etapa seguinte é validar a compilação/link reais do renderizador completo, solucionar as diferenças de HLE e integrar uma Activity Android dedicada para inicializar o jogo e apresentar o frame. Não declarar boot, renderização nem desempenho antes do teste real.
+These are build steps, not instructions for players: the APK includes the
+on-device preparation tools. Do not substitute another game's native binaries.
 
-## Bloqueios restantes para o primeiro APK funcional
+## Validation without game files
 
-1. O loader TLOU agora contém a interface FEX, mas a compilação e ligação completas com o backend C++ do FEX ainda precisam ser verificadas; a transferência das rotinas específicas de red-zone e a compatibilidade de inicialização do jogo em ARM64 não foram validadas em dispositivo.
-2. O renderizador Vulkan é o do TLOU, agora com suporte inicial ao protocolo de apresentação AHardwareBuffer. A compilação completa de `libgow3gpu.so`, sincronização de readbacks, shaders, Videodec2 e tratamento de formatos precisam ser confirmados sem regressões.
-3. Faltam o launcher Android específico do TLOU, carregamento automático de payload, seleção de diretório e atualização, interação com o áudio PCM e controles, auditoria dos ELF gerados e assinatura do APK.
+```sh
+python3 -m pip install unicorn==2.1.4
+python3 -m unittest discover -s android/tests -v
+bash android/bionic/test_runtime_contracts.sh
+bash android/bionic/test_fps.sh
+python3 gow3_pc/tests/test_android_save_choice.py
+gradle -p android-launcher :app:testReleaseUnitTest :app:lintVitalRelease
+```
 
-**Never publish an Android APK that is merely a rebranded GOW3 binary.** The first useful APK milestone needs the actual TLOU ARM64 loader/renderer to compile and pass native-link validation.
+The Java tests require Android SDK setup. The final APK validation is:
 
-## No-game tests
+```sh
+python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
+```
 
-    python3 -m unittest discover -s android/tests -v
-    python3 -m compileall -q android
+The validated executable profile is SHA-256 checked and every patch requires
+matching original instruction bytes. Unknown executables do not acquire known
+patches merely through a matching title ID. Game files are neither test fixtures
+nor release artifacts.
 
-Tests create tiny synthetic SFO files and do not require or include copyrighted game files.
+## Runtime boundaries
+
+- Readback 1 is retained. The observed 01.00 physics output has its selective
+  EOP readback path; do not restore global Readback 2.
+- App language selection is independent of the game's own language menu.
+- Save metadata and thumbnail handling must retain the selected native slot.
+- The static-ray-hit bounds guard skips only invalid results and keeps the
+  original path for valid hits; its source audit is retained in the Android tree.
+- Automated tests and successful builds do not replace device regression tests.
+
+CPU translation uses FEX; the TLOU runtime, renderer, Android presenter and
+installer retain their respective source and third-party licensing obligations.

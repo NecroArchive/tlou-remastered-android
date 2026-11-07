@@ -163,7 +163,14 @@ static int32_t mount(int32_t user, const char *title, const DirName *dir, uint32
     snprintf(point,sizeof(point),"/savedata%d",slot&15);
     memcpy(result->point.data,point,strlen(point)+1);
     result->status=exists ? 0 : 1; /* CREATED */
-    runtime_file_mount(result->point.data,host);
+    // Never report a successful load when the guest mount could not be installed:
+    // the game's later reads would silently resolve outside the selected save.
+    if (runtime_file_mount(result->point.data,host) != 0) {
+        slots[slot].used=0;
+        pthread_mutex_unlock(&lock);
+        printf("Runtime: save data mount failed: guest mount table full for '%s'\n",dir->data);
+        return ERR_INTERNAL;
+    }
     ++mounts_done;
     pthread_mutex_unlock(&lock);
     printf("Runtime: save data '%s' mounted at %s (%s%s)\n",dir->data,result->point.data,
@@ -266,8 +273,13 @@ static ABI int32_t save_search(const SearchCond *cond, SearchResult *result) {
     DIR *d=opendir(base);
     for (struct dirent *e; d && (e=readdir(d));) {
         size_t n=strlen(e->d_name);
-        if (e->d_name[0]=='.' || n>=32 || (n>8 && !strcmp(e->d_name+n-8,".sce_sys"))) continue;
+        if (!valid_name(e->d_name,32) || (n>8 && !strcmp(e->d_name+n-8,".sce_sys"))) continue;
         if (cond->dir && cond->dir->data[0] && !like(e->d_name,cond->dir->data)) continue;
+        // SaveDataDirNameSearch returns save directories, never loose files or
+        // metadata siblings; a file entry could otherwise be offered by Load game.
+        char candidate[700]; struct stat candidate_st;
+        snprintf(candidate,sizeof(candidate),"%s/%s",base,e->d_name);
+        if (stat(candidate,&candidate_st)!=0 || !S_ISDIR(candidate_st.st_mode)) continue;
         if (count==capacity) { capacity=capacity ? capacity*2 : 16; entries=realloc(entries,capacity*sizeof(*entries)); }
         snprintf(entries[count].name,32,"%s",e->d_name);
         char meta[680]; snprintf(meta,sizeof(meta),"%s/%s.sce_sys",base,e->d_name);

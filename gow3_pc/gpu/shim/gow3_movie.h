@@ -3,10 +3,11 @@
 // texel for texel with the display size it renders at (luma W x H, chroma W/2 x H/2 after
 // W * align(H, 64) bytes), assuming movies are as large as the screen; its movies are 1080p and
 // its frame buffers 4 MiB each, so above 1080p they came out green and tiled. The decoder
-// (shim/videodec2) writes downscaled NV12 frames in-place when they fit in the decoder's already
-// allocated frame buffer, leaving the picture-info reservation untouched. Larger output sizes
-// still use a separate scratch frame. The texture cache (ImageInfo) remaps both Y and UV planes
-// to the layout actually written; a failed scratch allocation leaves original frames intact.
+// TLOU's Android C decoder scales into its existing guest video buffer when the
+// resized NV12 output fits, without consuming additional flexible guest memory.
+// The legacy C++ videodec2 shim also supports bounds-checked in-place scaling.
+// The texture cache (ImageInfo) remaps Y/UV to the recorded destination layout.
+// Larger target frames continue using a separate scratch-frame fallback.
 // GOW3_MOVIE_SIZE=<width>x<height> is that display size; unset, nothing
 // changes.
 

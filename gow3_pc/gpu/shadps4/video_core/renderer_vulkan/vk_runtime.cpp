@@ -482,8 +482,14 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
     // lost a moment later, every time at the same place.
     const u32 base_width = std::min(src->info.size.width, dst->info.size.width);
     const u32 base_height = std::min(src->info.size.height, dst->info.size.height);
-    const u32 base_depth =
-        dst->info.type == AmdGpu::ImageType::Color3D ? dst->info.size.depth : src->info.size.depth;
+    // A 3D-to-3D Vulkan copy must fit BOTH volume extents. Choosing the
+    // destination depth alone could copy beyond a smaller source volume,
+    // producing VK_ERROR_DEVICE_LOST instead of a CPU-side validation error.
+    const bool both_3d = src->info.type == AmdGpu::ImageType::Color3D &&
+                         dst->info.type == AmdGpu::ImageType::Color3D;
+    const u32 base_depth = both_3d ? std::min(src->info.size.depth, dst->info.size.depth)
+                         : dst->info.type == AmdGpu::ImageType::Color3D
+                               ? dst->info.size.depth : src->info.size.depth;
     if (src->info.size.width != dst->info.size.width ||
         src->info.size.height != dst->info.size.height) {
         static std::atomic<u32> logged{0};

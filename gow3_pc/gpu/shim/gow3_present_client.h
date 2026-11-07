@@ -48,7 +48,10 @@ public:
                     AHardwareBuffer* buffer);
 
     /// Hands buffer `index` to the app. The acquire fence is borrowed (the caller closes it).
-    bool SendFrame(u32 generation, u32 index, u64 frame, u32 width, u32 height, int acquire_fd);
+    // The two optional packed uint16 pairs describe the exact scene viewport
+    // in the AHB; zero extent means no crop (blank/loading frame).
+    bool SendFrame(u32 generation, u32 index, u64 frame, u32 width, u32 height, int acquire_fd,
+                   u32 crop_offset, u32 crop_extent);
 
     /// Reads one release: waits up to timeout_ms (0: look only, -1: forever). 1 = got one,
     /// 0 = nothing, -1 = the app closed the connection or the socket failed (logged).

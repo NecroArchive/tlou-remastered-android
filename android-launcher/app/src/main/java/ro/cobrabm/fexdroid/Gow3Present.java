@@ -17,6 +17,13 @@ public final class Gow3Present {
     private static native long nativeFrames();
     private static native void nativeSetFullscreen(boolean enabled);
     private static native void nativeShutdown();
+    private static native boolean nativeSetAdrenoTurbo(boolean enabled);
+
+    /** Rootless KGSL GPU max-power policy; unsupported devices return false. */
+    static boolean adrenoTurbo(boolean enabled) {
+        try { return nativeSetAdrenoTurbo(enabled); }
+        catch (Throwable e) { android.util.Log.w("TLOU", "Adreno Turbo JNI unavailable",e); return false; }
+    }
 
     private static SurfaceHolder.Callback callback;
     private static SurfaceHolder attached;

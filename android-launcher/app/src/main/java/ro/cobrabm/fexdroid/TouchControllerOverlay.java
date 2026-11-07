@@ -122,7 +122,7 @@ final class TouchControllerOverlay extends View {
     }
     void release() { controls.clear(); positions.clear(); publish(); }
     void edit(Runnable done) { release(); editing=true; onEditDone=done; invalidate(); }
-    private void finishEdit() {
+    void finishEdit() {
         editPointer=-1; dragged=null; editing=false; invalidate();
         if (onEditDone!=null) onEditDone.run();
         onEditDone=null;
@@ -179,12 +179,29 @@ final class TouchControllerOverlay extends View {
         publish(); return true;
     }
 
+    private int themedColor=0xffb3c88f;
+    private void refreshTheme() {
+        String value=PortSettings.prefs(getContext()).getString("control_color","olive");
+        switch(value) {
+            case "amber": themedColor=0xffe0c783; break;
+            case "white": themedColor=0xffe4e9dc; break;
+            case "red": themedColor=0xffd28b7e; break;
+            case "blue": themedColor=0xff92b5cf; break;
+            default: themedColor=0xffb3c88f; // The Last of Us weathered olive
+        }
+    }
+    private int themeColor(){return themedColor;}
+    private int overlayFill(boolean selected,boolean down) {
+        int rgb=themeColor()&0x00ffffff;
+        return ((selected?0xdd:down?0x99:0x55)<<24)|rgb;
+    }
+
     private void circle(Canvas c,String name,float r,String label,int accent) {
         PointF p=center(name);
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(name.equals(dragged) ? 0xffe8dfc9 : pressed.contains(name) ? 0xaae8dfc9 : 0x6630394c);
+        paint.setColor(overlayFill(name.equals(dragged),pressed.contains(name)));
         c.drawCircle(p.x,p.y,r,paint);
-        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2); paint.setColor(accent);
+        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2); paint.setColor(themeColor());
         c.drawCircle(p.x,p.y,r,paint);
         paint.setStyle(Paint.Style.FILL); paint.setTypeface(Typeface.DEFAULT_BOLD);
         paint.setTextSize(label.length()>2 ? 19 : 33); paint.setTextAlign(Paint.Align.CENTER);
@@ -197,19 +214,19 @@ final class TouchControllerOverlay extends View {
         boolean lit=pressed.contains(name) ||
             (name.equals("touchpad") && pressed.contains("touchpad_right"));
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(name.equals(dragged) ? 0xffe8dfc9 : lit ? 0xaae8dfc9 : 0x6630394c);
+        paint.setColor(overlayFill(name.equals(dragged),lit));
         c.drawRoundRect(p.x-width/2,p.y-25,p.x+width/2,p.y+25,14,14,paint);
-        paint.setStyle(Paint.Style.STROKE); paint.setColor(0xbbc6ad76); paint.setStrokeWidth(2);
+        paint.setStyle(Paint.Style.STROKE); paint.setColor(themeColor()); paint.setStrokeWidth(2);
         c.drawRoundRect(p.x-width/2,p.y-25,p.x+width/2,p.y+25,14,14,paint);
         paint.setStyle(Paint.Style.FILL); paint.setTypeface(Typeface.DEFAULT_BOLD);
-        paint.setTextSize(19); paint.setTextAlign(Paint.Align.CENTER);
+        paint.setColor(themeColor()); paint.setTextSize(19); paint.setTextAlign(Paint.Align.CENTER);
         c.drawText(label,p.x,p.y-(paint.ascent()+paint.descent())/2,paint);
     }
     private void drawStick(Canvas c,String name) {
         PointF center=center(name);
-        paint.setStyle(Paint.Style.FILL); paint.setColor(name.equals(dragged) ? 0xffe8dfc9 : 0x6630394c);
+        paint.setStyle(Paint.Style.FILL); paint.setColor(overlayFill(name.equals(dragged),false));
         c.drawCircle(center.x,center.y,57,paint);
-        paint.setStyle(Paint.Style.STROKE); paint.setColor(0xffa0aec0); paint.setStrokeWidth(2);
+        paint.setStyle(Paint.Style.STROKE); paint.setColor(themeColor()); paint.setStrokeWidth(2);
         c.drawCircle(center.x,center.y,57,paint);
         float knobX=center.x,knobY=center.y;
         for (int i=0;i<controls.size();i++) {
@@ -222,15 +239,15 @@ final class TouchControllerOverlay extends View {
                 break;
             }
         }
-        paint.setStyle(Paint.Style.FILL); paint.setColor(0xbba0aec0);
+        paint.setStyle(Paint.Style.FILL); paint.setColor(overlayFill(false,true));
         c.drawCircle(knobX,knobY,28,paint);
-        paint.setColor(0xff15202c); paint.setTypeface(Typeface.DEFAULT_BOLD);
+        paint.setColor(themeColor()); paint.setTypeface(Typeface.DEFAULT_BOLD);
         paint.setTextAlign(Paint.Align.CENTER); paint.setTextSize(22);
         c.drawText(name.equals("leftstick") ? "L" : "R",knobX,
                    knobY-(paint.ascent()+paint.descent())/2,paint);
     }
     @Override protected void onDraw(Canvas c) {
-        super.onDraw(c); c.save(); c.translate(offsetX(),offsetY()); c.scale(scale(),scale());
+        super.onDraw(c); refreshTheme(); c.save(); c.translate(offsetX(),offsetY()); c.scale(scale(),scale());
         rectangle(c,"l2",108,"L2"); rectangle(c,"l1",108,"L1");
         rectangle(c,"r1",108,"R1"); rectangle(c,"r2",108,"R2");
         rectangle(c,"touchpad",126,"TOUCH"); rectangle(c,"options",108,"OPTIONS");
@@ -243,10 +260,11 @@ final class TouchControllerOverlay extends View {
         if (editing) {
             paint.setStyle(Paint.Style.FILL); paint.setColor(0xcc15171d);
             c.drawRoundRect(548,9,732,62,13,13,paint);
-            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2); paint.setColor(0xffc6ad76);
+            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2); paint.setColor(themeColor());
             c.drawRoundRect(548,9,732,62,13,13,paint);
             paint.setStyle(Paint.Style.FILL); paint.setTextSize(20);
             paint.setTextAlign(Paint.Align.CENTER);
+            paint.setColor(themeColor());
             c.drawText("CONCLUIR",640,36-(paint.ascent()+paint.descent())/2,paint);
         }
         c.restore();

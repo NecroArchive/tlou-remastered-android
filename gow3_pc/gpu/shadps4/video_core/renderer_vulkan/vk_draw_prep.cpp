@@ -47,6 +47,25 @@ void ForEachPacket(std::span<const u32> commands, Func&& func) {
     }
 }
 
+// TLOU Android: the old speculative pipeline was present but disabled after
+// auto worker counts regressed. A SCHED_IDLE scanner + SCHED_IDLE workers cannot
+// reliably get ahead of saturated game/render threads, so the preparation
+// stage frequently produces results only after they are already needed.
+// Use normal CFS scheduling for the deliberately bounded Android workers.
+// Leave the original low-priority desktop/other-port policy intact.
+void SchedulePreparationHelper(const char* name) {
+#ifdef __ANDROID__
+    const char* mode = std::getenv("TLOU_PREP_NORMAL_PRIORITY");
+    if (mode && mode[0] == '1' && mode[1] == '\0') {
+        tlou_cpu_policy_apply(name, 0);  // full permitted mask; NEVER force fast-core affinity
+        return;                           // inherit SCHED_OTHER from command thread
+    }
+#else
+    (void)name;
+#endif
+    Gow3Threads::MakeBackground();
+}
+
 u32 DefaultWorkerCount() {
     if (const char* env = std::getenv("GOW3_PREP_WORKERS")) {
         return static_cast<u32>(std::clamp(std::atoi(env), 0, 16));
@@ -273,8 +292,8 @@ DrawPreparation::DrawPreparation(PipelineCache& pipeline_cache_)
     for (u32 i = 0; i < worker_count; ++i) {
         workers.emplace_back([this, i](std::stop_token stop) { WorkerLoop(stop, i); });
     }
-    std::printf("GPU: draw preparation workers: %u (+1 scanner, %u hardware threads)\n",
-                worker_count, Gow3Threads::Available());
+    std::printf("GPU: draw preparation workers: %u (%u scanner, %u hardware threads)\n",
+                worker_count, scanner.joinable() ? 1u : 0u, Gow3Threads::Available());
 }
 
 DrawPreparation::~DrawPreparation() {
@@ -493,7 +512,7 @@ void DrawPreparation::Collect() {
 
 void DrawPreparation::ScannerLoop(std::stop_token stop) {
     Common::SetCurrentThreadName("gow3:DrawScan");
-    Gow3Threads::MakeBackground();
+    SchedulePreparationHelper("draw preparation scanner");
     std::unique_ptr<AmdGpu::Regs> regs;
     u64 checksum = 0;
     u64 next_seq = 0;
@@ -547,7 +566,7 @@ void DrawPreparation::ScannerLoop(std::stop_token stop) {
 
 void DrawPreparation::WorkerLoop(std::stop_token stop, u32 index) {
     Common::SetCurrentThreadName(("gow3:DrawPrep" + std::to_string(index)).c_str());
-    Gow3Threads::MakeBackground();
+    SchedulePreparationHelper("draw preparation worker");
     auto regs = std::make_unique<AmdGpu::Regs>();
     constexpr u64 NoPosition = ~0ull;
     u64 position = NoPosition; ///< `regs` holds the state at the start of this buffer
@@ -657,9 +676,11 @@ void DrawPreparation::WorkerLoop(std::stop_token stop, u32 index) {
 
 void DrawPreparation::Count(bool was_used) {
     ++(was_used ? used : unused);
-    static const bool stats = std::getenv("GOW3_FRAME_STATS") != nullptr;
-    // The clock is read every 1024 draws: per draw it was 8% of the GPU thread.
-    if (!stats || ((used + unused) & 1023) != 0) {
+    static const bool stats = std::getenv("GOW3_FRAME_STATS") != nullptr ||
+                              std::getenv("TLOU_PREP_HIT_STATS") != nullptr;
+    // One clock read per 2048 draws, never per draw. Report whether the
+    // dedicated workers actually save work; do not mistake thread count for FPS.
+    if (!stats || ((used + unused) & 2047) != 0) {
         return;
     }
     static auto window = std::chrono::steady_clock::now();
@@ -668,9 +689,11 @@ void DrawPreparation::Count(bool was_used) {
         return;
     }
     window = now;
-    std::printf("Draw preparation: %llu prepared pipelines used, %llu not (%u workers, "
+    const u64 total = used + unused;
+    std::printf("Draw preparation (5 s): %llu used, %llu missed (%.1f%% hit; %u workers, "
                 "%llu scanner rebases)\n",
                 static_cast<unsigned long long>(used), static_cast<unsigned long long>(unused),
+                total ? 100.0 * double(used) / double(total) : 0.0,
                 worker_count, static_cast<unsigned long long>(rebases));
     used = unused = 0;
 }

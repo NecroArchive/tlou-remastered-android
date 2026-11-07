@@ -63,6 +63,18 @@ int main(int argc,char **argv) {
     assert(list(0,NULL,0,&h.hits)==0 && h.hits==0 && h.canary==0xabcdef);
     assert(list(0,entries,2,&h.hits)==0 && h.hits==0);
     for (unsigned i=0;i<sizeof(entries);++i) assert(entries[i]==0xaa);
+    /* Regional boot regression: every service namespace is an empty list,
+     * including high-bit labels. Do not exit or modify caller list slots. */
+    const uint32_t services[]={1,13,552,556,UINT32_MAX};
+    for (unsigned i=0;i<sizeof(services)/sizeof(services[0]);++i) {
+        h.hits=99;
+        assert(list(services[i],NULL,0,&h.hits)==0 && h.hits==0);
+        h.hits=99;
+        assert(list(services[i],entries,2,&h.hits)==0 && h.hits==0);
+        assert(h.canary==0xabcdef);
+        for (unsigned j=0;j<sizeof(entries);++j) assert(entries[j]==0xaa);
+        assert((uint32_t)list(services[i],NULL,0,NULL)==0x80d90002);
+    }
     assert((uint32_t)list(0,NULL,0,NULL)==0x80d90002);
     assert(unload(0xb4)==0 && loaded(0xb4)==0);
     assert((uint32_t)init(initial,b.boot)==0x80d90003);

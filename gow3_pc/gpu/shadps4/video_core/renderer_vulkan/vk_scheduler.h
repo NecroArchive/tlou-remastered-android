@@ -84,11 +84,16 @@ struct SubmitInfo {
     u32 num_signal_semas;
 
     void AddWait(vk::Semaphore semaphore, u64 tick = 1) {
+        // A submit can wait on up to four semaphores (graphics, present,
+        // transfer and the internal timeline). An unchecked append corrupts
+        // the submit data rather than reporting the actual caller error.
+        ASSERT_MSG(num_wait_semas < wait_semas.size(), "Too many Vulkan wait semaphores");
         wait_semas[num_wait_semas] = semaphore;
         wait_ticks[num_wait_semas++] = tick;
     }
 
     void AddSignal(vk::Semaphore semaphore, u64 tick = 1) {
+        ASSERT_MSG(num_signal_semas < signal_semas.size(), "Too many Vulkan signal semaphores");
         signal_semas[num_signal_semas] = semaphore;
         signal_ticks[num_signal_semas++] = tick;
     }

@@ -50,6 +50,19 @@ public:
     bool AcquireNextImage();
     /// Hands the current buffer to the app.
     bool Present();
+    // Crop rectangle of the game image inside the AHB. Vulkan blits the scene
+    // to a centred viewport, leaving black bars already inside the buffer.
+    // The Android presentation layer can remove those bars for Fill Screen.
+    void SetPresentContentRect(u32 x, u32 y, u32 w, u32 h) {
+        if (!w || !h || x > 0xffff || y > 0xffff || w > 0xffff || h > 0xffff ||
+            x > width || y > height || w > width - x || h > height - y) {
+            crop_offset = crop_extent = 0;
+        } else {
+            crop_offset = (y << 16) | x;
+            crop_extent = (h << 16) | w;
+        }
+        crop_pending = true;
+    }
     vk::Image Image() const { return buffers[image_index].image; }
     vk::ImageView ImageView() const { return buffers[image_index].view; }
     vk::SurfaceFormatKHR GetSurfaceFormat() const { return surface_format; }
@@ -117,6 +130,11 @@ private:
     u32 image_index = 0;
     u32 generation = 0;
     u64 frame_counter = 0;
+    // Optional per-frame source rect, packed as two uint16 pairs. Both zero
+    // when a loading/blank frame should remain uncropped.
+    u32 crop_offset = 0;
+    u32 crop_extent = 0;
+    bool crop_pending = false;
     bool zero_extent = false;
     bool needs_recreation = true;
     bool sync_import_ok = true; ///< importing sync files as semaphores works (else poll them)

@@ -1083,6 +1083,17 @@ static __thread unsigned region_cache_next;
 static const CachedRegion *cached_region(uintptr_t address) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
     if (generation & 1) return NULL;
+    /* GPU command Stage A clamps a guest constant range, then usually
+     * copies the same range through the backing view. On that hot path the
+     * clamp just installed the region at region_cache_next-1. Probe it
+     * first, avoiding a second linear 8-entry scan. Generation and bounds
+     * are checked exactly as in the full search; old cache entries never
+     * survive guest mapping changes. */
+    if (region_cache_next) {
+        const CachedRegion *recent=&region_cache[(region_cache_next-1u)&7u];
+        if (recent->generation==generation && recent->end &&
+            recent->start<=address && address<recent->end) return recent;
+    }
     for (unsigned i=0;i<8;++i) {
         const CachedRegion *c=&region_cache[i];
         if (c->generation==generation && c->end && c->start<=address && address<c->end) return c;

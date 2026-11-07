@@ -61,13 +61,27 @@ final class InstallTools {
     }
 
     File prepare(File game, Consumer<String> progress) throws Exception {
+        return prepare(game,null,progress);
+    }
+
+    File prepare(File game,File update,Consumer<String> progress) throws Exception {
         install();
         File out=new File(context.getFilesDir(),"tlou-prepared");
-        run(Arrays.asList(new File(root,"python/bin/python3.13").getAbsolutePath(),
+        List<String> command=new ArrayList<>(Arrays.asList(
+            new File(root,"python/bin/python3.13").getAbsolutePath(),
             new File(root,"source/android/device_prepare.py").getAbsolutePath(),
             "--game",game.getCanonicalPath(),"--out",out.getAbsolutePath(),
-            "--options",PortSettings.patchOptions(context).getAbsolutePath()),progress);
+            "--options",PortSettings.patchOptions(context).getAbsolutePath()));
+        if(update!=null){
+            File changed=update.getCanonicalFile();
+            if(!new File(changed,"sce_sys/param.sfo").isFile())
+                throw new IOException("A pasta da atualização não contém sce_sys/param.sfo.");
+            command.add("--update");
+            command.add(changed.getAbsolutePath());
+        }
+        run(command,progress);
         if (!prepared(out)) throw new IOException("Preparação incompleta; consulte o log de instalação");
+        syncEffectivePatches(out,progress);
         return out;
     }
 
@@ -77,9 +91,33 @@ final class InstallTools {
             new File(root,"source/android/device_prepare.py").getAbsolutePath(),
             "--game",new File(prepared,"tlou-view").getAbsolutePath(),"--out",prepared.getAbsolutePath(),
             "--options",PortSettings.patchOptions(context).getAbsolutePath(),"--patch-only"),progress);
+        syncEffectivePatches(prepared,progress);
+    }
+
+    private void syncEffectivePatches(File prepared,Consumer<String> progress) throws Exception {
+        File report=new File(prepared,"patch-validation.json");
+        if(!report.isFile())return;
+        org.json.JSONObject profile=new org.json.JSONObject(new String(Files.readAllBytes(report.toPath()),
+            java.nio.charset.StandardCharsets.UTF_8));
+        if(!"01.11".equals(profile.optString("game_version")))return;
+        if(!"original".equals(profile.optString("resolution")))return;
+        android.content.SharedPreferences prefs=PortSettings.prefs(context);
+        if(!"original".equals(prefs.getString("resolution","original"))) {
+            prefs.edit().putString("resolution","original").apply();
+            if(progress!=null)progress.accept(
+                "Atualização 01.11: resolução Original aplicada; patches 720/540/360p ainda não validados.");
+        }
     }
 
     File extract(File pkg, File parent, Consumer<String> progress) throws Exception {
+        return extractPackage(pkg,parent,progress,false);
+    }
+
+    File extractUpdate(File pkg, File parent, Consumer<String> progress) throws Exception {
+        return extractPackage(pkg,parent,progress,true);
+    }
+
+    private File extractPackage(File pkg, File parent, Consumer<String> progress,boolean update) throws Exception {
         install();
         try (DataInputStream input=new DataInputStream(new FileInputStream(pkg))) {
             if (input.readInt()!=0x7f434e54) throw new IOException("Selecione um PKG de PS4 válido");
@@ -88,17 +126,22 @@ final class InstallTools {
         progress.accept("Lendo informações do PKG…");
         String info=run(Arrays.asList(helper,"info",pkg.getCanonicalPath()),null);
         java.util.regex.Matcher title=java.util.regex.Pattern.compile("(?im)^\\s*Title ID:\\s*(CUSA[0-9]{5})\\s*$").matcher(info);
-        if (!title.find() || !title.group(1).equals("CUSA00552"))
-            throw new IOException("Este port precisa do PKG CUSA00552 do The Last of Us Remastered");
-        File destination=new File(parent,"CUSA00552").getCanonicalFile();
+        if (!title.find())
+            throw new IOException("Não foi possível identificar o CUSA do PKG PS4");
+        final String cusa=title.group(1);
+        if (!Arrays.asList("CUSA00552","CUSA00556","CUSA00557","CUSA00559").contains(cusa))
+            throw new IOException("Título PS4 não suportado: "+cusa);
+        File destination=new File(parent,cusa).getCanonicalFile();
         if (destination.exists()) throw new IOException("A pasta "+destination+" já existe. Se o jogo já está extraído, use Escolher pasta do jogo.");
         if (pkg.getCanonicalFile().toPath().startsWith(destination.toPath())) throw new IOException("PKG dentro do destino");
         if (!parent.canWrite() || !destination.mkdir()) throw new IOException("Sem acesso de escrita ao destino");
         try {
             progress.accept("Extraindo PKG para "+destination+"…");
             run(Arrays.asList(helper,"extract",pkg.getCanonicalPath(),"--output",destination.getAbsolutePath(),"--quiet"),progress);
-            if (!new File(destination,"eboot.bin").isFile() || !new File(destination,"sce_sys/param.sfo").isFile())
-                throw new IOException("PKG extraído sem eboot.bin ou param.sfo");
+            if (!new File(destination,"sce_sys/param.sfo").isFile() ||
+                (!update && !new File(destination,"eboot.bin").isFile()))
+                throw new IOException(update ? "PKG de atualização sem sce_sys/param.sfo"
+                                             : "PKG extraído sem eboot.bin ou param.sfo");
             return destination;
         } catch (Exception failure) { delete(destination); throw failure; }
     }

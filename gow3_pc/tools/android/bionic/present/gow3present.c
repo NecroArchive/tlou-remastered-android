@@ -54,6 +54,8 @@
 #include <android/surface_control.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include <jni.h>
 #include <pthread.h>
 #include <poll.h>
@@ -72,6 +74,40 @@
 #define TAG "Gow3Present"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+/*
+ * Rootless Adreno Turbo: matches libadrenotools' KGSL_PROP_PWRCTRL path.
+ * 0 disables KGSL power scaling (maximum available clock, still thermal-limited);
+ * 1 restores the normal GPU power policy. No su/sysfs access is attempted.
+ * Return false when a device/Android release refuses the ioctl.
+ */
+typedef struct {
+    unsigned int type;
+    void* value;
+    size_t sizebytes;
+} TlouKgslProperty;
+
+JNIEXPORT jboolean JNICALL Java_ro_cobrabm_fexdroid_Gow3Present_nativeSetAdrenoTurbo(
+    JNIEnv* env, jclass clazz, jboolean enabled) {
+    (void)env; (void)clazz;
+    int fd = open("/dev/kgsl-3d0", O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        LOGI("Adreno Turbo unavailable: KGSL open failed errno=%d", errno);
+        return JNI_FALSE;
+    }
+    uint32_t policy = enabled ? 0u : 1u;
+    TlouKgslProperty request = { .type = 0xEu, .value = &policy,
+                                 .sizebytes = sizeof(policy) };
+    int result = ioctl(fd, _IOW(0x09, 0x32, TlouKgslProperty), &request);
+    int saved_errno = errno;
+    close(fd);
+    if (result != 0) {
+        LOGI("Adreno Turbo rejected: enabled=%d errno=%d", (int)enabled, saved_errno);
+        return JNI_FALSE;
+    }
+    LOGI("Adreno Turbo KGSL policy applied: enabled=%d", (int)enabled);
+    return JNI_TRUE;
+}
 
 /* API 29 entry points, from libandroid.so. */
 static struct {
@@ -116,6 +152,7 @@ static void load_api(void) {
 
 typedef struct {
     uint32_t generation, index, width, height;
+    uint32_t crop_offset, crop_extent; /* optional scene rectangle from FRAME */
     uint64_t frame;
     int fence; /* acquire fence, owned here; -1 none */
 } Queued;
@@ -266,12 +303,26 @@ static void on_commit(void* ctx_, ASurfaceTransactionStats* stats) {
 /* Hands one frame to SurfaceFlinger: a transaction with the buffer, the fit-to-window geometry and
  * the acquire fence (taken). Needs S.sc and the API; the frame's buffer is checked by the callers. */
 static void show_frame(uint32_t generation, uint32_t index, uint64_t frame, uint32_t width, uint32_t height,
-                       int acquire_fd) {
+                       uint32_t crop_offset, uint32_t crop_extent, int acquire_fd) {
     int w = ANativeWindow_getWidth(S.window), h = ANativeWindow_getHeight(S.window);
     if (w <= 0 || h <= 0) { w = (int)width; h = (int)height; }
     int dw, dh;
     gow3_display_size(w, h, width, height, S.fullscreen, &dw, &dh);
     ARect src = {0, 0, (int32_t)width, (int32_t)height};
+    if (S.fullscreen && crop_extent) {
+        /* Fullscreen crops the *already letterboxed AHB*, then stretches only
+         * the scene. Validate against the buffer bounds; fall back to the
+         * uncropped buffer for blank frames or bad messages. */
+        uint32_t x = crop_offset & 0xffffu, y = crop_offset >> 16;
+        uint32_t cw = crop_extent & 0xffffu, ch = crop_extent >> 16;
+        if (cw && ch && x < width && y < height &&
+            cw <= width - x && ch <= height - y) {
+            src.left = (int32_t)x;
+            src.top = (int32_t)y;
+            src.right = (int32_t)(x + cw);
+            src.bottom = (int32_t)(y + ch);
+        }
+    }
     ARect dst = {(w - dw) / 2, (h - dh) / 2, (w - dw) / 2 + dw, (h - dh) / 2 + dh};
     DoneCtx* ctx = malloc(sizeof *ctx);
     if (!ctx) { send_release(generation, index, frame, acquire_fd); return; }
@@ -314,7 +365,8 @@ static void pump_queue(void) {
             send_release(q.generation, q.index, q.frame, q.fence); /* cannot be shown: give it back */
             continue;
         }
-        show_frame(q.generation, q.index, q.frame, q.width, q.height, q.fence); /* sets S.inflight: the loop ends */
+        show_frame(q.generation, q.index, q.frame, q.width, q.height,
+                   q.crop_offset, q.crop_extent, q.fence); /* sets S.inflight: the loop ends */
     }
 }
 
@@ -357,7 +409,8 @@ static void set_fifo(int fifo) {
                 !S.bufs[newest.index])
                 send_release(newest.generation, newest.index, newest.frame, newest.fence);
             else
-                show_frame(newest.generation, newest.index, newest.frame, newest.width, newest.height, newest.fence);
+                show_frame(newest.generation, newest.index, newest.frame, newest.width, newest.height,
+                           newest.crop_offset, newest.crop_extent, newest.fence);
         }
     } else {
         warn_fifo_without_commit();
@@ -378,7 +431,8 @@ static void present_frame(const gow3_present_msg* m, int acquire_fd) {
         return;
     }
     if (!S.fifo) {
-        show_frame(m->generation, m->index, m->frame, m->width, m->height, acquire_fd);
+        show_frame(m->generation, m->index, m->frame, m->width, m->height,
+                   m->format, m->count, acquire_fd);
         return;
     }
     if (S.queue_len == GOW3_PRESENT_MAX_BUFFERS) {
@@ -395,6 +449,8 @@ static void present_frame(const gow3_present_msg* m, int acquire_fd) {
     S.queue[tail].index = m->index;
     S.queue[tail].width = m->width;
     S.queue[tail].height = m->height;
+    S.queue[tail].crop_offset = m->format;
+    S.queue[tail].crop_extent = m->count;
     S.queue[tail].frame = m->frame;
     S.queue[tail].fence = acquire_fd;
     S.queue_len++;

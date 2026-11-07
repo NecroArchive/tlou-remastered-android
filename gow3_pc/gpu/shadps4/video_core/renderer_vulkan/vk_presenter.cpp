@@ -1009,6 +1009,16 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                                {}, {}, pre_barriers);
         const vk::ImageBlit blit =
             MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height);
+#ifdef __ANDROID__
+        // The fitted frame is already surrounded by black bars INSIDE the
+        // AHardwareBuffer. Send the actual scene rectangle with its FRAME.
+        // On Android, Fill Screen crops this exact source rectangle before
+        // stretching, instead of stretching the bars too.
+        swapchain.SetPresentContentRect(
+            static_cast<u32>(blit.dstOffsets[0].x), static_cast<u32>(blit.dstOffsets[0].y),
+            static_cast<u32>(blit.dstOffsets[1].x - blit.dstOffsets[0].x),
+            static_cast<u32>(blit.dstOffsets[1].y - blit.dstOffsets[0].y));
+#endif
         // gow3 21 Oct 2026 (GPU worker): GOW3_PRESENT_SKIP_CLEAR=1 clears the swapchain image to
         // black (the letterbox bars) only when the blit leaves part of it uncovered. The frame is
         // made at the swapchain's size whenever the aspect ratios match, and the blit then writes

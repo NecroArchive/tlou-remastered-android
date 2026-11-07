@@ -193,6 +193,14 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
     // Explicit resolution overrides retain the old compatibility path. Normal presets
     // keep guest allocations/UI native and change only host raster targets at frame boundaries.
     scaled_session = std::getenv("GOW3_RENDER_RES") && std::getenv("GOW3_RENDER_RES")[0];
+    // Independently select spatial-only scaling without activating a temporal
+    // reconstruction provider. Retain guest camera/aim/UI coordinates at 1080p.
+    const char* spatial_env = std::getenv("TLOU_SPATIAL_SCENE");
+    spatial_session = !scaled_session && spatial_env && spatial_env[0] == '1';
+    if (spatial_session) {
+        std::printf("TLOU spatial scene: no FSR, Vulkan scene proxy -> linear UI blit at 1080p\n");
+        std::fflush(stdout);
+    }
     render_width = 1920;
     render_height = 1080;
     if (const char* res = std::getenv("GOW3_RENDER_RES")) {
@@ -208,11 +216,12 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
                               .optimalTilingFeatures;
     depth_blit = (features & vk::FormatFeatureFlagBits::eBlitSrc) &&
                  (features & vk::FormatFeatureFlagBits::eBlitDst);
-    if (enabled && !instance.IsStorageImageWriteWithoutFormatEnabled()) {
+    // A spatial blit needs neither FSR storage-image writes nor temporal history.
+    if (enabled && !spatial_session && !instance.IsStorageImageWriteWithoutFormatEnabled()) {
         std::printf("Upscaler: shaderStorageImageWriteWithoutFormat unsupported, FSR 3 off\n");
         enabled = false;
     }
-    Gow3Settings::Get().temporal_aa_available = enabled && trigger_hash != 0;
+    Gow3Settings::Get().temporal_aa_available = enabled && !spatial_session && trigger_hash != 0;
     // Games drawn below the output size (see OnComposite).
     if (const char* ps = std::getenv("GOW3_UI_COMPOSITE_PS")) {
         composite_ps = u32(std::strtoull(ps, nullptr, 16));
@@ -327,7 +336,8 @@ bool TemporalUpscaler::OnFrameStart() {
     // the scale: 1.5 Quality, 1.7 Balanced, 2 Performance, more Ultra Performance.
     // By the height: ultrawide widths are rounded to steps of 8.
     const float scale = float(target_height) / float(std::max(1u, render_height));
-    const int preset = composite_frames ? (scale <= 1.01f ? 0 : scale <= 1.51f ? 1 : scale <= 1.71f ? 2
+    const int preset = spatial_session ? settings.preset.load()
+                       : composite_frames ? (scale <= 1.01f ? 0 : scale <= 1.51f ? 1 : scale <= 1.71f ? 2
                                                           : scale <= 2.01f ? 3 : 4)
                        : camera_motion.VelocityMode() ? 0 : Gow3Settings::RenderPreset();
     if (applied_preset != preset || settings.upscaler == Gow3Settings::UpscalerOff) failed = false;
@@ -358,7 +368,10 @@ bool TemporalUpscaler::OnFrameStart() {
     // Dynamic scene resolution scaling (live preset switching) works on all GPUs.
     // On GPUs without D32S8 blit support, UI depth is cleared instead of copied from scene.
     if (!scaled_session) {
-        scene_targets.SetSize(SceneResolution::ForPreset(active ? preset : 0,
+        // Spatial-only TLOU uses reduced render proxies even with FSR explicitly
+        // disabled. Retaining the original 1080p guest allocations keeps the
+        // aiming coordinates and UI aligned.
+        scene_targets.SetSize(SceneResolution::ForPreset((active || spatial_session) ? preset : 0,
                                                         {target_width, target_height}));
         render_width = scene_targets.Size().width;
         render_height = scene_targets.Size().height;
@@ -1355,7 +1368,10 @@ float TemporalUpscaler::SceneMipBias() const {
 }
 
 bool TemporalUpscaler::Scaled() const {
-    return scaled_session || target_width != 1920 || target_height != 1080;
+    // Reduced host raster proxies need the native-size UI composition path
+    // even when no temporal upscaler is active (TLOU spatial-only mode).
+    return scaled_session || (spatial_session && scene_targets.Reduced()) ||
+           target_width != 1920 || target_height != 1080;
 }
 
 void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
@@ -1370,10 +1386,20 @@ void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
         }
         return;
     }
-    if (ui_phase || !camera_motion.Depth()) {
+    if (ui_phase) return;
+    const auto& image = texture_cache.GetImage(color);
+    // CUSA00552 01.00 direct 720p/540p/360p path: the game's postprocess
+    // produces an RGBA8 frame without depth, followed by a separate 1080p
+    // HUD target. A depth-only LDR detector can miss this frame entirely,
+    // preventing spatial composition (as seen in the device log).
+    if (scaled_session && !composite_frames &&
+        image.info.pixel_format == vk::Format::eR8G8B8A8Unorm &&
+        RenderTarget(image.info.size.width, image.info.size.height) &&
+        !FrameCapture::IsDisplayBuffer(image.info.guest_address)) {
+        ldr_target = color;
         return;
     }
-    const auto& image = texture_cache.GetImage(color);
+    if (!camera_motion.Depth()) return;
     const auto& depth = texture_cache.GetImage(camera_motion.Depth());
     if (image.info.pixel_format == vk::Format::eR8G8B8A8Unorm &&
         image.info.size.width == depth.info.size.width &&
@@ -1402,13 +1428,27 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
         return;
     }
     const auto& image = texture_cache.GetImage(color);
+    // CUSA00552 direct low-resolution patches create a separate 1920x1080
+    // interface surface. The previous UI trigger required RenderTarget() at
+    // the guest's 720p size, so it *never* ran the 720p -> 1080p background
+    // copy before the game drew its aim. The device logs confirmed this.
+    const bool native_hud_transition =
+        UiComposition::NativeUiTransition(
+            scaled_session && !spatial_session && !composite_frames,
+            bool(ldr_target), ldr_target == color,
+            image.info.size.width, image.info.size.height,
+            render_width, render_height);
     const bool movie = vs_hash == ui_trigger_vs || UiComposition::MovieShader(vs_hash) ||
                        (scaled_session && native_viewport);
-    const bool ui_draw = movie &&
-        (image.info.pixel_format == vk::Format::eR8G8B8A8Unorm ||
-         image.info.pixel_format == vk::Format::eR8G8B8A8Srgb) &&
-        RenderTarget(image.info.size.width, image.info.size.height) &&
+    const bool rgba8 = image.info.pixel_format == vk::Format::eR8G8B8A8Unorm ||
+                       image.info.pixel_format == vk::Format::eR8G8B8A8Srgb;
+    // The native 1080p target can itself be a registered display buffer.
+    // Only the old low-resolution movie path excludes display buffers;
+    // otherwise the missing TLOU HUD transition would still be skipped.
+    const bool old_movie_target =
+        movie && RenderTarget(image.info.size.width, image.info.size.height) &&
         !FrameCapture::IsDisplayBuffer(image.info.guest_address);
+    const bool ui_draw = rgba8 && (old_movie_target || native_hud_transition);
     switch (UiComposition::Choose(Scaled(), ui_draw,
                                   camera_motion.Ready() && ldr_target == color,
                                   Active() && !failed)) {
@@ -1422,7 +1462,28 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
         // A failed FSR dispatch must not force UI text back to the scene resolution.
         [[fallthrough]];
     case UiComposition::Background::Copy:
-        RunUiOnly(color, depth);
+        if (native_hud_transition) {
+            // A single spatial blit of the completed low-resolution scene.
+            // Subsequent 1920x1080 HUD and aim draws use this host UI image
+            // directly; the original 720p scene targets remain untouched.
+            // Keep the destination native UI image identity so RedirectColor
+            // also redirects the game's actual 1080p UI draws.
+            RunUiOnly(ldr_target, {});
+            if (ui_phase) {
+                ui_color = color;
+                ui_depth = depth;
+                display_redirect = true;
+                static std::atomic<bool> printed{false};
+                if (!printed.exchange(true, std::memory_order_relaxed)) {
+                    std::printf("TLOU native HUD compositor ACTIVE: %ux%u scene -> "
+                                "%ux%u native UI, one spatial blit; no FSR\n",
+                                render_width, render_height, ui_width, ui_height);
+                    std::fflush(stdout);
+                }
+            }
+        } else {
+            RunUiOnly(color, depth);
+        }
         return;
     }
 }
@@ -1607,6 +1668,19 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
     done_this_frame = ui_phase = true;
     ui_color = color_id;
     ui_depth = depth_id;
+    // Confirm in device logs that the guest-resolution route actually reached
+    // the final spatial copy. Source size and target size distinguish a fast
+    // one-copy game raster from expensive full-size scene proxies.
+    if (scaled_session && !composite_frames) {
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            std::printf("TLOU guest raster UI spatial copy: %ux%u -> %ux%u "
+                        "(one final blit, FSR disabled)\n",
+                        source_width, source_height, ui_width, ui_height);
+            std::fflush(stdout);
+        }
+    }
 }
 
 void TemporalUpscaler::RunScaled() {

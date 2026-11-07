@@ -27,7 +27,7 @@ final class PadBridge {
 
     void setSwapFaceButtons(boolean enabled) { reset(); swapFaceButtons=enabled; }
 
-    private String name(KeyEvent e) {
+    String name(KeyEvent e) {
         // Thor's Linux scancodes were verified against its printed Nintendo positions.
         switch (e.getScanCode()) {
             case 304: return "cross"; case 305: return "circle";

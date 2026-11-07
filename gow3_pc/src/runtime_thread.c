@@ -374,7 +374,29 @@ static void *host_start(void *p) {
     if (!exit_setjmp(t)) t->result=(void *)(uintptr_t)guest_cpu_call((uintptr_t)t->entry,1,&argument);
     else guest_cpu_abandon();
     runtime_thread_keys_cleanup();
+    // FEX no longer executes on the guest stack after destroying its thread.
+    // The Android port previously kept every 64 KiB DCLoader guest stack
+    // mapped for the lifetime of the process; transitions create hundreds.
     guest_cpu_thread_end();
+#if defined(__ANDROID__) && !defined(GUEST_CPU_NATIVE)
+    if (t->guest_stack) {
+        munmap(t->guest_stack, t->guest_stack_size);
+        t->guest_stack = NULL;
+        t->guest_stack_size = 0;
+    }
+#endif
+#ifdef __ANDROID__
+    // The guest TLS belongs to this completed thread and its key destructors
+    // have already run. Do not retain a stale FEX TCB mapping per DCLoader.
+    if (t->tls_block) {
+        const size_t used = (size_t)((tls_offset() + 256 + 63) & ~(uint64_t)63);
+        // runtime_low_map reserves PS4 16 KiB pages, even when TLS is tiny.
+        const size_t mapped = (used + 16383u) & ~(size_t)16383u;
+        munmap(t->tls_block, mapped);
+        t->tls_block = NULL;
+        t->tcb = NULL;
+    }
+#endif
     pthread_mutex_lock(&lock); t->finished=1; ++exited; pthread_mutex_unlock(&lock);
     return t->result;
 }
@@ -396,6 +418,15 @@ static int32_t create(GuestThread **out,ThreadAttr **attr_slot,GuestEntry entry,
     /* Windows places the stack itself (low: no high-entropy ASLR) and commits all of it:
      * guest code has no stack probes and would step over the guard page. */
     pthread_attr_setstacksize(&host,stack_bytes);
+#elif defined(__ANDROID__)
+    // Bionic owns and reclaims the host pthread stack. Only the guest x86
+    // stack must be low-VA; FEX already allocates it separately below.
+    // pthread_attr_setstack with runtime_low_map permanently leaked a
+    // 320 KiB host stack for every short-lived DCLoader thread.
+    if (pthread_attr_setstacksize(&host,stack_bytes)) {
+        fprintf(stderr,"STOP: invalid Android pthread stack size %zu\n",stack_bytes);
+        exit(21);
+    }
 #else
     void *stack_memory=runtime_low_map(stack_bytes,PROT_READ|PROT_WRITE);
     if (stack_memory) pthread_attr_setstack(&host,stack_memory,stack_bytes);

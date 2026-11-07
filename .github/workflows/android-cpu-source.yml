@@ -2,7 +2,7 @@ name: TLOU ARM64 Bionic loader syntax
 
 on:
   push:
-    paths: ['gow3_pc/src/**', 'gow3_pc/gpu/shim/**', 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/**', 'android-launcher/**', '.github/workflows/android-cpu-source.yml']
+    paths: ['gow3_pc/src/**', 'gow3_pc/gpu/shim/**', 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/**', '.github/workflows/android-cpu-source.yml']
   pull_request:
     paths: ['gow3_pc/src/**', '.github/workflows/android-cpu-source.yml']
 

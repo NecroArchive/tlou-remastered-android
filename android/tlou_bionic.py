@@ -8,6 +8,7 @@ TLOU-specific FEX/ARM64 loader. No game content is shipped with the port.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 from pathlib import Path
 import shutil
@@ -16,6 +17,20 @@ import subprocess
 import sys
 
 TITLE_ID = "CUSA00552"
+# This exact base SELF is shared by the newly provided executable; accept
+# alternative regional SFO identifiers only when the game executable matches
+# byte-for-byte. The patch writer independently validates the same SHA.
+VERIFIED_SELF_SHA256 = "e5f0aa322f60bd90637cc10d83de08c77885b1921084021c630e04ed3d6febf7"
+VERIFIED_SELF_111 = {
+    "3cfa475f88ca68485b6b9230e62b84e195cdbe19e6f7295c110b8dcf8f20884e",
+    "31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7",
+}
+VERIFIED_TLOU_SELFS = frozenset({VERIFIED_SELF_SHA256} | VERIFIED_SELF_111)
+# PC port v0.1.6 (2026-11-04) explicitly added the Japanese CUSA00554
+# alongside 00556 and 00557. This is only a metadata ALLOWLIST: other
+# regional executables still require an exact approved SELF SHA-256 and
+# byte-by-byte patch validation before they can be launched.
+REGIONAL_TITLES = {"CUSA00552", "CUSA00554", "CUSA00556", "CUSA00557", "CUSA00559"}
 _BOOT_FILES = ("eboot.bin", "sce_sys/param.sfo", "sce_module/libc.prx")
 
 
@@ -53,16 +68,69 @@ def read_sfo(path: Path) -> dict[str, str]:
 
 def require_game(folder: Path, *, is_update: bool = False) -> dict[str, str]:
     for relative in _BOOT_FILES:
-        # A patch folder may omit the original libc; it inherits the base copy.
-        if is_update and relative.startswith("sce_module/"):
+        # Updates can inherit the base libc and, if resource-only, the eboot.
+        if is_update and (relative.startswith("sce_module/") or relative == "eboot.bin"):
             continue
         if not (folder / relative).is_file():
             raise PortError(f"Missing {relative}: {folder}")
     metadata = read_sfo(folder / "sce_sys/param.sfo")
     title = metadata.get("TITLE_ID")
-    if title != TITLE_ID:
-        raise PortError(f"Wrong PS4 title: {title!r}; expected {TITLE_ID}")
+    if is_update:
+        if title not in REGIONAL_TITLES:
+            raise PortError(f"Wrong PS4 update title: {title!r}")
+    elif title != TITLE_ID:
+        # Regional TITLE_ID alone does not prove compatible execution.
+        if (title not in REGIONAL_TITLES or
+            hashlib.sha256((folder / "eboot.bin").read_bytes()).hexdigest() not in VERIFIED_TLOU_SELFS):
+            raise PortError(f"Wrong PS4 title: {title!r}; expected verified TLOU region")
+        metadata["PORT_PROFILE"] = "TLOU-VERIFIED-SELF-SHA256"
+        print(f"Recognized TLOU regional SFO {title!r} via verified SELF.", flush=True)
     return metadata
+
+
+def validate_game_assets(folder: Path) -> None:
+    """Inspect available PSARC files without rejecting valid installed layouts.
+
+    In the user's working 01.00 installation, /app0 assets are already mounted
+    without a physical dvdroot_ps4 directory under the selected game folder.
+    The native runtime resolves them at launch. This preflight therefore
+    cannot infer installation corruption from a missing optional directory.
+    Never hash or rewrite game data.
+    """
+    root = folder / "dvdroot_ps4"
+    if not root.is_dir():
+        # Valid legacy app0 layout; absence is not an error and should not
+        # confuse the player with a recurring warning during normal launch.
+        return
+    main = root / "build/ps4/main"
+    if not main.is_dir():
+        print("Aviso: build/ps4/main não existe sob dvdroot_ps4; "
+              "sem verificação PSARC opcional.", flush=True)
+        return
+    if not any(main.iterdir()):
+        print("Aviso: diretório build/ps4/main vazio; "
+              "não impedindo a preparação do jogo.", flush=True)
+        return
+    archives = 0
+    for archive in main.glob("*.psarc"):
+        if not archive.is_file():
+            continue
+        # PSARC: fixed 32-byte big-endian header, then a bounded TOC. Just
+        # checking "PSAR" accepts files that are truncated immediately after
+        # the signature (and produces a misleading "prepared" success).
+        with archive.open("rb") as data:
+            header = data.read(32)
+        size = archive.stat().st_size
+        if len(header) != 32 or header[:4] != b"PSAR":
+            raise PortError(f"Arquivo PSARC inválido ou truncado: {archive.name}. Reextraia o PKG.")
+        toc_size, entry_size, file_count, block_size = struct.unpack_from(">4I", header, 12)
+        if (not 30 <= entry_size <= 256 or file_count == 0 or file_count > 1_000_000 or
+            block_size == 0 or block_size > 16 * 1024 * 1024 or
+            toc_size < 32 + entry_size * file_count or toc_size > size):
+            raise PortError(f"PSARC com índice incompleto ou inconsistente: {archive.name}. Reextraia o PKG.")
+        archives += 1
+    if not archives:
+        print("Aviso: nenhum PSARC na raiz; recursos podem estar extraídos. Não é prova de instalação íntegra.", flush=True)
 
 
 def _link_file(source: Path, dest: Path) -> None:
@@ -74,11 +142,10 @@ def _link_file(source: Path, dest: Path) -> None:
 
 
 def build_view(game: Path, update: Path | None, out: Path) -> Path:
-    """Boot overlay with explicit update precedence and no copying huge assets.
+    """Merge game/update as a read-only symlink view, never altering base data.
 
-    The base dvdroot_ps4 is a symlink. Content updates to dvdroot_ps4 must be
-    supported by the native app0 overlay before they can be enabled, so reject
-    them instead of silently launching with the wrong resources.
+    Huge unmodified directories remain one link; expand only directories
+    on paths that an update actually replaces.
     """
     view = out / "tlou-view"
     if view.exists() or view.is_symlink():
@@ -87,21 +154,43 @@ def build_view(game: Path, update: Path | None, out: Path) -> Path:
         else:
             shutil.rmtree(view)
     view.mkdir(parents=True)
-    # Keep non-boot resources in place; do not duplicate their potentially huge contents.
+
     for entry in game.iterdir():
-        if entry.name.lower() not in {"eboot.bin", "sce_sys", "sce_module"}:
-            target = view / entry.name
-            if entry.is_dir() or entry.is_file():
-                target.symlink_to(entry.resolve(), target_is_directory=entry.is_dir())
-    for layer in filter(None, (game, update)):
-        for name in ("eboot.bin", "sce_sys", "sce_module"):
-            entry = layer / name
-            if name == "eboot.bin" and entry.is_file():
-                _link_file(entry, view / name)
-            elif entry.is_dir():
-                for item in entry.rglob("*"):
-                    if item.is_file():
-                        _link_file(item, view / name / item.relative_to(entry))
+        if entry.name in {"sce_sys", "sce_module"} and entry.is_dir():
+            for file in entry.rglob("*"):
+                if file.is_file():
+                    _link_file(file, view / entry.name / file.relative_to(entry))
+        elif entry.is_file() or entry.is_dir():
+            _link_file(entry, view / entry.name)
+
+    def overlay(source: Path, target: Path):
+        if source.is_symlink():
+            raise PortError(f"Update contains a symbolic link: {source.name}")
+        if source.is_dir():
+            if target.is_symlink():
+                previous = target.resolve(strict=True)
+                if not previous.is_dir():
+                    raise PortError(f"Update directory conflicts with file: {target.name}")
+                target.unlink()
+                target.mkdir()
+                for item in previous.iterdir():
+                    _link_file(item, target / item.name)
+            elif target.exists() and not target.is_dir():
+                raise PortError(f"Update directory conflicts with file: {target.name}")
+            else:
+                target.mkdir(parents=True, exist_ok=True)
+            for item in source.iterdir():
+                overlay(item, target / item.name)
+        elif source.is_file():
+            if target.is_dir() and not target.is_symlink():
+                raise PortError(f"Update file conflicts with directory: {target.name}")
+            _link_file(source, target)
+        else:
+            raise PortError(f"Unsupported update item: {source.name}")
+
+    if update:
+        for entry in update.iterdir():
+            overlay(entry, view / entry.name)
     return view
 
 
@@ -123,10 +212,10 @@ def prepare(source: Path, game: Path, update: Path | None, out: Path,
     if out == game or out.is_relative_to(game) or (update and (out == update or out.is_relative_to(update))):
         raise PortError("--out must be outside the game and update folders")
     base = require_game(game)
+    validate_game_assets(game)
     new = require_game(update, is_update=True) if update else None
-    # Do not claim that this layout supports update-provided game resources.
-    if update and (update / "dvdroot_ps4").exists():
-        raise PortError("Update has dvdroot_ps4 resources; native app0 overlay not ported yet")
+    if new and new["TITLE_ID"] != base["TITLE_ID"]:
+        raise PortError(f"Update CUSA {new['TITLE_ID']} does not match base {base['TITLE_ID']}")
     out.mkdir(parents=True, exist_ok=True)
     game_view = build_view(game, update, out)
     scripts = source / "gow3_pc/scripts"
@@ -154,7 +243,7 @@ def prepare(source: Path, game: Path, update: Path | None, out: Path,
     patch_file.unlink(missing_ok=True)
     patched = from_module.image_patches(out / "eboot.elf", patch_file, patches)
     return {
-        "title_id": TITLE_ID,
+        "title_id": base.get("TITLE_ID", TITLE_ID),
         "base_version": base.get("APP_VER"),
         "update_version": new.get("APP_VER") if new else None,
         "prepared_view": str(game_view),

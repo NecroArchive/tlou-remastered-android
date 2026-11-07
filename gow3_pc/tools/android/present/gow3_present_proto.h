@@ -100,8 +100,8 @@ typedef struct gow3_present_msg {
     };
     uint32_t width;      /* pixels */
     uint32_t height;
-    uint32_t format;     /* AHARDWAREBUFFER_FORMAT_* */
-    uint32_t count;      /* buffers in the set (HELLO, RESET) */
+    uint32_t format;     /* AHB format for BUFFER/HELLO/RESET; FRAME: x|y<<16 of scene crop */
+    uint32_t count;      /* buffer count for HELLO/RESET; FRAME: width|height<<16 of crop */
     uint64_t frame;      /* frame counter, from 1 */
 } gow3_present_msg;
 

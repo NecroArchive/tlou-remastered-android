@@ -20,6 +20,7 @@
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 #include "video_core/renderer_vulkan/vk_draw_pipe.h"
+#include "video_core/renderer_vulkan/tlou_pending_write_index.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -662,6 +663,9 @@ private:
         u64 position;
     };
     std::vector<PendingWrite> pending_writes;
+    // Stage A: exact cyclic-first overlap lookup; falls back to the old scan
+    // for small or unusually large pending-write lists.
+    Detail::PendingWriteIndex<PendingWrite> pending_write_index{};
     VAddr pending_min = ~VAddr{0}, pending_max = 0; ///< bounds of pending_writes
     u32 pending_checks = 0;
     /// gow3 26 Oct 2026: the 64 KiB granules pending_writes cover, hashed into a bit each (set

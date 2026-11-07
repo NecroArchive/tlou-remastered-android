@@ -8,12 +8,14 @@
 #pragma once
 
 #include <array>
+#include <cstdio>
 #include <atomic>
 
 #include "common/assert.h"
 #include "common/types.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/tlou_constant_ring_flush.h"
 
 namespace Vulkan {
 
@@ -25,6 +27,9 @@ public:
         : scheduler{scheduler_},
           buffer{instance, 0, Capacity, VideoCore::MemoryType::Stream, "gow3 constant ring"} {
         ASSERT(!buffer.mapped_data.empty());
+        std::printf("GPU: constant ring allocation is %s (batched flush can skip "
+                    "per-copy host barriers on coherent memory)\\n",
+                    buffer.is_coherent ? "host-coherent" : "non-coherent");
     }
 
     [[nodiscard]] vk::Buffer Handle() const noexcept {
@@ -60,6 +65,20 @@ public:
     /// Stage A, after writing: makes the bytes visible to the GPU.
     void Flush(u64 offset, u64 size) {
         buffer.Flush(offset, size);
+    }
+
+    // Stage A owns these monotonic positions. A packet's snapshots cannot
+    // reach Stage B until the draw pipe Commit() publishes the packet, so
+    // one host-memory flush after collecting all stages suffices. When ring
+    // positions wrap, the helper covers both physical spans (no stale data
+    // is published to the GPU). Coherent memory remains a no-op.
+    void FlushPacket(u64 begin) {
+        if (buffer.is_coherent || begin == position) {
+            return; // coherent host writes need no Vulkan flush at all
+        }
+        Detail::ForRingFlushSegments(begin, position, Capacity, [this](u64 offset, u64 size) {
+            buffer.Flush(offset, size);
+        });
     }
 
     /// Stage A: the position the next packet's allocations end at.

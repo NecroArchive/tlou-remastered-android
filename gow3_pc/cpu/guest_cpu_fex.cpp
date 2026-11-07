@@ -338,7 +338,7 @@ void guest_cpu_init(void* (*map)(size_t size, int prot)) {
     }();
     FEXCore::Config::Set(FEXCore::Config::CONFIG_DYNAMICL1CACHE,
                          dynamic_l1 ? "1" : "0");
-    std::printf("GOW3_FEX_CACHE dynamic_l1=%d disk_cache=unchanged tso=unchanged\n",
+    std::printf("TLOU FEX cache: dynamic_l1=%d disk_cache=unchanged tso=unchanged\n",
                 int(dynamic_l1));
     const auto features = FEX::FetchHostFeatures();
     wide_xmm = features.SupportsAVX && features.SupportsSVE256;

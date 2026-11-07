@@ -236,6 +236,10 @@ private:
     vk::UniqueImageView ui_depth_view;
     bool depth_blit = false;
     bool scaled_session = false;
+    // TLOU Android: scaled host raster targets and native 1080p HUD, without
+    // FSR/temporal reconstruction. The already existing RunUiOnly path uses
+    // a linear Vulkan blit to combine the scene and UI.
+    bool spatial_session = false;
     u32 ui_width = 0, ui_height = 0;
     u32 render_width = 0, render_height = 0;
     vk::Format ui_format = vk::Format::eUndefined;

@@ -18,6 +18,24 @@ class DevicePreparation(unittest.TestCase):
         (out / "tlou-view").mkdir()
         (out / "tlou-view/eboot.bin").symlink_to(game / "eboot.bin")
 
+    def test_prepared_game_without_dvdroot_still_launches(self):
+        """Regression: user log (10) showed a working prepared 01.00 game
+        blocked before guest launch by new required dvdroot_ps4 preflight."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            game = make_game(root / "CUSA00552", ver="01.00")
+            import shutil
+            shutil.rmtree(game / "dvdroot_ps4")
+            out = root / "private/prepared"
+            with patch.object(device, "prepare", side_effect=self.fake_prepare) as prepare, \
+                 patch.object(device, "write_selected") as patches:
+                # A previously supported layout must also prepare on first use.
+                device.ensure(root, game, out, {"resolution": "720"})
+                device.ensure(root, game, out, {"resolution": "720"})
+                self.assertEqual(prepare.call_count, 1)
+                self.assertEqual(patches.call_count, 2)
+                self.assertEqual((out / "tlou-view/eboot.bin").read_bytes(), b"test game")
+
     def test_cache_and_modified_module(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -57,6 +75,28 @@ class DevicePreparation(unittest.TestCase):
                 self.assertEqual(prepare.call_count,1)
                 self.assertEqual(selected.call_count,2)
                 self.assertEqual(selected.call_args.args[2],{"resolution":"540"})
+
+    def test_update_cache_and_rollback_keep_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            game = make_game(root / "CUSA00552", ver="01.00")
+            update = make_game(root / "UPDATE", ver="01.11", include_libc=False)
+            out = root / "private/prepared"
+            with patch.object(device, "prepare", side_effect=self.fake_prepare) as prepare:
+                device.ensure(root, game, out, update=update)
+                device.ensure(root, game, out, update=update)
+                self.assertEqual(prepare.call_count, 1)
+                self.assertEqual(__import__("json").loads((out/"device-ready.json").read_text())["update_version"], "01.11")
+                (update/"eboot.bin").write_bytes(b"updated executable")
+                device.ensure(root, game, out, update=update)
+                self.assertEqual(prepare.call_count, 2)
+            marker = (out/"device-ready.json").read_bytes()
+            (update/"eboot.bin").write_bytes(b"newer executable")
+            with patch.object(device, "prepare", side_effect=ValueError("bad update")):
+                with self.assertRaisesRegex(ValueError, "bad update"):
+                    device.ensure(root, game, out, update=update)
+            self.assertEqual((out/"device-ready.json").read_bytes(), marker)
+            self.assertEqual((game/"eboot.bin").read_bytes(), b"test game")
 
     def test_cannot_prepare_over_player_files(self):
         with tempfile.TemporaryDirectory() as tmp:

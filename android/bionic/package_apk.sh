@@ -27,6 +27,39 @@ stage="$out/apk-jni/arm64-v8a"
 assets="$out/apk-assets/runtime"
 python3 android/bionic/stage_tools.py
 mkdir -p "$stage" "$assets" "$root/out/release"
+# Pinned official Turnip 27 R2 / Gen8 V39 patched. Never use a rolling Mesa
+# "latest" archive; the exact upstream asset digest is pinned for audit.
+# This runs ONLY when packaging is explicitly requested, never during commits.
+turnip_dir="$out/apk-assets/drivers"
+turnip_zip="$turnip_dir/turnip-v27-r2-a6xx-a7xx.zip"
+turnip_sha="8d30be022582d0c03b1918c019540491d00439e14e9e5e1359fe0bb19004f781"
+turnip_gen8_zip="$turnip_dir/turnip-gen8-v39-patched-a8xx.zip"
+turnip_gen8_sha="bd457b30f195cf93a334b5302c221b1b5cb59c79c485935decf95d560a38c8a2"
+mkdir -p "$turnip_dir"
+if [[ ! -s "$turnip_zip" ]] || ! echo "$turnip_sha  $turnip_zip" | sha256sum -c --status; then
+  tmp="$turnip_zip.download"
+  rm -f "$tmp"
+  curl -fL --retry 3 --connect-timeout 20 --max-time 120 \
+    "https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/download/v39/Turnip_v27.0.0-R2.zip" \
+    -o "$tmp"
+  echo "$turnip_sha  $tmp" | sha256sum -c
+  unzip -Z -1 "$tmp" | grep -q 'meta.json'
+  unzip -Z -1 "$tmp" | grep -q 'libvulkan_freedreno.so'
+  mv "$tmp" "$turnip_zip"
+fi
+echo "$turnip_sha  $turnip_zip" | sha256sum -c
+# The Gen8 patched package is distinct from R1 and is pinned to the upstream digest.
+if [[ ! -s "$turnip_gen8_zip" ]] || ! echo "$turnip_gen8_sha  $turnip_gen8_zip" | sha256sum -c --status; then
+  temp="$turnip_gen8_zip.download"
+  rm -f "$temp"
+  curl -fL --retry 3 --connect-timeout 20 --max-time 120 \
+    "https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/download/v39/Turnip_Gen8_V39_Patched.zip" -o "$temp"
+  echo "$turnip_gen8_sha  $temp" | sha256sum -c
+  unzip -Z -1 "$temp" | grep -q 'meta.json'
+  unzip -Z -1 "$temp" | grep -q 'libvulkan_freedreno.so'
+  mv "$temp" "$turnip_gen8_zip"
+fi
+echo "$turnip_gen8_sha  $turnip_gen8_zip" | sha256sum -c
 cp "$out/bin/gow3-probe" "$assets/gow3-probe"
 for lib in libgow3cpu.so libgow3gpu.so libgow3present.so libc++_shared.so; do
   cp "$out/lib/$lib" "$stage/$lib"
@@ -35,13 +68,13 @@ gradle -p "$root/android-launcher" :app:assembleRelease --no-daemon --max-worker
 unsigned="$root/android-launcher/app/build/outputs/apk/release/app-release-unsigned.apk"
 [[ -s "$unsigned" ]] || { echo "Gradle did not produce an unsigned APK" >&2; exit 2; }
 aligned="$out/tlou-release-aligned.apk"
-apk="$root/out/release/TheLastOfUsRemastered-Android-Bionic-v0.31-arm64.apk"
+apk="$root/out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk"
 "$android_tools/zipalign" -f -p 4 "$unsigned" "$aligned"
 key="$out/experimental-development.jks"
-if [[ ! -f $key ]]; then
-  keytool -genkeypair -keystore "$key" -storepass 'TLOU-Bionic-development' \
-    -alias tlou-bionic -keypass 'TLOU-Bionic-development' -keyalg RSA -keysize 3072 \
-    -validity 3650 -dname 'CN=TLOU Experimental Android,O=Daedalus' -noprompt
+# A different key would make updates impossible. Never regenerate a release key.
+if [[ ! -s "$key" ]]; then
+  echo "ERROR: existing TLOU signing identity missing; refusing a differently signed APK" >&2
+  exit 8
 fi
 "$android_tools/apksigner" sign --ks "$key" --ks-key-alias tlou-bionic \
   --ks-pass pass:TLOU-Bionic-development --key-pass pass:TLOU-Bionic-development \

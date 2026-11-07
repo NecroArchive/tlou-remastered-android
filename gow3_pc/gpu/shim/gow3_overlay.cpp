@@ -2,6 +2,9 @@
 // Bionic-specific presentation uses Java SurfaceView and virtual pad;
 // TLOU's full SDL/ImGui desktop menu is preserved under #else below.
 #include "gow3_overlay.h"
+#include "android_choice_bridge.h"
+#include "../gow3gpu.h"
+#include <cstdlib>
 #include <atomic>
 #include <mutex>
 #include <algorithm>
@@ -16,6 +19,7 @@ std::vector<std::string> choices;
 int selected=0;
 int result=-1;
 bool choice_open=false;
+AndroidChoice::Bridge android_choice;
 }
 void Init(const Vulkan::Instance&, vk::Format, u32) {}
 void Render(vk::CommandBuffer, vk::ImageView, vk::Extent2D) {}
@@ -26,7 +30,7 @@ bool CapturesInput() { std::scoped_lock lk{choice_mutex}; return choice_open; }
 bool HandleEvent(const SDL_Event&) { return false; }
 void UpdateTextInput(SDL_Window*) {}
 void SetTextEntry(bool, const std::string&, const std::string&) {}
-void BeginChoice(const std::string&, const std::vector<std::string>& items,
+void BeginChoice(const std::string& title, const std::vector<std::string>& items,
                  std::vector<Gow3Png::Image>, int focus) {
     std::scoped_lock lk{choice_mutex};
     choices=items;
@@ -34,6 +38,30 @@ void BeginChoice(const std::string&, const std::vector<std::string>& items,
     result=-1;
     choice_open=true;
     last_buttons=current_buttons.load();
+    const char* directory=std::getenv("GOW3_GPU_USER_DIR");
+    if(!android_choice.Begin(directory?directory:"",title,items,selected)) {
+        result=-2;choice_open=false;
+        std::fprintf(stderr,"TLOU: Android choice request could not be published; dialog cancelled\n");
+    }
+}
+void BeginSaveChoice(const std::string& title,const Gow3SaveChoiceEntry* entries,int count,int focus) {
+    std::scoped_lock lk{choice_mutex};
+    choices.clear();std::vector<AndroidChoice::SaveEntry> saves;
+    for(int i=0;i<count;++i) {
+        const auto& source=entries[i];AndroidChoice::SaveEntry entry;
+        entry.directory=source.directory?source.directory:"";entry.title=source.title?source.title:"";
+        entry.subtitle=source.subtitle?source.subtitle:"";entry.detail=source.detail?source.detail:"";
+        entry.icon=source.icon_path?source.icon_path:"";entry.timestamp=static_cast<std::uint64_t>(source.modified_time);
+        entry.user_param=source.user_param;entry.is_new=source.is_new;
+        choices.push_back(!entry.subtitle.empty()?entry.subtitle:!entry.title.empty()?entry.title:entry.directory);
+        saves.push_back(std::move(entry));
+    }
+    selected=focus>=0 && focus<count?focus:0;result=-1;choice_open=true;last_buttons=current_buttons.load();
+    const char* directory=std::getenv("GOW3_GPU_USER_DIR");
+    if(!android_choice.Begin(directory?directory:"",title,choices,selected,saves)){result=-2;choice_open=false;}
+}
+void CancelSaveChoice() {
+    std::scoped_lock lk{choice_mutex};result=-2;choice_open=false;android_choice.Finish();
 }
 void PublishPad(u32 buttons) {
     current_buttons.store(buttons,std::memory_order_release);
@@ -42,6 +70,8 @@ int PollChoice() {
     constexpr u32 Up=0x10,Down=0x40,Cross=0x4000,Circle=0x2000;
     std::scoped_lock lk{choice_mutex};
     if(!choice_open) return result;
+    const int android_result=android_choice.Poll();
+    if(android_result!=-1){result=android_result;choice_open=false;android_choice.Finish();return result;}
     const u32 now=current_buttons.load(std::memory_order_acquire);
     const u32 pressed=now & ~last_buttons;
     last_buttons=now;
@@ -51,7 +81,7 @@ int PollChoice() {
     }
     if(pressed & (Cross|Circle)) {
         result=(pressed & Circle)||choices.empty() ? -2 : selected;
-        choice_open=false;
+        choice_open=false;android_choice.Finish();
     }
     return result;
 }

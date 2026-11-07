@@ -2,7 +2,7 @@ name: TLOU Bionic Full Native and APK
 
 on:
   push:
-    branches: [android-bionic-stage1]
+    branches: [android-bionic-stage1, tlou-ui-approval-log32-20261105]
     paths:
       - 'android/**'
       - 'android-launcher/**'
@@ -13,13 +13,27 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: tlou-bionic-full-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      interface_only: ${{ steps.inputs.outputs.interface_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: inputs
+        name: Select full native build or verified APK payload reuse
+        run: echo "interface_only=$(python3 android/bionic/reuse_apk.py --check)" >> "$GITHUB_OUTPUT"
   native:
+    needs: changes
+    if: needs.changes.outputs.interface_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
@@ -29,15 +43,49 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Preflight translations, default language and offline artwork
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          rows = Path('android-launcher/app/src/main/assets/ui-translations.tsv').read_text(encoding='utf-8').splitlines()
+          rows = [line.split(chr(9)) for line in rows if line and not line.startswith('#')]
+          assert len(rows) >= 150, 'Missing translated labels'
+          assert all(len(row) == 10 and all(row) for row in rows), 'Incomplete translation columns'
+          assert len({row[0] for row in rows}) == len(rows), 'Duplicate translation labels'
+          lang = Path('android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouLanguage.java').read_text()
+          assert 'LocaleList.getDefault()' in lang, 'System default locale unavailable'
+          assert 'return 1; // English fallback' in lang, 'English fallback unavailable'
+          art = Path('android-launcher/app/src/main/res/drawable-nodpi/tlou_hero.jpg')
+          assert art.is_file() and art.stat().st_size > 1024, 'Launcher offline hero art missing'
+          print('Preflight OK:', len(rows), 'labels across 10 languages; English fallback; game art')
+          PY
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Test clocks, job fiber migration, services and automatic preparation
         run: |
+          python3 -m pip install unicorn==2.1.4
           bash android/bionic/test_runtime_contracts.sh
           python3 -m unittest discover -s android/tests -v
-          python3 -m pip install unicorn==2.1.4
           python3 gow3_pc/tests/test_srt_arm64.py -v
+      # Fail fast on Java/resources/manifest issues before expensive native builds.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+          cache-read-only: false
+      - name: Preflight compile and Android resource validation
+        run: gradle -p android-launcher :app:testReleaseUnitTest :app:lintVitalRelease --no-daemon --max-workers=2
+      - name: Publish actual Android UI test renders and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-v01-native-ui-tests
+          path: android-launcher/app/build/reports/**
+          if-no-files-found: ignore
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
@@ -113,18 +161,9 @@ jobs:
         shell: bash -el {0}
         run: |
           python3 android/bionic/verify_bionic.py --ndk "$TLOU_NDK" --root out/android-bionic
-      - uses: actions/setup-java@v4
-        if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        with:
-          distribution: temurin
-          java-version: '17'
       - name: Verify FPS sampling and resume behavior
         if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
         run: bash android/bionic/test_fps.sh
-      - uses: gradle/actions/setup-gradle@v4
-        if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        with:
-          gradle-version: '8.14.3'
       - name: Restore signing identity used by existing installations
         if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
         uses: actions/cache@v4
@@ -137,15 +176,15 @@ jobs:
         run: bash android/bionic/package_apk.sh
       - name: Verify APK payload and native dependency closure
         if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        run: python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-Bionic-v0.31-arm64.apk
+        run: python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
       - name: Publish installable TLOU APK
         if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
         uses: actions/upload-artifact@v4
         with:
-          name: TheLastOfUsRemastered-Android-Bionic-arm64
+          name: TheLastOfUsRemastered-Android-v0.1-arm64
           path: |
-            out/release/TheLastOfUsRemastered-Android-Bionic-v0.31-arm64.apk
-            out/release/TheLastOfUsRemastered-Android-Bionic-v0.31-arm64.apk.sha256
+            out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
+            out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk.sha256
           if-no-files-found: error
       - name: Publish built native binaries
         uses: actions/upload-artifact@v4
@@ -172,4 +211,97 @@ jobs:
             out/android-bionic/gpu/CMakeFiles/CMakeConfigureLog.yaml
             out/android-bionic/gpu/CMakeCache.txt
             out/android-bionic/fex/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+
+  launcher:
+    needs: changes
+    if: needs.changes.outputs.interface_only == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+          cache-read-only: false
+      - name: Preparation, native reuse guards, FPS and save tests
+        run: |
+          python3 -m pip install unicorn==2.1.4
+          python3 -m unittest discover -s android/tests -v
+          bash android/bionic/test_fps.sh
+          python3 gow3_pc/tests/test_android_save_choice.py
+      - name: Android dialog regression tests and release lint
+        run: gradle -p android-launcher :app:testReleaseUnitTest :app:lintVitalRelease --no-daemon --max-workers=2
+      - name: Download exact successful v0.1 APK
+        uses: actions/download-artifact@v4
+        with:
+          name: TheLastOfUsRemastered-Android-v0.1-arm64
+          path: out/source-apk
+          github-token: ${{ github.token }}
+          run-id: 42136621594
+      - name: Validate source compatibility and extract native payload
+        run: python3 android/bionic/reuse_apk.py out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk
+      - name: Restore existing signing identity; never create a replacement key
+        uses: actions/cache/restore@v4
+        with:
+          path: out/android-bionic/experimental-development.jks
+          key: tlou-development-signing-v2
+          fail-on-cache-miss: true
+      - name: Assemble updated launcher and sign compatible update
+        run: |
+          set -euo pipefail
+          gradle -p android-launcher :app:assembleRelease --no-daemon --max-workers=2
+          sdk_tools="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p out/release
+          apk=out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
+          "$sdk_tools/zipalign" -f -p 4 android-launcher/app/build/outputs/apk/release/app-release-unsigned.apk out/aligned.apk
+          "$sdk_tools/apksigner" sign --ks out/android-bionic/experimental-development.jks --ks-key-alias tlou-bionic --ks-pass pass:TLOU-Bionic-development --key-pass pass:TLOU-Bionic-development --out "$apk" out/aligned.apk
+          "$sdk_tools/apksigner" verify --verbose "$apk"
+          "$sdk_tools/apksigner" verify --print-certs "$apk" | sed -n '/certificate SHA-256 digest:/p' > out/new-cert
+          "$sdk_tools/apksigner" verify --print-certs out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk | sed -n '/certificate SHA-256 digest:/p' > out/old-cert
+          test -s out/new-cert
+          diff -u out/old-cert out/new-cert
+          sha256sum "$apk" > "$apk.sha256"
+      - name: Validate final APK and byte-identical native payload
+        run: |
+          python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
+          python3 - <<'PYCODE'
+          import zipfile
+          from pathlib import Path
+          import importlib.util
+          spec=importlib.util.spec_from_file_location('reuse','android/bionic/reuse_apk.py')
+          reuse=importlib.util.module_from_spec(spec);spec.loader.exec_module(reuse)
+          with zipfile.ZipFile('out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk') as old, zipfile.ZipFile('out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk') as new:
+              names=[n for n in old.namelist() if reuse.payload(n) is not None and not n.endswith('/')]
+              assert names
+              for n in names:
+                  if n!='assets/tools.zip': assert old.read(n)==new.read(n), n
+              import io
+              with zipfile.ZipFile(io.BytesIO(old.read('assets/tools.zip'))) as old_tools, zipfile.ZipFile(io.BytesIO(new.read('assets/tools.zip'))) as new_tools:
+                  assert old_tools.namelist()==new_tools.namelist()
+                  for n in old_tools.namelist():
+                      expected=(Path(n.removeprefix('source/')).read_bytes() if n in {'source/'+p for p in reuse.PREPARER_SOURCES} else old_tools.read(n))
+                      assert new_tools.read(n)==expected,n
+              print('Identical native/runtime/driver payload; only verified preparer sources updated')
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TheLastOfUsRemastered-Android-v0.1-arm64
+          path: out/release/*
+          if-no-files-found: error
+      - name: Save UI tests and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-v01-launcher-tests
+          path: android-launcher/app/build/reports/**
           if-no-files-found: ignore

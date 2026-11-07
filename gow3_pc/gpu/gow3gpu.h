@@ -33,6 +33,14 @@ int gow3gpu_text_input_poll(char *out_utf8, uint64_t size);
  * poll: -1 while open, -2 cancelled, else the chosen index. */
 int gow3gpu_choice_begin(const char *title, const char *const *items, const char *const *images, int count, int focus);
 int gow3gpu_choice_poll(void);
+/* Structured Android save list. Strings are copied before returning. */
+typedef struct Gow3SaveChoiceEntry {
+    const char *directory, *title, *subtitle, *detail, *icon_path;
+    int64_t modified_time;
+    uint32_t user_param, is_new;
+} Gow3SaveChoiceEntry;
+int gow3gpu_save_choice_begin(const char *title, const Gow3SaveChoiceEntry *entries, int count, int focus);
+void gow3gpu_save_choice_cancel(void);
 /* Trophies (gow3_trophies.cpp): the running game's list (its trophy pack, a host path; the list
  * number 1-3; 128 earned flags), then each newly earned trophy, shown as a popup. */
 void gow3gpu_trophy_list(const char *pack_path, int list, const uint32_t earned[4]);

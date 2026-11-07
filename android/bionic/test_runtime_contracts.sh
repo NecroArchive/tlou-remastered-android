@@ -182,6 +182,10 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   -I gow3_pc/gpu/shadps4 \
   gow3_pc/tests/test_tlou_pending_filter_wordspan.cpp -o "$test_dir/pending-filter-wordspan"
 "$test_dir/pending-filter-wordspan"
+# No-op retirement must not invalidate range bounds, index or bloom.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  gow3_pc/tests/test_tlou_pending_prune.cpp -o "$test_dir/pending-prune"
+"$test_dir/pending-prune"
 "$test_dir/pending-write-index"
 
 # Flush constant-ring snapshots by packet, preserving exact byte coverage.

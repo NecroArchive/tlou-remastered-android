@@ -30,6 +30,36 @@ public:
         (native ? jit_created : jit_unavailable).fetch_add(1, std::memory_order_relaxed);
     }
 
+    // CPU-side table walk/synchronization happens before the JIT walker and
+    // may block for Stage B packets or a GPU readback. Measure it separately.
+    class Prewalk {
+    public:
+        Prewalk() : enabled(Enabled()) {
+            if (!enabled) return;
+            start_wall_ns = WallNs();
+            static thread_local std::uint32_t sequence = 0;
+            sampled = ((++sequence & 127u) == 0);
+            if (sampled) start_cpu_ns = CpuNs();
+        }
+        void Download(std::uint64_t nodes) {
+            if (!enabled) return;
+            prewalk_download_calls.fetch_add(1, std::memory_order_relaxed);
+            prewalk_download_nodes.fetch_add(nodes, std::memory_order_relaxed);
+        }
+        ~Prewalk() {
+            if (!enabled) return;
+            prewalk_calls.fetch_add(1, std::memory_order_relaxed);
+            prewalk_wall_ns.fetch_add(WallNs() - start_wall_ns, std::memory_order_relaxed);
+            if (sampled) {
+                prewalk_cpu_ns.fetch_add(CpuNs() - start_cpu_ns, std::memory_order_relaxed);
+                prewalk_cpu_samples.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    private:
+        bool enabled = false, sampled = false;
+        std::uint64_t start_wall_ns = 0, start_cpu_ns = 0;
+    };
+
     class Call {
     public:
         explicit Call(Path path) : enabled(Enabled()), mode(path) {
@@ -66,6 +96,12 @@ public:
     };
 
 private:
+    static std::uint64_t WallNs() {
+        using Clock = std::chrono::steady_clock;
+        return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now().time_since_epoch()).count());
+    }
     static std::uint64_t CpuNs() {
         timespec now{};
         if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now) != 0) return 0;
@@ -97,6 +133,12 @@ private:
             all += n[i];
             if (samples[i]) estimate_ns += double(n[i]) * double(times[i]) / double(samples[i]);
         }
+        const auto sync_calls = prewalk_calls.exchange(0, std::memory_order_relaxed);
+        const auto sync_wall = prewalk_wall_ns.exchange(0, std::memory_order_relaxed);
+        const auto sync_samples = prewalk_cpu_samples.exchange(0, std::memory_order_relaxed);
+        const auto sync_cpu = prewalk_cpu_ns.exchange(0, std::memory_order_relaxed);
+        const auto sync_downloads = prewalk_download_calls.exchange(0, std::memory_order_relaxed);
+        const auto sync_nodes = prewalk_download_nodes.exchange(0, std::memory_order_relaxed);
         // A CPU-thread-clock sample captures only this function, not Stage A's
         // caller and not the GPU. The sum is cumulative CPU cost across threads.
         std::printf(
@@ -120,9 +162,24 @@ private:
             samples[1] ? double(times[1]) / (1e3 * double(samples[1])) : 0.0, (unsigned long long)samples[1],
             samples[2] ? double(times[2]) / (1e3 * double(samples[2])) : 0.0, (unsigned long long)samples[2],
             samples[3] ? double(times[3]) / (1e3 * double(samples[3])) : 0.0, (unsigned long long)samples[3]);
+        std::printf(
+            "TLOU SRT prewalk (5s): calls=%llu readback-api-calls=%llu "
+            "readback-nodes=%llu wall-ms=%.3f wall-ms/frame=%.3f "
+            "cpu-sample-us=%.3f/%llu\\n",
+            (unsigned long long)sync_calls, (unsigned long long)sync_downloads,
+            (unsigned long long)sync_nodes,
+            double(sync_wall) / 1e6, frames ? double(sync_wall) / (1e6 * double(frames)) : 0.0,
+            sync_samples ? double(sync_cpu) / (1e3 * double(sync_samples)) : 0.0,
+            (unsigned long long)sync_samples);
         std::fflush(stdout);
     }
 
+    static inline std::atomic<std::uint64_t> prewalk_calls{};
+    static inline std::atomic<std::uint64_t> prewalk_download_calls{};
+    static inline std::atomic<std::uint64_t> prewalk_download_nodes{};
+    static inline std::atomic<std::uint64_t> prewalk_wall_ns{};
+    static inline std::atomic<std::uint64_t> prewalk_cpu_ns{};
+    static inline std::atomic<std::uint64_t> prewalk_cpu_samples{};
     static inline std::atomic<std::uint64_t> total_calls{};
     static inline std::atomic<std::uint64_t> counts[Paths]{};
     static inline std::atomic<std::uint64_t> cpu_ns[Paths]{};

@@ -24,6 +24,10 @@ int main() {
                 if (w == 0 && i == 0) call.Probing();
                 if (w == 0 && i == 1) call.Recovered();
                 if (w == 3 && i == 0) call.Faulted();
+                if ((i & 7u) == 0) {
+                    Perf::Prewalk prewalk;
+                    if ((i & 31u) == 0) prewalk.Download(2);
+                }
                 call.Done(100 + i / 512);
             }
         });

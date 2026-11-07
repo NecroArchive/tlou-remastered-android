@@ -1,0 +1,43 @@
+name: TLOU native ADPF integration checks (no APK)
+on:
+  push:
+    branches: [perf/tlou-adpf-native-scheduler-20261107]
+    paths:
+      - 'gow3_pc/**'
+      - 'android-launcher/**'
+      - '.github/workflows/tlou-adpf-native.yml'
+  pull_request:
+    branches: [tlou-ui-approval-log32-20261105]
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native cadence invariants, x86-64 and ARM64
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -Igow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_adpf_cadence.cpp -o /tmp/tlou-adpf-cadence
+          /tmp/tlou-adpf-cadence
+      - name: Android-guarded header ABI with fake libandroid.so
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -shared -fPIC \
+            gow3_pc/tests/test_tlou_adpf_mock_service.cpp -o "$RUNNER_TEMP/libandroid.so"
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -D__ANDROID__ -Igow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_adpf_mock_client.cpp -pthread -ldl -o /tmp/tlou-adpf-client
+          LD_LIBRARY_PATH="$RUNNER_TEMP" /tmp/tlou-adpf-client
+      - name: Confirm launcher retains backward compatibility and no affinity forcing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          java=Path('android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java').read_text()
+          assert 'env.put("TLOU_ADPF",Build.VERSION.SDK_INT>=33?"1":"0")' in java
+          assert 'env.put("GOW3_FRAMES_AHEAD","0")' in java
+          assert 'env.put("GOW3_PREP_WORKERS","0")' in java
+          print("TLOU Android launcher ADPF guarded by API level; no worker-count changes")
+          PY

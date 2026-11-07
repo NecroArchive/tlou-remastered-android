@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include "shader_recompiler/ir/passes/srt_arm64.h"
 #include "shader_recompiler/ir/passes/tlou_srt_native_retry.h"
+#include "shader_recompiler/ir/passes/tlou_srt_telemetry.h"
 #include <cerrno>
 #endif
 #include "gow3_toggles.h"
@@ -327,12 +328,18 @@ void RunSrtWalker(SrtProgram* stored, const u32* user_data, u32* flat) {
     using Attempt = Arm64Srt::NativeFaultRetry::Attempt;
     const auto attempt = native ? native->retry.Begin(runtime_fault_recover != nullptr)
                                 : Attempt::Skip;
+    Arm64Srt::SrtTelemetry::Call sample{
+        !native ? Arm64Srt::SrtTelemetry::Path::InterpreterNoJit
+                : attempt == Attempt::Skip ? Arm64Srt::SrtTelemetry::Path::InterpreterCooldown
+                                           : Arm64Srt::SrtTelemetry::Path::Native};
+    if (attempt == Attempt::Probe) sample.Probing();
     if (attempt != Attempt::Skip) {
         // Speculative callers already have their own fault boundary. Do not
         // re-probe a degraded walker here: a longjmp to the caller would skip
         // updating the backoff state.
         if (runtime_fault_recover) {
             native->function(user_data, flat);
+            sample.Done(Gow3Stats::gpu_frames.load(std::memory_order_relaxed));
             return;
         }
         sigjmp_buf* const previous = runtime_fault_recover;
@@ -343,7 +350,9 @@ void RunSrtWalker(SrtProgram* stored, const u32* user_data, u32* flat) {
             runtime_fault_recover = previous;
             if (attempt == Attempt::Probe) {
                 native->retry.Success();
+                sample.Recovered();
             }
+            sample.Done(Gow3Stats::gpu_frames.load(std::memory_order_relaxed));
             return;
         }
         runtime_fault_recover = previous;
@@ -351,6 +360,7 @@ void RunSrtWalker(SrtProgram* stored, const u32* user_data, u32* flat) {
         // fault disabled native code forever. Now the safe interpreter handles
         // this draw and probes native only after a bounded, growing cooldown.
         native->retry.Fault();
+        sample.Faulted();
         static std::atomic<u32> reported{0};
         if (reported.fetch_add(1, std::memory_order_relaxed) < 4) {
             std::printf("SRT ARM64: native walker fault, safe interpreter in use; "
@@ -358,6 +368,7 @@ void RunSrtWalker(SrtProgram* stored, const u32* user_data, u32* flat) {
         }
     }
     RunSrtProgram(program, user_data, flat);
+    sample.Done(Gow3Stats::gpu_frames.load(std::memory_order_relaxed));
 }
 
 PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
@@ -373,6 +384,7 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
     // Validate the portable program even if executable mappings are unavailable.
     if (Arm64Srt::Compile(program->words).empty()) return {};
     program->native = CompileNativeSrt(program->words);
+    Arm64Srt::SrtTelemetry::JitCreated(program->native != nullptr);
     static std::mutex mutex;
     static std::vector<std::unique_ptr<SrtProgram>> programs;
     std::scoped_lock lock{mutex};

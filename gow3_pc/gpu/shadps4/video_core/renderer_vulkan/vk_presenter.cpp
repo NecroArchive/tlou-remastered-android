@@ -20,6 +20,7 @@
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_warmup_inbox.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/tlou_adpf.h"
 #include "video_core/amdgpu/liverpool.h" // gow3 21 Oct 2026: ServiceQueuedCommands
 #include "video_core/texture_cache/image.h"
 
@@ -406,6 +407,14 @@ static void DumpRaw(const Instance& instance, Scheduler& scheduler, vk::CommandB
 
 Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& attribute,
                                VAddr cpu_address) {
+#ifdef __ANDROID__
+    // A frame boundary, not each draw, is the ADPF CPU workload cycle. The
+    // hint service may select higher clocks/bigger cores when the pipeline
+    // misses 16.7ms, but it never modifies Vulkan or guest data ordering.
+    TlouAdpf::OnFrame(rasterizer->CommandProcessorThreadId(),
+                      rasterizer->DrawRecordingThreadId(),
+                      draw_scheduler.RecorderThreadId());
+#endif
     // gow3: GOW3_FRAME_DUMP_TRIGGER=<file>: when the file exists it is removed and this frame's
     // guest display buffer and presented image are written to GOW3_DUMP_DIR (default out/dump)
     // as raw 32-bit pixels (menus and movies included; the upscaler dumps scene frames only).

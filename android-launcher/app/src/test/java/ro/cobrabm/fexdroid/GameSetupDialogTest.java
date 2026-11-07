@@ -53,7 +53,7 @@ public class GameSetupDialogTest {
             }
         }
     }
-    @Test public void releaseProfileDisablesHeavyDiagnosticsAndPreservesBoundedCpuSamples() {
+    @Test public void experimentalProfileSamplesGpuAndSrtAndPreservesBoundedCpuSamples() {
         try(var controller=Robolectric.buildActivity(Activity.class).setup()) {
             Activity activity=controller.get();
             PortSettings.prefs(activity).edit().putBoolean("gpu_profile",true)
@@ -66,14 +66,17 @@ public class GameSetupDialogTest {
             env.put("GOW3_FRAME_STATS","1");env.put("GOW3_PERF_DIAG","1");
             PortSettings.environment(activity,env);
             // Eight bounded samples per second expose draw/dispatch CPU phase
-            // costs without enabling verbose frame/GPU diagnostics.
+            // costs. The experimental branch also enables one-in-eight Vulkan GPU profiling.
             assertEquals("1",env.get("TLOU_CPU_PHASE_SAMPLES"));
             // The bounded native draw-preparation pipeline is enabled by default
             // with normal-priority scanner/workers (not the old auto=4 mode).
             assertEquals("2",env.get("GOW3_PREP_WORKERS"));
             assertEquals("1",env.get("TLOU_PREP_NORMAL_PRIORITY"));
             assertEquals("1",env.get("TLOU_PREP_HIT_STATS"));
-            for(String name:new String[]{"GOW3_GPU_PROFILE","GOW3_FRAME_STATS","GOW3_PERF_DIAG"})
+            assertEquals("1",env.get("GOW3_GPU_PROFILE"));
+            assertEquals("1",env.get("TLOU_SRT_PROFILE"));
+            assertEquals("8",env.get("TLOU_GPU_PROFILE_STRIDE"));
+            for(String name:new String[]{"GOW3_FRAME_STATS","GOW3_PERF_DIAG"})
                 assertFalse(env.containsKey(name));
             assertEquals("1",env.get("TLOU_MEMORY_WALK_ONCE"));
             assertEquals("1",env.get("TLOU_RING_BINDING_CURSOR"));

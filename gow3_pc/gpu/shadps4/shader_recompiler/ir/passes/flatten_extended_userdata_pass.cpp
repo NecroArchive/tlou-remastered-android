@@ -273,7 +273,15 @@ static NativeSrtCode* CompileNativeSrt(std::span<const u32> program) {
     native->size = (code.size() * sizeof(u32) + size_t(page) - 1) & ~(size_t(page) - 1);
     native->mapping = mmap(nullptr, native->size, PROT_READ | PROT_WRITE,
                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (native->mapping == MAP_FAILED) { native->mapping = nullptr; return nullptr; }
+    if (native->mapping == MAP_FAILED) {
+        const int error = errno;
+        native->mapping = nullptr;
+        static std::atomic<bool> reported{false};
+        if (!reported.exchange(true, std::memory_order_relaxed)) {
+            std::printf("SRT ARM64: mmap(RW) failed (errno=%d); using interpreter\n", error);
+        }
+        return nullptr;
+    }
     std::memcpy(native->mapping, code.data(), code.size() * sizeof(u32));
     auto* begin = static_cast<char*>(native->mapping);
     __builtin___clear_cache(begin, begin + native->size);
@@ -283,11 +291,15 @@ static NativeSrtCode* CompileNativeSrt(std::span<const u32> program) {
         static std::atomic<bool> reported{false};
         if (!reported.exchange(true, std::memory_order_relaxed)) {
             std::printf("SRT ARM64: mprotect(RX) failed (errno=%d); native SRT unavailable, "
-                        "using interpreter\\n", errno);
+                        "using interpreter\n", errno);
         }
         return nullptr;
     }
     native->function = reinterpret_cast<NativeSrtCode::Function>(native->mapping);
+    static std::atomic<bool> native_reported{false};
+    if (!native_reported.exchange(true, std::memory_order_relaxed)) {
+        std::printf("SRT ARM64: native walker JIT active\n");
+    }
     static std::mutex mutex;
     static std::vector<std::unique_ptr<NativeSrtCode>> mappings;
     std::scoped_lock lock{mutex};
@@ -342,7 +354,7 @@ void RunSrtWalker(SrtProgram* stored, const u32* user_data, u32* flat) {
         static std::atomic<u32> reported{0};
         if (reported.fetch_add(1, std::memory_order_relaxed) < 4) {
             std::printf("SRT ARM64: native walker fault, safe interpreter in use; "
-                        "retry after %u calls\\n", native->retry.Remaining());
+                        "retry after %u calls\n", native->retry.Remaining());
         }
     }
     RunSrtProgram(program, user_data, flat);

@@ -791,7 +791,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         static auto window = std::chrono::steady_clock::now();
         ++submits;
         driver_ms += submit_ms;
-        if (submits >= 1024 && submit_end - window >= std::chrono::seconds(5)) {
+        if (submits >= 128 && submit_end - window >= std::chrono::seconds(5)) {
             const u64 frames = Gow3Stats::gpu_frames.load(std::memory_order_relaxed);
             const u64 delta = frames >= last_frame ? frames - last_frame : 0;
             const double seconds = std::chrono::duration<double>(submit_end - window).count();

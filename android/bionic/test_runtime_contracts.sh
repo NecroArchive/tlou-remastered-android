@@ -165,6 +165,11 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
   gow3_pc/tests/test_tlou_srt_native_retry.cpp -o "$test_dir/tlou-srt-retry"
 "$test_dir/tlou-srt-retry"
 
+# Verify that telemetry compiles and its sampling/counters remain thread-safe.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+  gow3_pc/tests/test_tlou_srt_telemetry.cpp -o "$test_dir/tlou-srt-telemetry"
+"$test_dir/tlou-srt-telemetry"
+
 # GPU-range tracking: the new indexed subtraction must invalidate exactly the
 # same cached entries as a full 512-slot scan under interleaved add/subtract.
 # Run both equivalence and host-cost comparison; do not infer FPS from cost.

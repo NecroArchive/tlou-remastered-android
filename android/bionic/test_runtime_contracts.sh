@@ -176,6 +176,12 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   -I gow3_pc/gpu/shadps4 \
   gow3_pc/tests/test_tlou_pending_write_index.cpp -o "$test_dir/pending-write-index"
+
+# Exact cyclic pending-write bloom equivalence, including wrap and large ranges.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_pending_filter_wordspan.cpp -o "$test_dir/pending-filter-wordspan"
+"$test_dir/pending-filter-wordspan"
 "$test_dir/pending-write-index"
 
 # Flush constant-ring snapshots by packet, preserving exact byte coverage.

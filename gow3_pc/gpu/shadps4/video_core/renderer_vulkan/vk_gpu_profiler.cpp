@@ -43,12 +43,23 @@ GpuProfiler::GpuProfiler(const Instance& instance, Scheduler& scheduler_)
     for (auto& k : keys) {
         k.reserve(SliceQueries);
     }
-    std::printf("GPU profile: on (timestamp period %.2f ns)\n", period_ns);
+    const char* value = std::getenv("TLOU_GPU_PROFILE_STRIDE");
+    if (value) {
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(value, &end, 10);
+        if (end != value && *end == '\0' && parsed >= 1 && parsed <= 128) {
+            sample_stride = static_cast<u32>(parsed);
+        }
+    }
+    sample_active = sample_stride == 1;
+    std::printf("GPU profile: on (timestamp period %.2f ns, frame stride %u)\n",
+                period_ns, sample_stride);
 }
 
 void GpuProfiler::WriteTimestamp(u64 key) {
     if (used[slice] + 1 >= SliceQueries) {
-        return; // the frame's slice is full: the rest of the frame goes to the last label
+        truncated[slice] = true;
+        return; // frame's slice is full; mark the GPU label breakdown incomplete
     }
     // Outside render passes: radv_CmdWriteTimestamp2 crashed inside some. Marks sit where a
     // pass, dispatch or submission ends anyway.
@@ -82,6 +93,8 @@ void GpuProfiler::BeginFrame() {
     used[slice] = 0;
     keys[slice].clear();
     pending[slice] = false;
+    truncated[slice] = false;
+    sample_active = ((frame_counter++ % sample_stride) == 0);
     Print();
 }
 
@@ -102,6 +115,7 @@ void GpuProfiler::Collect(u32 which) {
         ++total.segments;
     }
     ++frames;
+    if (truncated[which]) ++truncated_frames;
 }
 
 void GpuProfiler::Print() {
@@ -116,8 +130,12 @@ void GpuProfiler::Print() {
     for (const auto& [key, total] : sorted) {
         sum += total.ms;
     }
-    std::printf("GPU profile: %.2f ms/frame over %llu frames, %zu labels\n", sum / frames,
-                static_cast<unsigned long long>(frames), sorted.size());
+    // Timestamp segments measure GPU queue timeline, not GPU utilization.
+    // Only frames actually sampled are included in this average.
+    std::printf("GPU profile: %.2f ms/sampled-frame over %llu frames (stride %u, "
+                "incomplete-label-frames %llu), %zu labels\n", sum / frames,
+                static_cast<unsigned long long>(frames), sample_stride,
+                static_cast<unsigned long long>(truncated_frames), sorted.size());
     for (size_t i = 0; i < std::min<size_t>(sorted.size(), 30); ++i) {
         const auto& [key, total] = sorted[i];
         std::printf("  %6.3f ms/frame %5.1f/frame  %s\n", total.ms / frames,
@@ -125,6 +143,7 @@ void GpuProfiler::Print() {
     }
     totals.clear();
     frames = 0;
+    truncated_frames = 0;
 }
 
 } // namespace Vulkan

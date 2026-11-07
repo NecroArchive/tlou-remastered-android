@@ -742,6 +742,10 @@ public:
     void Flush();
     void Checkpoint(const char* operation,u64 first,u64 second=0);
     void ReportCheckpoints() const;
+    // Android ADPF: the Vulkan command-recorder thread lives in this process.
+    [[nodiscard]] u32 RecorderThreadId() const noexcept {
+        return recorder_tid.load(std::memory_order_acquire);
+    }
 
     /// Sends the current execution context to the GPU and waits for it to complete.
     void Finish(std::source_location caller = std::source_location::current());
@@ -1069,6 +1073,7 @@ private:
     u64 record_serial = 0; ///< gow3: see RecordSerial()
     /// gow3 20 Oct 2026: the draw scheduler counts its waits for the submit lock (Gow3Stats).
     bool count_lock_waits{false};
+    std::atomic<u32> recorder_tid{0}; // published by recorder before processing commands
     std::jthread recorder_thread;
     tracy::VkCtxScope* profiler_scope{};
 };

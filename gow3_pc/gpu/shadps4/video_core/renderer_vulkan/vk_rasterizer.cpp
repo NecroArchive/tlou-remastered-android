@@ -1722,15 +1722,19 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
         // Erasing shifts vector indices. Rebuild only when at least one
         // interval was removed; a no-op pruning pass must remain cheap.
         if (before_erase != pending_writes.size()) {
+            // With unchanged pending ranges, the bounds, 64-KiB bloom
+            // filter and spatial index remain valid. Rebuilding all three
+            // every 64 ring lookups is expensive in TLOU's hot packet path;
+            // only an actual erase can invalidate their coverage.
             pending_write_index.Rebuild(pending_writes);
-        }
-        pending_min = ~VAddr{0};
-        pending_max = 0;
-        pending_filter.fill(0);
-        for (const auto& write : pending_writes) {
-            pending_min = std::min(pending_min, write.begin);
-            pending_max = std::max(pending_max, write.end);
-            FilterPendingRange(write.begin, write.end);
+            pending_min = ~VAddr{0};
+            pending_max = 0;
+            pending_filter.fill(0);
+            for (const auto& write : pending_writes) {
+                pending_min = std::min(pending_min, write.begin);
+                pending_max = std::max(pending_max, write.end);
+                FilterPendingRange(write.begin, write.end);
+            }
         }
     }
     const VAddr end = address + size;

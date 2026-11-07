@@ -796,7 +796,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
             const u64 delta = frames >= last_frame ? frames - last_frame : 0;
             const double seconds = std::chrono::duration<double>(submit_end - window).count();
             std::printf("TLOU GPU feed (%.1fs): vkQueueSubmit=%llu submits/frame=%.1f "
-                        "submit-wall=%.1fms total, %.3fms/submit; guest-frames=%llu\\n",
+                        "submit-wall=%.1fms total, %.3fms/submit; guest-frames=%llu\n",
                         seconds, (unsigned long long)submits,
                         delta ? double(submits) / delta : 0.0, driver_ms,
                         submits ? driver_ms / submits : 0.0,

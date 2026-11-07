@@ -148,12 +148,6 @@ final class PortSettings {
         // so setting "0" instead of removing is incorrect.
         for(String name:new String[]{"GOW3_GPU_PROFILE","GOW3_FRAME_STATS","GOW3_PERF_DIAG"})
             env.remove(name);
-        // Experimental SRT ARM64 branch only. CPU-path counts + 1/256 call
-        // CPU-clock sampling, and Vulkan timestamps on only 1 in 8 frames.
-        // This instrumentation is intentionally absent from the release branch.
-        env.put("TLOU_SRT_PROFILE","1");
-        env.put("GOW3_GPU_PROFILE","1");
-        env.put("TLOU_GPU_PROFILE_STRIDE","8");
 
         env.put("GOW3_READBACKS","1"); // Precise=2 caused artifacts; never resurrect.
         env.put("GOW3_EOP_READBACK","1"); // Selective readbacks, not Precise/Readback 2.

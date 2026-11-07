@@ -1,0 +1,33 @@
+name: TLOU pending filter exactness (no APK)
+on:
+  push:
+    branches: [perf/tlou-stagea-pending-filter-20261107]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  equivalence:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and compare 4m randomized bloom updates and 4m queries
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_pending_filter_wordspan.cpp -o /tmp/tlou-pending-filter
+          /tmp/tlou-pending-filter
+      - name: Verify integration and preservation of guest snapshots
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp').read_text()
+          assert 'Detail::MarkPendingRange(pending_filter, first, last)' in s
+          assert 'Detail::HasPendingRange(pending_filter, first, last)' in s
+          assert 'memory->CopySparseMemory(address, dst, size);' in s
+          assert 'NotePendingGpuWrite(address, size);' in s
+          assert 'PendingWriteOverlaps(address, size)' in s
+          print('TLOU exact snapshot and pending-write contracts unchanged')
+          PY

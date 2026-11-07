@@ -1709,15 +1709,17 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
         // Erasing shifts vector indices. Rebuild only when at least one
         // interval was removed; a no-op pruning pass must remain cheap.
         if (before_erase != pending_writes.size()) {
+            // A no-op retirement scan leaves the index, bounds and all bloom
+            // bits valid. Rebuild only after an actual vector compaction.
             pending_write_index.Rebuild(pending_writes);
-        }
-        pending_min = ~VAddr{0};
-        pending_max = 0;
-        pending_filter.fill(0);
-        for (const auto& write : pending_writes) {
-            pending_min = std::min(pending_min, write.begin);
-            pending_max = std::max(pending_max, write.end);
-            FilterPendingRange(write.begin, write.end);
+            pending_min = ~VAddr{0};
+            pending_max = 0;
+            pending_filter.fill(0);
+            for (const auto& write : pending_writes) {
+                pending_min = std::min(pending_min, write.begin);
+                pending_max = std::max(pending_max, write.end);
+                FilterPendingRange(write.begin, write.end);
+            }
         }
     }
     const VAddr end = address + size;

@@ -1440,6 +1440,10 @@ bool Rasterizer::UseDrawPipe() const {
     return draw_pipe && !host_markers_enabled && !Gow3Toggle::Disabled(Gow3Toggle::DrawPipeline);
 }
 
+u32 Rasterizer::CommandProcessorThreadId() const {
+    return liverpool->GetGpuCommandProcessorThreadId();
+}
+
 bool Rasterizer::OnStageA() const {
 #ifdef _WIN32
     // gow3 (Windows): libc++ compares std::thread::id through winpthreads' pthread_equal,

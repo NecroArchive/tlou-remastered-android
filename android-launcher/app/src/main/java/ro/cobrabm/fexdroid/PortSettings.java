@@ -172,6 +172,10 @@ final class PortSettings {
         env.put("GOW3_PREFETCH_PIPELINES","1");
         env.put("GOW3_PARALLEL_PIPELINES","1");
         env.put("GOW3_PREP_WORKERS","0");
+        // Android 13+ native performance hints for the critical command/draw/
+        // Vulkan recorder group. Unsupported devices retain original scheduling.
+        // Rollback: TLOU_ADPF=0; this is not a user-facing experiment toggle.
+        env.put("TLOU_ADPF",Build.VERSION.SDK_INT>=33?"1":"0");
         env.put("GOW3_DEFERRED_READBACK","0");
         env.put("GOW3_STALE_READBACK","0");
 

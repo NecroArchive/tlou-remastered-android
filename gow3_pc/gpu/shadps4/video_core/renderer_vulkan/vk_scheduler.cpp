@@ -767,17 +767,46 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     // NVIDIA driver, kernel calls), with the images registered since the previous slow one.
     const auto submit_start = std::chrono::steady_clock::now();
     auto submit_result = instance.GetGraphicsQueue().submit(submit_info, info.fence);
-    if (const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                                   submit_start)
-                              .count();
-        ms > 8.0) {
+    const auto submit_end = std::chrono::steady_clock::now();
+    const double submit_ms =
+        std::chrono::duration<double, std::milli>(submit_end - submit_start).count();
+    if (submit_ms > 8.0) {
         static u64 last_images = 0;
         const u64 images = Gow3Stats::images_registered.load(std::memory_order_relaxed);
         std::printf("Slow submit: %.1f ms in the driver (%u wait semaphores, %u signal); %llu images "
                     "registered since the last slow one\n",
-                    ms, info.num_wait_semas, info.num_signal_semas,
+                    submit_ms, info.num_wait_semas, info.num_signal_semas,
                     static_cast<unsigned long long>(images - last_images));
         last_images = images;
+    }
+    // Counts actual vkQueueSubmit calls (not guest EOP events) on the
+    // candidate APK. The submit mutex serializes all Scheduler instances.
+    static const bool feed_stats = [] {
+        const char* env = std::getenv("GOW3_GPU_FEED_STATS");
+        return env && env[0] == '1';
+    }();
+    if (feed_stats) {
+        static u64 submits = 0, last_frame = 0;
+        static double driver_ms = 0;
+        static auto window = std::chrono::steady_clock::now();
+        ++submits;
+        driver_ms += submit_ms;
+        if (submits >= 1024 && submit_end - window >= std::chrono::seconds(5)) {
+            const u64 frames = Gow3Stats::gpu_frames.load(std::memory_order_relaxed);
+            const u64 delta = frames >= last_frame ? frames - last_frame : 0;
+            const double seconds = std::chrono::duration<double>(submit_end - window).count();
+            std::printf("TLOU GPU feed (%.1fs): vkQueueSubmit=%llu submits/frame=%.1f "
+                        "submit-wall=%.1fms total, %.3fms/submit; guest-frames=%llu\\n",
+                        seconds, (unsigned long long)submits,
+                        delta ? double(submits) / delta : 0.0, driver_ms,
+                        submits ? driver_ms / submits : 0.0,
+                        (unsigned long long)delta);
+            std::fflush(stdout);
+            submits = 0;
+            driver_ms = 0;
+            last_frame = frames;
+            window = submit_end;
+        }
     }
     if (submit_result==vk::Result::eErrorDeviceLost) { ReportCheckpoints(); DumpDeviceFault(instance); }
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");

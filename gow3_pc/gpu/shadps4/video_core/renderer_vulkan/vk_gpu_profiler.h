@@ -32,6 +32,7 @@ public:
     /// Starts a segment labelled `key`; `describe` names it the first time the key is seen.
     template <typename Describe>
     void Mark(u64 key, Describe&& describe) {
+        if (!sample_active) return;
         if (!described.contains(key)) {
             described.emplace(key, describe());
         }
@@ -44,7 +45,7 @@ public:
     }
     /// Continues the segment of `key` (a label seen before) where a nested one ends.
     void Resume(u64 key) {
-        WriteTimestamp(key);
+        if (sample_active) WriteTimestamp(key);
     }
 
     /// Whether `other` is the scheduler it records into (the presenter has its own).
@@ -74,6 +75,13 @@ private:
     std::array<std::vector<u64>, NumSlices> keys; ///< label of each timestamp but the last
     std::array<u32, NumSlices> used{};
     std::array<bool, NumSlices> pending{};
+    std::array<bool, NumSlices> truncated{};
+    // TLOU diagnostics: use timestamp queries on one in N frames so profiling
+    // does not perturb every dispatch of a CPU-bound scene.
+    u32 sample_stride = 1;
+    u64 frame_counter = 0;
+    bool sample_active = true;
+    u64 truncated_frames = 0;
     std::unordered_map<u64, std::string> described;
     struct Total {
         double ms = 0;

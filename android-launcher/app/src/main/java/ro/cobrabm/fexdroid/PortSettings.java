@@ -156,6 +156,9 @@ final class PortSettings {
         // This changes submission timing only, NOT readback/physics contents.
         // Rollback: set GOW3_RAYCAST_FLUSH to "immediate".
         env.put("GOW3_RAYCAST_FLUSH","lazy");
+        // Candidate only: real vkQueueSubmit calls / frame and driver time.
+        // Delete this counter after the GPU-feeder improvement is measured.
+        env.put("GOW3_GPU_FEED_STATS","1");
         // Readback 1 stays on at all levels. Every exact physics EOP result
         // already calls DownloadRangesAsync(..., protect=true, yield_to_cpu=true),
         // which read-protects its own pages without a global switch.

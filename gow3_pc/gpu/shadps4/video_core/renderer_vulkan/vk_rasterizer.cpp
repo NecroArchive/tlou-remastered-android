@@ -2,6 +2,7 @@
 #include "common/arch.h"
 #ifndef ARCH_X86_64
 #include "shader_recompiler/ir/passes/srt_arm64.h"
+#include "shader_recompiler/ir/passes/tlou_srt_telemetry.h"
 #endif
 #include <algorithm>
 #include <set>
@@ -4211,6 +4212,9 @@ void Rasterizer::SyncSrtTables(const Shader::Info& info) {
         PipelineCache::capturing_for_gpu_thread) {
         return;
     }
+#ifndef ARCH_X86_64
+    Shader::Arm64Srt::SrtTelemetry::Prewalk srt_profile;
+#endif
     const auto& plan = SrtPlanFor(info);
     if (plan.nodes.empty()) {
         return;
@@ -4237,6 +4241,9 @@ void Rasterizer::SyncSrtTables(const Shader::Info& info) {
     const auto flush_srt = [&] {
         if (pending_srt_ranges.empty()) return;
         const u64 count = pending_srt_ranges.size();
+#ifndef ARCH_X86_64
+        srt_profile.Download(count);
+#endif
         buffer_cache.DownloadRanges(
             std::span<const std::pair<VAddr, u64>>{pending_srt_ranges.data(), pending_srt_ranges.size()},
             !FrameCapture::Active() && !TracedShader(info.pgm_hash));
@@ -4439,6 +4446,9 @@ void Rasterizer::SyncSrtTables(const Shader::Info& info) {
         const std::pair<VAddr, u64> range{table, node.extent};
         // The table's GPU producer is finished before the CPU walks it.
         // Temporal SRT prefetch is allowed only here, after DrainDrawPipe.
+#ifndef ARCH_X86_64
+        srt_profile.Download(1);
+#endif
         buffer_cache.DownloadRanges(std::span{&range, 1},
                                     !FrameCapture::Active() && !TracedShader(info.pgm_hash));
         trace_table(true);

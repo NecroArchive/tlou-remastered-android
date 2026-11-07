@@ -387,6 +387,7 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
     Common::SetCurrentThreadName("gow3:VkRecorder");
 #ifdef __ANDROID__
     tlou_cpu_policy_apply("Vulkan recorder",1);
+    recorder_tid.store(static_cast<u32>(gettid()), std::memory_order_release);
 #endif
 #ifndef _WIN32
     if (clockid_t clock; pthread_getcpuclockid(pthread_self(), &clock) == 0)

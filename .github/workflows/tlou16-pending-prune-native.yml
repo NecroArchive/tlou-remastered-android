@@ -1,0 +1,35 @@
+name: TLOU16 pending-write correctness (no APK)
+on:
+  push:
+    branches: [perf/tlou16-pending-prune-and-readback-policy]
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
+      - 'gow3_pc/tests/test_tlou_pending_prune.cpp'
+      - 'android/**'
+      - 'android-launcher/**'
+      - '.github/workflows/tlou16-pending-prune-native.yml'
+  pull_request:
+    branches: [tlou-ui-approval-log32-20261105]
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
+      - 'gow3_pc/tests/test_tlou_pending_prune.cpp'
+      - 'android/**'
+      - 'android-launcher/**'
+      - '.github/workflows/tlou16-pending-prune-native.yml'
+permissions:
+  contents: read
+jobs:
+  equivalence:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Randomized bloom / retirement equivalence on native CPU
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_pending_prune.cpp -o /tmp/tlou-pending-prune
+          /tmp/tlou-pending-prune
+      - name: Validate Android profile preservation (Readback 1 / Full geometry)
+        run: python3 -m unittest android.tests.test_tlou16_readback_policy -v

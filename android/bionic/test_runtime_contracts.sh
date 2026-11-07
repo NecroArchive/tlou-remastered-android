@@ -159,6 +159,12 @@ grep -Fq 'env.put("GOW3_READBACKS","1");' android-launcher/app/src/main/java/ro/
 g++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_srt_cost.cpp -o "$test_dir/tlou-srt-cost"
 "$test_dir/tlou-srt-cost"
 
+# An invalid guest SRT pointer must not permanently disable native ARM64
+# execution; repeated faults must not flood the handler. Host-independent gate.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+  gow3_pc/tests/test_tlou_srt_native_retry.cpp -o "$test_dir/tlou-srt-retry"
+"$test_dir/tlou-srt-retry"
+
 # GPU-range tracking: the new indexed subtraction must invalidate exactly the
 # same cached entries as a full 512-slot scan under interleaved add/subtract.
 # Run both equivalence and host-cost comparison; do not infer FPS from cost.

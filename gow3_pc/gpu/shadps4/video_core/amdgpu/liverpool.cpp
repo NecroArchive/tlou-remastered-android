@@ -1099,8 +1099,17 @@ void RunComputeReleaseMem(Vulkan::Rasterizer& rasterizer, const u8* data) {
         if (cache.DeferUntilLastReadback(deferred_signal, label,
                                          qword ? release.packet.DataQWord() : release.packet.DataDWord(),
                                          qword ? 8 : 4)) {
-            if (results_pending) {
-                rasterizer.Flush(); // the GPU starts on them now (RunEventWriteEop)
+            // Same lazy EOP policy as RunEventWriteEop. Thousands of compute
+            // RELEASE_MEM events in TLOU can otherwise force their own Vulkan
+            // submits even though neither a guest fence wait nor a frame
+            // boundary needs the result yet. Pending readbacks remain queued;
+            // the GPU command idle loop explicitly flushes on guest stalls.
+            static const bool lazy_flush = [] {
+                const char* env = std::getenv("GOW3_RAYCAST_FLUSH");
+                return env && std::string_view{env} == "lazy";
+            }();
+            if (results_pending && !lazy_flush) {
+                rasterizer.Flush();
             }
             return;
         }

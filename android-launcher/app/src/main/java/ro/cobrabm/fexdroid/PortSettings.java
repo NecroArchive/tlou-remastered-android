@@ -123,10 +123,10 @@ final class PortSettings {
         // the more recent actual run had the three below OFF.
         env.put("TLOU_MEMORY_WALK_ONCE","1");
         env.put("TLOU_RING_BINDING_CURSOR","1");
-        env.put("TLOU_DRAW_COUNTER_TRIM","0");
+        env.put("TLOU_DRAW_COUNTER_TRIM","1");
         env.put("GOW3_TLOU_COMPUTE_MEMO","0");
         env.put("GOW3_TLOU_HOST_COPY_BATCH","0");
-        env.put("TLOU_SRT_HOT_READBACKS","1");
+        env.put("TLOU_SRT_HOT_READBACKS","0");
         env.put("TLOU_SRT_DEP_BATCH","0");
         env.put("GOW3_FETCH_NO_BLOCK","1");
         env.put("GOW3_LAND_ON_GUEST","1");
@@ -159,7 +159,11 @@ final class PortSettings {
         // previously suspected performance regression. No more Fast/Balanced
         // profiles which can return character deformation.
         env.put("TLOU_AUTO_SMALL_CS_READBACK","2");
-        env.put("GOW3_ASYNC_READBACK","1");
+        // The normal Readback 1 path keeps all explicit physics EOP protection.
+        // Do not globally protect every OTHER asynchronous download: this
+        // caused unrelated guest page faults and an earlier device regression.
+        // GOW3_ASYNC_READBACK=1 is a global fallback, not the physics policy.
+        env.remove("GOW3_ASYNC_READBACK");
         // Coverage audit was completed in earlier device logs. Do not run
         // its atomic identity tracking on the hot compute-binding path during
         // normal gameplay; an explicit native diagnostic can still enable it.

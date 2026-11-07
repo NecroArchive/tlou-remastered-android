@@ -167,6 +167,11 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   -I gow3_pc/gpu/shadps4 \
   gow3_pc/tests/test_tlou_pending_write_index.cpp -o "$test_dir/pending-write-index"
+
+# No-op retirement scans must keep pending write bounds/bloom exact.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \\
+  gow3_pc/tests/test_tlou_pending_prune.cpp -o "$test_dir/pending-prune"
+"$test_dir/pending-prune"
 "$test_dir/pending-write-index"
 
 # Flush constant-ring snapshots by packet, preserving exact byte coverage.

@@ -165,7 +165,7 @@ private:
         std::printf(
             "TLOU SRT prewalk (5s): calls=%llu readback-api-calls=%llu "
             "readback-nodes=%llu wall-ms=%.3f wall-ms/frame=%.3f "
-            "cpu-sample-us=%.3f/%llu\\n",
+            "cpu-sample-us=%.3f/%llu\n",
             (unsigned long long)sync_calls, (unsigned long long)sync_downloads,
             (unsigned long long)sync_nodes,
             double(sync_wall) / 1e6, frames ? double(sync_wall) / (1e6 * double(frames)) : 0.0,

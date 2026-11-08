@@ -124,22 +124,33 @@ static int32_t picture(Decoder *d, FrameBuffer *buffer, PictureInfo *info) {
         (uint64_t)(uintptr_t)luma, buffer->frame_buffer_size, f->data[0], f->data[1],
         width, height, f->linesize[0], f->linesize[1],
         &shown_width, &shown_height);
+    // The scale bridge may choose a SEPARATE scratch frame for upscales.
+    // A successful scale alone does not mean the game-owned guest frame was
+    // overwritten: keep the original native Y/UV contents for that case.
+    // Because the native frame-buffer size was validated above, any successful
+    // downscale fits in it and therefore follows the in-place bridge path.
+    const int scaled_in_place=scaled && shown_width<=width && shown_height<=height;
     if (scaled) {
         static int logged_scaled=0;
         if (logged_scaled++<4)
             printf("Runtime: Videodec2 movie planes %ux%u -> %ux%u "
-                   "(converted video-only guest buffer)\n",
-                   width, height, shown_width, shown_height);
+                   "(converted video-only %s buffer)\n",
+                   width, height, shown_width, shown_height,
+                   scaled_in_place ? "guest" : "scratch");
         pitch=align(shown_width,64);
         rows=align(shown_height,16);
-    } else {
-        unsigned char *chroma=luma+(size_t)pitch*rows;
-        for (uint32_t y=0;y<rows;++y) {
+    }
+    if (!scaled_in_place) {
+        // Restore the native strides before the guest-buffer fallback copy:
+        // the scaled scratch output must not change the original copy layout.
+        const uint32_t guest_pitch=align(width,64), guest_rows=align(height,16);
+        unsigned char *chroma=luma+(size_t)guest_pitch*guest_rows;
+        for (uint32_t y=0;y<guest_rows;++y) {
             uint32_t from=y<height ? y : height-1;
-            memcpy(luma+(size_t)y*pitch,f->data[0]+(size_t)from*(size_t)f->linesize[0],width);
-            if (y<rows/2) {
+            memcpy(luma+(size_t)y*guest_pitch,f->data[0]+(size_t)from*(size_t)f->linesize[0],width);
+            if (y<guest_rows/2) {
                 uint32_t c=y<height/2 ? y : height/2-1;
-                memcpy(chroma+(size_t)y*pitch,f->data[1]+(size_t)c*(size_t)f->linesize[1],width);
+                memcpy(chroma+(size_t)y*guest_pitch,f->data[1]+(size_t)c*(size_t)f->linesize[1],width);
             }
         }
     }
@@ -148,8 +159,8 @@ static int32_t picture(Decoder *d, FrameBuffer *buffer, PictureInfo *info) {
     // owns the 64-row-aligned scaled Y/UV layout.
     runtime_video_frame_lo=(uint64_t)(uintptr_t)luma;
     runtime_video_frame_hi=(uint64_t)(uintptr_t)luma+
-        (scaled ? (uint64_t)align(shown_width,64)*align(shown_height,64)*3/2
-                : (uint64_t)pitch*rows*3/2);
+        (scaled_in_place ? (uint64_t)align(shown_width,64)*align(shown_height,64)*3/2
+                         : (uint64_t)align(width,64)*align(height,16)*3/2);
     {
         static int logged;
         if (logged++<4)

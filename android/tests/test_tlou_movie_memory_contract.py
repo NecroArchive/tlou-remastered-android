@@ -25,8 +25,11 @@ class MovieAndMemoryGuards(unittest.TestCase):
         picture=VID[VID.index('static int32_t picture('):VID.index('static int32_t receive(')]
         self.assertLess(picture.index('const int scaled=gow3_movie_scale_nv12('),
                         picture.index('if (scaled) {'))
-        self.assertLess(picture.index('if (scaled) {'),picture.index('} else {'))
-        native=picture[picture.index('} else {'):picture.index('    // The original video frame span')]
+        self.assertLess(picture.index('if (scaled) {'),picture.index('if (!scaled_in_place) {'))
+        self.assertIn('scaled && shown_width<=width && shown_height<=height',picture)
+        self.assertIn('const uint32_t guest_pitch=align(width,64)',picture)
+        self.assertIn('const uint32_t guest_rows=align(height,16)',picture)
+        native=picture[picture.index('if (!scaled_in_place) {'):picture.index('    // The original video frame span')]
         self.assertIn('memcpy(luma+',native)
         self.assertIn('memcpy(chroma+',native)
         self.assertNotIn('memcpy(luma+',picture[:picture.index('if (scaled) {')])

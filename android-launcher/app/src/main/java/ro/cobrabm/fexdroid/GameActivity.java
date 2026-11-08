@@ -9,6 +9,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import java.util.Locale;
 import android.view.Gravity;
+import android.view.InputDevice;
+import android.hardware.input.InputManager;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceView;
@@ -45,6 +47,15 @@ public final class GameActivity extends Activity {
     private SurfaceView surface;
     private TouchControllerOverlay touch;
     private PadBridge pad;
+    private InputManager inputManager;
+    private final InputManager.InputDeviceListener controllerListener=new InputManager.InputDeviceListener() {
+        @Override public void onInputDeviceAdded(int deviceId) { updateControllerVisibility(); }
+        @Override public void onInputDeviceRemoved(int deviceId) {
+            if(pad!=null)pad.reset();
+            updateControllerVisibility();
+        }
+        @Override public void onInputDeviceChanged(int deviceId) { updateControllerVisibility(); }
+    };
     private AudioBridge audio;
     private volatile Process game;
     private File logFile;
@@ -95,6 +106,8 @@ public final class GameActivity extends Activity {
         File input=new File(stateDir,"controller.state");
         RunLog.write(this,"Inicializando controle e áudio");
         pad=new PadBridge(input);
+        inputManager=(InputManager)getSystemService(INPUT_SERVICE);
+        if(inputManager!=null)inputManager.registerInputDeviceListener(controllerListener,handler);
         runtimePidFile=new File(stateDir,"runtime.pid");
         hudTelemetry=new HudTelemetry(this,runtimePidFile);
         edgeMenu=new EdgeMenuGesture(getResources().getDisplayMetrics().density);
@@ -316,13 +329,14 @@ public final class GameActivity extends Activity {
                 String gameVersion=profile.optString("update_version","");
                 if(gameVersion.isEmpty()||"null".equals(gameVersion))
                     gameVersion=profile.optString("version","");
-                if("01.11".equals(gameVersion)){
-                    // Release 0.1.1 uses the validated universal zero-worker
-                    // preparation policy. Never override the launcher-wide zero
-                    // setting for game update 01.11 or a specific device.
-                    // Movie-plane compatibility applies only to 01.11 with resized NV12.
-                    if(env.containsKey("GOW3_MOVIE_SIZE"))
-                        env.put("TLOU_MOVIE_111_LAYOUT","1");
+                if(("01.00".equals(gameVersion)||"01.11".equals(gameVersion)) &&
+                        env.containsKey("GOW3_MOVIE_SIZE")) {
+                    // Both versions can describe 16-row/native-size Y/UV textures
+                    // after the decoder has written 64-row-aligned scaled NV12.
+                    // The bridge remaps recorded movie buffers only, never game
+                    // scene textures. This restores the 01.00 green-movie path.
+                    env.put("TLOU_MOVIE_NV12_LAYOUT","1");
+                    RunLog.write(this,"TLOU movie NV12 aligned-plane compatibility: "+gameVersion);
                 }
             }
             RunLog.write(this,PortSettings.experimentReport(this,env));
@@ -368,12 +382,34 @@ public final class GameActivity extends Activity {
     }
 
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
+    private boolean hasHardwareController() {
+        for(int id:InputDevice.getDeviceIds()) {
+            InputDevice device=InputDevice.getDevice(id);
+            if(device==null || device.isVirtual())continue;
+            int sources=device.getSources();
+            if((sources&InputDevice.SOURCE_GAMEPAD)==InputDevice.SOURCE_GAMEPAD ||
+               (sources&InputDevice.SOURCE_JOYSTICK)==InputDevice.SOURCE_JOYSTICK)
+                return true;
+        }
+        return false;
+    }
+
+    private void updateControllerVisibility() {
+        if(touch!=null && !closing.get())applyLiveSettings();
+    }
+
     private void applyLiveSettings() {
         if(closing.get() || status==null || touch==null)return;
         SharedPreferences p=PortSettings.prefs(this);
         status.setVisibility(p.getBoolean("hud_visible",true)?View.VISIBLE:View.GONE);
         HudPresentation.style(status,p);
-        boolean show=p.getBoolean("touch_visible",true);if(!show)touch.release();touch.setVisibility(show?View.VISIBLE:View.GONE);touch.setAlpha(p.getInt("touch_opacity",55)/100f);touch.invalidate();
+        String controlMode=p.getString("touch_mode","auto");
+        boolean show=editingControls || "on".equals(controlMode) ||
+                ("auto".equals(controlMode) && !hasHardwareController());
+        if(!show)touch.release();
+        touch.setVisibility(show?View.VISIBLE:View.GONE);
+        touch.setAlpha(p.getInt("touch_opacity",55)/100f);
+        touch.invalidate();
         if(started)Gow3Present.fullscreen(p.getBoolean("fullscreen",false));
         if(started) {
             boolean turbo=p.getBoolean("gpu_turbo",false);
@@ -513,6 +549,7 @@ public final class GameActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if(inputManager!=null)inputManager.unregisterInputDeviceListener(controllerListener);
         stopAndExit();
         if(playerMenu!=null)playerMenu.dismiss();
         if(gameChoices!=null)gameChoices.close();

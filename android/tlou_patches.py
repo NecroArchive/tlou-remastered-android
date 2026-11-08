@@ -138,6 +138,11 @@ PERFORMANCE_EFFECTS_111 = {
         # consumers being patched. Both original SELF variants match.
         (0x193B6A, "66c7836c0100000101", "66c7836c0100000100"),
         (0x193BB0, "8a876d010000", "31c090909090"),
+        # Second independent reenabler: the scene boot routine at 0x2F2000
+        # resolves the live global render state 0x181A770 and writes 1 to
+        # [r13+0x16D] at 0x2F2035. Do not leave this path capable of undoing
+        # the startup and per-consumer motion-blur patches.
+        (0x2F2035, "41c6856d01000001", "41c6856d01000000"),
     ],
     "depth_of_field": [
         (0xAEB167, "c6837101000001", "c6837101000000"),

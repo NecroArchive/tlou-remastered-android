@@ -86,6 +86,20 @@ BASE_PATCHES_111 = {
         (0xC87D96, "741b", "9090"),
         (0xC873E1, "742d", "9090"),
     ],
+    # 01.11 guest SIGSEGV at 0xA623F5 (vblendps [r14]) in the animation
+    # update loop. r14 was 0x100000007: a non-guest-memory sentinel stored
+    # in the output-node pointer slot at [r15+rbx-0x68]. Redirect its 5-byte
+    # load to a verified 31-byte NOP cave, then skip only entries with pointers
+    # below the mapped guest arena (0x1000000000). The valid path returns with
+    # the original load and all other registers/stack preserved. Skip target
+    # 0xA625B0 restores rdi before the loop increment. Both 01.11 SELF hashes
+    # were checked against these exact original bytes; 01.00 is not changed.
+    "invalid-animation-output-pointer": [
+        (0xA623D3, "4d8b741f98", "e889d82300"),
+        (0xC9FC61, "90" * 31,
+         "4d8b741f98504c89f048c1e8244885c05875094883c408"
+         "e93329dcffc39090"),
+    ],
 }
 # Original-byte guards checked independently in BOTH supplied 01.11 ELFs.
 # In 01.11 the graphics settings are reconstructed from game/config data after

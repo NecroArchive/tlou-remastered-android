@@ -24,6 +24,9 @@ jobs:
             gow3_pc/tests/test_tlou_shader_signature_scan.cpp -o out/shader-scan/test
           out/shader-scan/test | tee out/shader-scan/result.txt
           out/shader-scan/test | tee out/shader-scan/repeat.txt
+          g++ -std=c++20 -O3 -Wall -Wextra -Werror \
+            gow3_pc/tests/test_tlou_shader_scan_profile.cpp -o out/shader-scan/profile-test
+          out/shader-scan/profile-test | tee out/shader-scan/profile-result.txt
       - name: Sanitized exact signature matching test
         run: |
           set -euo pipefail
@@ -31,6 +34,10 @@ jobs:
             -fsanitize=address,undefined -fno-omit-frame-pointer \
             gow3_pc/tests/test_tlou_shader_signature_scan.cpp -o /tmp/shader-scan-sanitized
           /tmp/shader-scan-sanitized --correctness-only
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            gow3_pc/tests/test_tlou_shader_scan_profile.cpp -o /tmp/shader-profile-sanitized
+          /tmp/shader-profile-sanitized
       - uses: actions/upload-artifact@v4
         with:
           name: shader-scan-${{ matrix.runner }}

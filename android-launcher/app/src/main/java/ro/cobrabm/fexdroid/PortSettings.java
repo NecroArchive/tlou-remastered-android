@@ -117,6 +117,10 @@ final class PortSettings {
         // uses CPU-thread clocks only and remains disableable by an env override.
         // The native Android default is ON unless explicitly disabled.
         env.put("TLOU_CPU_PHASE_SAMPLES","1");
+        // Diagnostic-only branch: report real per-thread shader scan frequency
+        // and sampled scalar vs NEON cost every 5 seconds during gameplay.
+        // The production launcher does not set this variable.
+        env.put("TLOU_SHADER_SCAN_PROFILE","1");
         // Leave profiling truly disabled. Some native switches check presence,
         // so setting "0" instead of removing is incorrect.
         for(String name:new String[]{"GOW3_GPU_PROFILE","GOW3_FRAME_STATS","GOW3_PERF_DIAG"})
@@ -181,6 +185,7 @@ final class PortSettings {
         StringBuilder result=new StringBuilder("TLOU launch settings: resolution=")
             .append(prefs(context).getString("resolution","original"));
         result.append("; renderer=Vulkan; CPU=FEX ARM64");
+        result.append("; shader-scan-diagnostic=on");
         result.append("; game-raster=").append(env.getOrDefault("TLOU_EXPECT_SCENE_SIZE","1920x1080"));
         result.append("; game-ui=")
               .append(env.containsKey("TLOU_UNIFIED_GUEST_UI")

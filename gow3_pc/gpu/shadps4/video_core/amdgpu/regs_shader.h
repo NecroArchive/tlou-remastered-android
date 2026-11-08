@@ -5,6 +5,7 @@
 
 #include "gow3_movie.h"
 #include "video_core/amdgpu/tlou_shader_signature_scan.h"
+#include "video_core/amdgpu/tlou_shader_scan_profile.h"
 #include "common/assert.h"
 #include "common/types.h"
 #include "shader_recompiler/params.h"
@@ -253,6 +254,37 @@ static constexpr const BinaryInfo& SearchBinaryInfo(const u32* code) {
 static Shader::ShaderParams GetParams(const auto& sh) {
     const auto* code = sh.template Address<u32*>();
     const auto& bininfo = SearchBinaryInfo(code);
+    // Experimental opt-in telemetry: time BOTH implementations on 1 in 256
+    // fallbacks, and count the actual direct-token and full-search calls.
+    // Guest bytecode is reread on every call. Never reuse metadata across
+    // draws/dispatches; no change to the returned shader or its bindings.
+    static const bool shader_scan_profile = [] {
+        const char* v = std::getenv("TLOU_SHADER_SCAN_PROFILE");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    if (shader_scan_profile) {
+        static thread_local Detail::ShaderScanProfiler cpu_profile{};
+        const auto* selected = std::bit_cast<const u32*>(&bininfo);
+        constexpr u32 quick_token = 0xBEEB03FF;
+        const bool direct = code[0] == quick_token &&
+                            selected == code + (code[1] + 1) * 2;
+        constexpr u32 prefix = 0x5362724fu;
+        constexpr u32 limit = 0x4000;
+        const auto valid = [](const u32* p) {
+            return std::bit_cast<const BinaryInfo*>(p)->Valid();
+        };
+        cpu_profile.Observe(code, selected, direct,
+                            [&]() -> const u32* {
+                                for (const u32* it = code; it < code + limit; ++it) {
+                                    if (valid(it)) return it;
+                                }
+                                return nullptr;
+                            },
+                            [&]() -> const u32* {
+                                return Detail::FindShaderSignature32(
+                                    code, code + limit, prefix, valid);
+                            });
+    }
     return {
         .user_data = sh.user_data,
         .code = std::span{code, bininfo.length / sizeof(u32)},

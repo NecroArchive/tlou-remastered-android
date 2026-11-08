@@ -18,8 +18,12 @@ class MovieAndMemoryGuards(unittest.TestCase):
         self.assertIn('GOW3_DMEM_REPORT_MB',MEM)
         self.assertIn('The Last of Us',MEM)
         self.assertIn('768 MiB "Game Debug"',MEM)
-        self.assertIn('if("01.11".equals(gameVersion)){',ACT)
-        self.assertIn('env.put("TLOU_MOVIE_111_LAYOUT","1");',ACT)
+        self.assertIn('"01.00".equals(gameVersion)||"01.11".equals(gameVersion)',ACT)
+        self.assertIn('env.put("TLOU_MOVIE_NV12_LAYOUT","1");',ACT)
+        self.assertIn('env.containsKey("GOW3_MOVIE_SIZE")',ACT)
+        self.assertIn('const char* env=std::getenv("TLOU_MOVIE_NV12_LAYOUT");',SCALE)
+        self.assertIn('if(RemapAligned(address,width,height,pitch,bits))return true;',SCALE)
+        self.assertIn('TlouMovie111::ChromaAddress(address,base,w,h)',SCALE)
 
     def test_conversion_before_guest_write_with_native_fallback(self):
         picture=VID[VID.index('static int32_t picture('):VID.index('static int32_t receive(')]

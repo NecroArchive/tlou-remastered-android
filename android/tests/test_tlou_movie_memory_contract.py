@@ -14,7 +14,7 @@ SCALE=(ROOT/"gow3_pc/gpu/shim/gow3_movie.cpp").read_text()
 class MovieAndMemoryGuards(unittest.TestCase):
     def test_retail_memory_report_is_unconditional_for_100_and_111(self):
         self.assertEqual(ACT.count('env.put("GOW3_DMEM_REPORT_MB","4608");'),1)
-        self.assertLess(ACT.index('env.put("GOW3_DMEM_REPORT_MB","4608");'),ACT.index('if("01.11".equals(gameVersion)){'))
+        self.assertLess(ACT.index('env.put("GOW3_DMEM_REPORT_MB","4608");'),ACT.index('if(("01.00".equals(gameVersion)||"01.11".equals(gameVersion)) &&'))
         self.assertIn('GOW3_DMEM_REPORT_MB',MEM)
         self.assertIn('The Last of Us',MEM)
         self.assertIn('768 MiB "Game Debug"',MEM)

@@ -42,6 +42,7 @@
 #include "video_core/renderer_vulkan/tlou_physics_readback.h"
 #include "video_core/renderer_vulkan/tlou_auto_readback.h"
 #include "video_core/renderer_vulkan/ring_binding_cursor.h"
+#include "video_core/renderer_vulkan/tlou_pending_bloom_words.h"
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
 #include "shader_recompiler/backend/spirv/tlou_split_compute.h"
@@ -1643,16 +1644,9 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
 }
 
 void Rasterizer::FilterPendingRange(VAddr begin, VAddr end) {
-    const u64 first = begin >> PendingGranuleBits;
-    const u64 last = (end - 1) >> PendingGranuleBits;
-    if (last - first >= PendingFilterBits) {
-        pending_filter.fill(~u64{0});
-        return;
-    }
-    for (u64 granule = first; granule <= last; ++granule) {
-        const u32 bit = u32(granule % PendingFilterBits);
-        pending_filter[bit / 64] |= u64{1} << (bit % 64);
-    }
+    // This is only an A/B CPU experiment on the perf branch. No snapshots
+    // or pending-write ordering is changed. The production branch is intact.
+    Detail::MarkPendingBloomWords<PendingGranuleBits>(pending_filter, begin, end);
 }
 
 bool Rasterizer::PendingFilterHit(VAddr begin, VAddr end) const {

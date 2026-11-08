@@ -9,7 +9,7 @@ class TlouUpdate111Contract(unittest.TestCase):
     def test_devkit_memory_report_disabled_for_update_111_only(self):
         game=(JAVA/"GameActivity.java").read_text()
         assert 'env.put("GOW3_DMEM_REPORT_MB","4608")' in game
-        assert 'if("01.11".equals(gameVersion))' in game
+        assert '"01.00".equals(gameVersion)||"01.11".equals(gameVersion)' in game
         assert "device-ready.json" in game
         assert 'env.put("GOW3_DMEM_MB"' not in game
 

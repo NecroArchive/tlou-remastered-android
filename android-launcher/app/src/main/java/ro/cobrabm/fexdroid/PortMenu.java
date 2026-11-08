@@ -244,7 +244,9 @@ final class PortMenu {
                 // Full HUD always shows GPU and CPU. No duplicate metrics toggles.
                 slider("hud_size","Tamanho do HUD",10,26,12);
                 slider("hud_opacity","Opacidade do fundo (%)",0,100,65);
-                toggle("touch_visible","Controles na tela",true);
+                choice("touch_mode","Controles na tela",
+                    new String[]{"Automático (ocultar com controle conectado)","Sempre mostrar","Desligado"},
+                    new String[]{"auto","on","off"},"auto");
                 choice("control_color","Cor dos controles",
                     new String[]{"Verde oliva","Âmbar","Branco","Vermelho","Azul"},
                     new String[]{"olive","amber","white","red","blue"},"olive");

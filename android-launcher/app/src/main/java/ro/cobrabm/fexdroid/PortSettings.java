@@ -1,8 +1,6 @@
 package ro.cobrabm.fexdroid;
 
 import android.content.Context;
-import android.os.Build;
-import java.util.Locale;
 import android.content.SharedPreferences;
 import org.json.JSONObject;
 import java.io.File;
@@ -49,23 +47,15 @@ final class PortSettings {
         // Never silently change the saved resolution.
         final String resolution=p.getString("resolution","original");
         options.put("resolution",resolution);
-        // Xiaomi 23049PCD8G reported a real HALT after 806 seconds. The
-        // OnePlus CPH2691 reported only a "long job" warning and a later
-        // SIGTERM on user exit; it is NOT evidence of a guest deadlock.
-        // Preserve original wake predicates only for the confirmed Xiaomi SoC.
-        options.put("job_sleep",!conservativeJobWorkers());
+        // F5 regression isolation (2026-11-08): return SM7475/23049PCD8G
+        // to the same sleeping-worker patch already used on other devices.
+        // The previously observed HALT after 806 s remains unproven to be
+        // caused by this patch; validate both FPS and >806 s stability.
+        options.put("job_sleep",true);
         for(String key:EFFECTS) options.put(key,p.getBoolean(key,false));
         File file=new File(context.getFilesDir(),"patch-options.json");
         Files.write(file.toPath(),options.toString().getBytes(StandardCharsets.UTF_8));
         return file;
-    }
-
-    static boolean conservativeJobWorkers() {
-        final String model=Build.MODEL==null?"":Build.MODEL.toUpperCase(Locale.ROOT);
-        final String soc=Build.VERSION.SDK_INT>=31 && Build.SOC_MODEL!=null
-            ?Build.SOC_MODEL.toUpperCase(Locale.ROOT):"";
-        // Do not apply this device-specific workaround globally to all Adreno.
-        return soc.contains("SM7475") || model.equals("23049PCD8G");
     }
 
     static void environment(Context context,Map<String,String> env) {
@@ -192,8 +182,7 @@ final class PortSettings {
         result.append("; geometry-sync=full");
         result.append("; async-global-protect=").append(env.containsKey("GOW3_ASYNC_READBACK")?"on":"off");
         result.append("; geometry-sync policy=2 full only");
-        result.append("; guest-job-worker-wake=")
-              .append(conservativeJobWorkers()?"original":"patched-sleep");
+        result.append("; guest-job-worker-wake=patched-sleep");
         return result.toString();
     }
 

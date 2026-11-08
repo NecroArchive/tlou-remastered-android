@@ -29,6 +29,12 @@ final class PortSettings {
             "compute_wait_fast","relaxed_skinning_fp"}) edit.remove(key);
         String limit=prefs(context).getString("fps_limit","60");
         if(!"30".equals(limit) && !"60".equals(limit))edit.putString("fps_limit","60");
+        // Preserve an explicit old OFF preference while making Auto the default
+        // for users who had the original always-visible default enabled.
+        if(prefs(context).contains("touch_visible") &&
+           !prefs(context).contains("touch_mode"))
+            edit.putString("touch_mode",prefs(context).getBoolean("touch_visible",true)?"auto":"off");
+        edit.remove("touch_visible");
         // The proxy/compatibility renderer was retired. Ignore old saved choices.
         edit.remove("render_path");
         edit.apply();

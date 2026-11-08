@@ -216,6 +216,9 @@ final class PortMenu {
                 toggle("bloom","Desativar bloom",false);
                 toggle("sunlight_shadows","Desativar sombras solares",false);
                 toggle("subsurface","Desativar subsurface",false);
+                note("Patches experimentais 1.11: luzes sem sombras continuam ativas.");
+                toggle("omni_light_shadows","Desativar sombras de luzes omni (1.11)",false);
+                toggle("spot_light_shadows","Desativar sombras de holofotes (1.11)",false);
                 row("Restaurar patches e resolução",()->{
                     SharedPreferences.Editor e=prefs.edit().putString("resolution","original");
                     for(String key:PortSettings.EFFECTS)e.putBoolean(key,false);

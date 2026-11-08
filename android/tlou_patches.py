@@ -154,6 +154,23 @@ PERFORMANCE_EFFECTS_111 = {
         (0xA9250A, "0f840c060000", "e90d06000090"),
         (0xA92500, "488b0080b8942e0000000f840c060000", None),
     ],
+    # Optional 01.11 light-culling overrides, OFF by default. The guest
+    # distinguishes each shadow-casting light category from the corresponding
+    # non-shadow category. Force only the shadow flag read to false; preserve
+    # the adjacent non-shadow lighting flag and the original skip branch.
+    # Original bytes verified on BOTH supplied 01.11 SELF hashes. The source
+    # render-state base at 0xA638C4 is 0x181A770, not a texture/global shader.
+    "omni_light_shadows": [
+        (0xA638C4, "4c8d25a56edb00", None),  # lea r12,[rip+render-state]
+        (0xA63BBA, "418a84244d010000", "30c0" + "90"*6),  # shadow category +0x14d
+        (0xA63BCA, "418a84244f010000", None),  # PRESERVE omni nonshadow +0x14f
+    ],
+    "spot_light_shadows": [
+        (0xA6445F, "418a84244e010000", "30c0" + "90"*6),  # spot shadow +0x14e
+        (0xA6446F, "418a842450010000", None),  # PRESERVE spot nonshadow +0x150
+        (0xA652A4, "418a84244e010000", "30c0" + "90"*6),  # second spot consumer
+        (0xA652B8, "418a842450010000", None),  # PRESERVE spot nonshadow +0x150
+    ],
 }
 
 def known_profile(digest):

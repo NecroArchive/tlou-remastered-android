@@ -168,7 +168,12 @@ final class PortSettings {
         // VideoOutDriver retains its 60 Hz movie-specific pacing.
         final boolean unlocked=p.getBoolean("fps_unlock",false);
         env.put("GOW3_VBLANK_HZ",unlocked?"0":"60");
-        env.put("GOW3_VSYNC",p.getBoolean("vsync",true)?"1":"0");
+        // Merely requesting 480 Hz guest vblank is insufficient: when VSync
+        // remains ON, both VideoOut's adaptive pacing and Android's FIFO
+        // compositor revert to the physical refresh (60 Hz in log 6).
+        // Disable VSync only for this unlocked launch. The user's saved VSync
+        // choice remains untouched for regular capped launches.
+        env.put("GOW3_VSYNC",unlocked?"0":p.getBoolean("vsync",true)?"1":"0");
         env.put("GOW3_FPS_LIMIT",fpsLimit(context));
     }
 
@@ -194,6 +199,8 @@ final class PortSettings {
         result.append("; async-global-protect=").append(env.containsKey("GOW3_ASYNC_READBACK")?"on":"off");
         result.append("; geometry-sync policy=2 full only");
         result.append("; fps-unlock=").append(prefs(context).getBoolean("fps_unlock",false)?"120":"off");
+        result.append("; effective-vsync=").append(env.getOrDefault("GOW3_VSYNC","?"));
+        result.append("; virtual-vblank-hz=").append(env.getOrDefault("GOW3_VBLANK_HZ","?"));
         result.append("; guest-job-worker-wake=patched-sleep");
         return result.toString();
     }
@@ -207,6 +214,7 @@ final class PortSettings {
         String r=p.getString("resolution","original"), limit=fpsLimit(context);
         String res=r.equals("original")?"Original":r+"p";
         return res+"  ·  "+(limit+" FPS")+"  ·  "+
-            (p.getBoolean("vsync",true)?"VSync ON":"VSync OFF");
+            (p.getBoolean("fps_unlock",false)?"VSync OFF (desbloqueio)":
+             p.getBoolean("vsync",true)?"VSync ON":"VSync OFF");
     }
 }

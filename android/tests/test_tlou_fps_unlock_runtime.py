@@ -9,6 +9,23 @@ VIDEO=(ROOT/"gow3_pc/gpu/shadps4/core/libraries/videoout/driver.cpp").read_text(
 EMU=(ROOT/"gow3_pc/gpu/shim/core/emulator_settings.h").read_text()
 
 class TlouFpsUnlockRuntimeContracts(unittest.TestCase):
+    def test_launcher_exposes_unlock_and_all_effects(self):
+        main=(JAVA/"MainActivity.java").read_text()
+        self.assertIn('toggleSetting(box,"fps_unlock","Desbloquear FPS (até 120, experimental)",false)',main)
+        self.assertIn('toggleSetting(box,"omni_light_shadows"',main)
+        self.assertIn('toggleSetting(box,"spot_light_shadows"',main)
+        self.assertIn('edit.putBoolean("fps_unlock",false)',main)
+        self.assertIn('choice(controls,"touch_mode"',main)
+        self.assertNotIn('toggleSetting(controls,"touch_visible"',main)
+
+    def test_unlock_overrides_only_runtime_vsync(self):
+        self.assertIn('env.put("GOW3_VSYNC",unlocked?"0":p.getBoolean("vsync",true)?"1":"0");',SET)
+        self.assertIn('effective-vsync=',SET)
+        self.assertIn('virtual-vblank-hz=',SET)
+        self.assertIn('VSync OFF (desbloqueio)',SET)
+        # Native pacing stays source-of-truth, never just a HUD change.
+        self.assertIn('const bool vsync = Gow3Settings::Get().vsync;',VIDEO)
+
     def test_user_option_is_off_by_default_and_restorable(self):
         self.assertIn('toggle("fps_unlock","Desbloquear FPS (até 120, experimental)",false)',MENU)
         self.assertIn('e.putBoolean("fps_unlock",false);',MENU)

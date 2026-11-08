@@ -202,7 +202,10 @@ final class PortMenu {
                 choice("fps_limit","Limite de FPS",
                     new String[]{"30 FPS","60 FPS"},
                     new String[]{"30","60"},"60");
-                toggle("vsync","VSync",true);
+                if(prefs.getBoolean("fps_unlock",false))
+                    note("Desbloqueio até 120 FPS ativo: VSync OFF nesta sessão; reinicie após alterar.");
+                else
+                    toggle("vsync","VSync",true);
                 note("Modo Unificado ativo: cena, interface e mira na mesma resolução.");
                 note("Sincronização da geometria: Completo (único modo). "
                      +"Preserva a correção das deformações.");
@@ -211,7 +214,7 @@ final class PortMenu {
                 heading("PATCHES");
                 note("Patches validados para o eboot reconhecido. Reinicie para aplicar.");
                 toggle("fps_unlock","Desbloquear FPS (até 120, experimental)",false);
-                note("Eleva o vblank do runtime para 480 Hz e limita a apresentação a 120 FPS. Vídeos mantêm 60 Hz; FPS acima de 60 depende do jogo e da tela.");
+                note("Usa vblank virtual de 480 Hz, limita a apresentação a 120 FPS e desativa VSync/FIFO nesta sessão. Cinemáticas mantêm 60 Hz. Reinicie para aplicar.");
                 toggle("ssao","Desativar SSAO",false);
                 toggle("motion_blur","Desativar desfoque de movimento",false);
                 toggle("depth_of_field","Desativar profundidade de campo",false);

@@ -238,15 +238,20 @@ public final class MainActivity extends Activity {
             choice(box,"resolution","Resolução interna",
                 new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                 new String[]{"original","720","540","360"},"original");
+            toggleSetting(box,"fps_unlock","Desbloquear FPS (até 120, experimental)",false);
+            box.addView(text("O desbloqueio desliga o VSync durante a sessão para evitar o teto de 60 FPS. Cinemáticas mantêm o ritmo de 60 Hz.",12,MUTED));
             toggleSetting(box,"ssao","Desativar SSAO",true);
             toggleSetting(box,"motion_blur","Desativar desfoque de movimento",true);
             toggleSetting(box,"depth_of_field","Desativar profundidade de campo",true);
             toggleSetting(box,"bloom","Desativar bloom",true);
             toggleSetting(box,"sunlight_shadows","Desativar sombras solares",true);
             toggleSetting(box,"subsurface","Desativar subsurface",true);
+            toggleSetting(box,"omni_light_shadows","Desativar sombras de luzes omni (1.11)",false);
+            toggleSetting(box,"spot_light_shadows","Desativar sombras de holofotes (1.11)",false);
             add(box,"Restaurar patches e resolução",false,()->{
                 SharedPreferences.Editor edit=prefs.edit().putString("resolution","original");
                 for(String key:PortSettings.EFFECTS)edit.putBoolean(key,false);
+                edit.putBoolean("fps_unlock",false);
                 edit.apply();buildHome();
             });
         } else if(currentTab.equals("settings")) {
@@ -256,6 +261,7 @@ public final class MainActivity extends Activity {
                 new String[]{"30 FPS","60 FPS"},
                 new String[]{"30","60"},"60");
             toggleSetting(video,"vsync","VSync",true);
+            video.addView(text("Para desbloquear FPS até 120, abra a aba Patches. Quando ativo, o VSync é desativado na sessão sem alterar sua preferência salva.",12,MUTED));
             video.addView(text("Modo Unificado padrão: jogo, interface e mira na mesma resolução. Vídeos mantêm a decodificação original.",12,MUTED));
             video.addView(text("Sincronização da geometria: Completo (único modo). "
                 +"Correção de deformações mantida sem opções que não melhoraram o FPS.",12,MUTED));
@@ -280,7 +286,9 @@ public final class MainActivity extends Activity {
                     "Personalizada (arrastar)"},
                 new String[]{"0","1","2","3","4","5","6","7","8","-1"},"0");
             // The HUD style controls whether GPU/CPU are displayed; no duplicate toggles.
-            toggleSetting(controls,"touch_visible","Controles na tela",true);
+            choice(controls,"touch_mode","Controles na tela",
+                new String[]{"Automático (ocultar com controle conectado)","Sempre mostrar","Desligado"},
+                new String[]{"auto","on","off"},"auto");
             choice(controls,"control_color","Cor dos controles",
                 new String[]{"Verde oliva","Âmbar","Branco","Vermelho","Azul"},
                 new String[]{"olive","amber","white","red","blue"},"olive");

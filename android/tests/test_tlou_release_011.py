@@ -12,7 +12,7 @@ class Release011(unittest.TestCase):
         main=(JAVA/"MainActivity.java").read_text()
         about=(JAVA/"AboutPanel.java").read_text()
         self.assertIn("versionName '0.1.1'",build)
-        self.assertIn("versionCode 40",build)
+        self.assertIn("versionCode 41",build)
         self.assertIn('text("v"+TlouDialogs.version(this)',main)
         self.assertIn('String version="0.1.1"',about)
         self.assertIn('artFrame.addView(artVersion,artBadge)',main)

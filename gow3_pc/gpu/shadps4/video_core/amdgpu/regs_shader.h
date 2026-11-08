@@ -251,9 +251,28 @@ static constexpr const BinaryInfo& SearchBinaryInfo(const u32* code) {
     UNREACHABLE_MSG("Shader binary info not found.");
 }
 
+// The diagnostic original-path switch keeps the exact old search logic.
+static const BinaryInfo& SearchBinaryInfoScalar(const u32* code) {
+    if (code[0] == 0xBEEB03FF) {
+        const auto* quick=std::bit_cast<const BinaryInfo*>(
+            code + (code[1] + 1) * 2);
+        if (quick->Valid()) return *quick;
+    }
+    for (const u32* it=code; it<code+0x4000; ++it) {
+        const auto* info=std::bit_cast<const BinaryInfo*>(it);
+        if (info->Valid()) return *info;
+    }
+    UNREACHABLE_MSG("Shader binary info not found.");
+}
+
 static Shader::ShaderParams GetParams(const auto& sh) {
     const auto* code = sh.template Address<u32*>();
-    const auto& bininfo = SearchBinaryInfo(code);
+    static const bool force_original_scan = [] {
+        const char* v=std::getenv("TLOU_SHADER_SCAN_SCALAR");
+        return v && v[0]=='1' && v[1]=='\0';
+    }();
+    const auto& bininfo = force_original_scan
+        ? SearchBinaryInfoScalar(code) : SearchBinaryInfo(code);
     // Experimental opt-in telemetry: time BOTH implementations on 1 in 256
     // fallbacks, and count the actual direct-token and full-search calls.
     // Guest bytecode is reread on every call. Never reuse metadata across

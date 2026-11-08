@@ -250,6 +250,8 @@ public final class MainActivity extends Activity {
                 new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                 new String[]{"original","720","540","360"},"original");
             toggleSetting(box,"fps_unlock","Desbloquear FPS (até 120, experimental)",false);
+            toggleSetting(box,"shader_scan_scalar","Diagnóstico CPU: usar busca original (A/B)",false);
+            box.addView(text("Desligado = NEON; ligado = original. Reinicie o jogo entre os testes e exporte os logs.",12,MUTED));
             box.addView(text("O desbloqueio desliga o VSync durante a sessão para evitar o teto de 60 FPS. Cinemáticas mantêm o ritmo de 60 Hz.",12,MUTED));
             toggleSetting(box,"ssao","Desativar SSAO",true);
             toggleSetting(box,"motion_blur","Desativar desfoque de movimento",true);

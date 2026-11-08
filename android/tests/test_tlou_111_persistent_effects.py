@@ -25,7 +25,7 @@ BRANCHES = {0xF907, 0xACB868, 0xAE09C0, 0xAE0D7F,
 def branch_target(address, instruction):
     if instruction[0] in (0x74, 0xEB) and len(instruction) == 2:
         return address + 2 + struct.unpack("<b", instruction[1:2])[0]
-    if instruction[:2] == b"\\x0f\\x84" and len(instruction) == 6:
+    if instruction[:2] == bytes((0x0F, 0x84)) and len(instruction) == 6:
         return address + 6 + struct.unpack("<i", instruction[2:])[0]
     if instruction[0] == 0xE9 and len(instruction) == 6:
         assert instruction[-1] == 0x90

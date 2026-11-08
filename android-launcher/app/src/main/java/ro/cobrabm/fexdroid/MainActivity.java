@@ -51,7 +51,18 @@ public final class MainActivity extends Activity {
         SharedPreferences.Editor initial=prefs.edit();
         if(!prefs.contains("resolution"))initial.putString("resolution","720");
         for(String effect:PortSettings.EFFECTS)
-            if(!prefs.contains(effect))initial.putBoolean(effect,true);
+            if(!prefs.contains(effect))
+                initial.putBoolean(effect,
+                    !effect.equals("omni_light_shadows") && !effect.equals("spot_light_shadows"));
+        // Earlier v0.1.1 launches inherited true for EVERY new effect.
+        // That accidentally enabled experimental shadow-category patches on
+        // first launch. Reset just those two ONCE for existing installations;
+        // all six established effect preferences remain untouched.
+        if(!prefs.getBoolean("shadow_experimental_defaults_fixed_v1",false)) {
+            initial.putBoolean("omni_light_shadows",false);
+            initial.putBoolean("spot_light_shadows",false);
+            initial.putBoolean("shadow_experimental_defaults_fixed_v1",true);
+        }
         initial.apply();
         // Keep paths chosen in the first experimental APK.
         if (!prefs.contains("game_path")) prefs.edit().putString("game_path",getPreferences(0).getString("prepared_path","")).apply();

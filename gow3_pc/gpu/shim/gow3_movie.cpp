@@ -207,20 +207,22 @@ bool MovieShaderConstant(std::uint32_t bits, float& patched) {
     }
 }
 
-// Version 01.11 alone may describe 720p movie Y/UV with 16-row
-// offsets, while the rescaled in-place NV12 buffer uses 64-row alignment.
-// Do not change 01.00 or unrelated game textures.
-bool Updated111MoviePlanes() {
+// 01.00 and 01.11 may reference source/native or 16-row movie Y/UV
+// descriptors although the converted NV12 frame uses 64-row alignment.
+// Only addresses of successfully recorded decoder buffers can be changed.
+bool AlignedMoviePlanes() {
     static const bool enabled=[] {
-        const char* env=std::getenv("TLOU_MOVIE_111_LAYOUT");
+        const char* env=std::getenv("TLOU_MOVIE_NV12_LAYOUT");
+        // Keep compatibility with older 01.11 launcher packages.
+        if (!env) env=std::getenv("TLOU_MOVIE_111_LAYOUT");
         return env && env[0]=='1';
     }();
     return enabled;
 }
 
-bool Remap111(std::uint64_t& address, std::uint32_t& width,
+bool RemapAligned(std::uint64_t& address, std::uint32_t& width,
               std::uint32_t& height, std::uint32_t& pitch,std::uint32_t bits) {
-    if(!Updated111MoviePlanes() || (bits!=8 && bits!=16))return false;
+    if(!AlignedMoviePlanes() || (bits!=8 && bits!=16))return false;
     const Size& size=Display();
     if(!size.width)return false;
     const bool maybeY=(bits==8 && TlouMovie111::LumaShape(width,height,size.width,size.height));
@@ -244,7 +246,7 @@ bool Remap111(std::uint64_t& address, std::uint32_t& width,
             pitch=uv ? ScaledChromaPitch()/2 : p;
             static std::atomic<unsigned> corrected{0};
             if(corrected.fetch_add(1,std::memory_order_relaxed)<8) {
-                std::printf("TLOU 01.11 movie plane: %s -> NV12 %ux%u pitch %u at %#llx\n",
+                std::printf("TLOU movie aligned plane: %s -> NV12 %ux%u pitch %u at %#llx\n",
                             uv?"UV":"Y",width,height,pitch,
                             static_cast<unsigned long long>(address));
                 std::fflush(stdout);
@@ -257,7 +259,7 @@ bool Remap111(std::uint64_t& address, std::uint32_t& width,
 
 bool Remap(std::uint64_t& address, std::uint32_t& width, std::uint32_t& height, std::uint32_t& pitch,
            std::uint32_t bits) {
-    if(Remap111(address,width,height,pitch,bits))return true;
+    if(RemapAligned(address,width,height,pitch,bits))return true;
     const Size& display = Display();
     if (!display.width) {
         return false;

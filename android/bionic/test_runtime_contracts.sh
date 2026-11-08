@@ -105,8 +105,21 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
     gow3_pc/tests/test_tlou_movie_111_planes.cpp -o "$test_dir/tlou-movie-111-planes"
 "$test_dir/tlou-movie-111-planes"
-grep -Fq 'TLOU_MOVIE_111_LAYOUT' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
-grep -Fq 'if(Remap111(address,width,height,pitch,bits))return true;' gow3_pc/gpu/shim/gow3_movie.cpp
+# Both 01.00 and 01.11 now use the same guarded movie-only 64-row
+# NV12 plane remapper. Fail with an actionable diagnostic if either end is
+# missing instead of silently rejecting the correctly generalized fix.
+grep -Fq 'env.put("TLOU_MOVIE_NV12_LAYOUT","1");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java || {
+    echo 'ERROR: 01.00/01.11 movie plane alignment option missing from launcher' >&2
+    exit 1
+}
+grep -Fq 'if(RemapAligned(address,width,height,pitch,bits))return true;' gow3_pc/gpu/shim/gow3_movie.cpp || {
+    echo 'ERROR: shared recorded-frame NV12 remap missing from video bridge' >&2
+    exit 1
+}
+grep -Fq 'TlouMovie111::ChromaAddress(address,base,w,h)' gow3_pc/gpu/shim/gow3_movie.cpp || {
+    echo 'ERROR: guarded chroma-plane address matching was lost' >&2
+    exit 1
+}
 cc -std=c11 -Wall -Wextra -Werror -x c -fsyntax-only \
     -include gow3_pc/gpu/shim/gow3_movie_bridge.h /dev/null
 grep -Fq 'env.put("GOW3_MOVIE_SIZE",actualSize);' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java

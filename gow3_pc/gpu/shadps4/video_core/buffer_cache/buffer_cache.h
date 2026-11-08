@@ -30,6 +30,7 @@
 #include "video_core/buffer_cache/fault_manager.h"
 #include "video_core/buffer_cache/range_set.h"
 #include "video_core/buffer_cache/gpu_range_cache_index.h"
+#include "video_core/buffer_cache/tlou_readback_poll_gate.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
 namespace AmdGpu {
@@ -316,9 +317,22 @@ public:
 
     /// gow3: writes the readbacks the GPU has finished to guest memory (GPU-side, per draw).
     void PollReadbacks() {
-        if (!pending_readbacks.empty()) {
-            CompleteReadbacks(false);
+        if (pending_readbacks.empty()) return;
+        // Experimental CPU fast path: queued readbacks are appended with
+        // monotonically nondecreasing scheduler ticks. When the oldest one
+        // belongs to the *current, not-yet-submitted* command buffer, none
+        // can be GPU-complete or acquire a read watch. Do not poll Vulkan
+        // or scan the list for work that is impossible.
+        // Exact same admission condition as CompleteReadbacks' watcher loop.
+        static const bool gate = [] {
+            const char* env = std::getenv("TLOU_READBACK_POLL_GATE");
+            return env && env[0]=='1' && env[1]=='\0';
+        }();
+        if (gate && Detail::AllReadbacksUnsubmitted(
+                pending_readbacks.front().tick,scheduler.CurrentTick())) {
+            return;
         }
+        CompleteReadbacks(false);
     }
 
 

@@ -1,0 +1,38 @@
+name: TLOU readback poll CPU correctness and A/B (no APK)
+on:
+  push:
+    branches: ['perf/tlou-cpu-readback-poll-20261108']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and measure old readback tick path versus gated path
+        run: |
+          set -euo pipefail
+          mkdir -p out/readback-poll
+          uname -m | tee out/readback-poll/architecture.txt
+          g++ -std=c++20 -O3 -Wall -Wextra -Werror \
+            gow3_pc/tests/test_tlou_readback_poll_gate.cpp -o out/readback-poll/test
+          out/readback-poll/test | tee out/readback-poll/result.txt
+          out/readback-poll/test | tee out/readback-poll/repeat.txt
+      - name: ASAN and UB exact timeline comparison
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            gow3_pc/tests/test_tlou_readback_poll_gate.cpp -o /tmp/readback-poll-sanitized
+          /tmp/readback-poll-sanitized --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: readback-poll-${{ matrix.runner }}
+          path: out/readback-poll/*.txt
+          if-no-files-found: error

@@ -14,7 +14,7 @@ import tlou_patches as patch
 
 EXPECTED_CONSUMERS = {
     "ssao": {0xF907},
-    "motion_blur": {0xACB868, 0xAE09C0, 0xAE0D7F, 0xAE0DD6, 0xAE0F25, 0xB8781E, 0x193B6A, 0x193BB0, 0x2F2035},
+    "motion_blur": {0xACB868, 0xAE09C0, 0xAE0D7F, 0xAE0DD6, 0xAE0F25, 0xB8781E, 0x2F2035},
     "depth_of_field": {0xA86FFE, 0xB87611, 0xB88604},
     "bloom": {0xA86F8B},
 }
@@ -70,13 +70,12 @@ class PersistentUpdate111EffectTests(unittest.TestCase):
         # The motion-blur bitpack zeroes its disabled contribution only;
         # 0xB87801 already sets r15d to zero before this consumer.
         self.assertEqual(rows[0xB8781E], ("410f44c7", "4489f890"))
-        # Persistent motion-blur: re-enable setter must write 01,00
-        # instead of 01,01, and getter must always report disabled.
-        self.assertEqual(rows[0x193B6A], ("66c7836c0100000101", "66c7836c0100000100"))
-        self.assertEqual(rows[0x193BB0], ("8a876d010000", "31c090909090"))
-        # This independent scene-start setter writes through r13 to the
-        # global render-state object, not through the settings constructor.
+        # The proven re-enabler writes through r13 to the global
+        # 0x181A770 render-state object; same-offset unrelated objects
+        # must not be patched merely because they use a 0x16D field.
         self.assertEqual(rows[0x2F2035], ("41c6856d01000001", "41c6856d01000000"))
+        self.assertNotIn(0x193B6A, rows)
+        self.assertNotIn(0x193BB0, rows)
 
     def test_100_patches_unaffected(self):
         before = patch.PERFORMANCE_EFFECTS

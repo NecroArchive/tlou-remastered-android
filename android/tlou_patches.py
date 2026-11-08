@@ -131,17 +131,12 @@ PERFORMANCE_EFFECTS_111 = {
         # r15d is zero at 0xB87801; replace conditional move with the
         # original disabled-value move while preserving flags.
         (0xB8781E, "410f44c7", "4489f890"),
-        # The 01.11 runtime setter at 0x193B50 rewrites bytes
-        # [option+0x16C..0x16D] to 01,01 after an initially disabled
-        # option is loaded. Fix the stored second byte AND the getter:
-        # otherwise later config loads reactivate blur despite all render
-        # consumers being patched. Both original SELF variants match.
-        (0x193B6A, "66c7836c0100000101", "66c7836c0100000100"),
-        (0x193BB0, "8a876d010000", "31c090909090"),
-        # Second independent reenabler: the scene boot routine at 0x2F2000
-        # resolves the live global render state 0x181A770 and writes 1 to
-        # [r13+0x16D] at 0x2F2035. Do not leave this path capable of undoing
-        # the startup and per-consumer motion-blur patches.
+        # The scene-start routine at 0x2F2000 directly resolves the global
+        # renderer state at 0x181A770 and writes 1 to [r13+0x16D],
+        # re-enabling motion blur after the patched 01.11 initializer.
+        # Other offset-0x16D accesses at 0x193B6A and 0xDA2BAF are on
+        # DIFFERENT objects; do NOT modify them merely by offset matching.
+        # Exact original bytes verified against both supplied 01.11 SELFs.
         (0x2F2035, "41c6856d01000001", "41c6856d01000000"),
     ],
     "depth_of_field": [

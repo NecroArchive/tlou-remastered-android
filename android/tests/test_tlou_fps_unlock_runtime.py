@@ -6,6 +6,7 @@ JAVA=ROOT/"android-launcher/app/src/main/java/ro/cobrabm/fexdroid"
 SET=(JAVA/"PortSettings.java").read_text()
 MENU=(JAVA/"PortMenu.java").read_text()
 VIDEO=(ROOT/"gow3_pc/gpu/shadps4/core/libraries/videoout/driver.cpp").read_text()
+NATIVE_SETTINGS=(ROOT/"gow3_pc/gpu/shim/gow3_settings.cpp").read_text()
 EMU=(ROOT/"gow3_pc/gpu/shim/core/emulator_settings.h").read_text()
 
 class TlouFpsUnlockRuntimeContracts(unittest.TestCase):
@@ -25,6 +26,11 @@ class TlouFpsUnlockRuntimeContracts(unittest.TestCase):
         self.assertIn('VSync OFF (desbloqueio)',SET)
         # Native pacing stays source-of-truth, never just a HUD change.
         self.assertIn('const bool vsync = Gow3Settings::Get().vsync;',VIDEO)
+        # It used to be read only by the Android present client; the renderer
+        # continued using a stale/default VSync=true and re-paced to 60 Hz.
+        self.assertIn('{"GOW3_VSYNC", "vsync"}',NATIVE_SETTINGS)
+        self.assertIn('Set(v, key, value);',NATIVE_SETTINGS)
+
 
     def test_user_option_is_off_by_default_and_restorable(self):
         self.assertIn('toggle("fps_unlock","Desbloquear FPS (até 120, experimental)",false)',MENU)

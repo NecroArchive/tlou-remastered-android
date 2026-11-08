@@ -88,21 +88,57 @@ BASE_PATCHES_111 = {
     ],
 }
 # Original-byte guards checked independently in BOTH supplied 01.11 ELFs.
+# In 01.11 the graphics settings are reconstructed from game/config data after
+# the constructor runs. Defaults alone can therefore be overwritten. Keep the
+# guarded defaults AND disable the relevant render consumers so that the effect
+# stays off even when a saved setting (re)enables the flag.
+#
+# 2026-11-08: checked every added original instruction against both user-owned
+# 01.11 SELF profiles (3cfa475f... and 31f3b0d1...). Consumer branches target
+# the same "effect off" block as their original JZ/JE, not arbitrary code.
+# Bloom's "xor al,al" preserves the three adjacent option bytes (including
+# tonemapping) rather than zeroing the packed four-byte configuration word.
 PERFORMANCE_EFFECTS_111 = {
-    "ssao": [(0xAEB0CC,"c7834b01000001010101","c7834b01000000010101")],
-    "motion_blur": [
-        (0xAEB14B,"c6836d01000001","c6836d01000000"),
-        (0x758691,"c6830e04000001","c6830e04000000"),
+    "ssao": [
+        (0xAEB0CC, "c7834b01000001010101", "c7834b01000000010101"),
+        # Render consumer: skip ambient-occlusion contribution irrespective
+        # of config reloads. JE 0xF911 -> JMP 0xF911.
+        (0xF907, "7408", "eb08"),
     ],
-    "depth_of_field": [(0xAEB167,"c6837101000001","c6837101000000")],
-    "bloom": [(0xAEB202,"c783b401000001010101","c783b401000001000101")],
+    "motion_blur": [
+        (0xAEB14B, "c6836d01000001", "c6836d01000000"),
+        (0x758691, "c6830e04000001", "c6830e04000000"),
+        # Motion reconstruction and postprocessing use the reloaded option.
+        (0xACB868, "0f849a090000", "e99b09000090"),
+        (0xAE09C0, "0f8485030000", "e98603000090"),
+        (0xAE0D7F, "7418", "eb18"),
+        (0xAE0DD6, "0f84fe000000", "e9ff00000090"),
+        (0xAE0F25, "0f8451010000", "e95201000090"),
+        # r15d is zero at 0xB87801; replace conditional move with the
+        # original disabled-value move while preserving flags.
+        (0xB8781E, "410f44c7", "4489f890"),
+    ],
+    "depth_of_field": [
+        (0xAEB167, "c6837101000001", "c6837101000000"),
+        # The bool getter loads AL and tests it; XOR AL,AL returns false
+        # without changing neighboring settings.
+        (0xA86FFE, "84c0", "30c0"),
+        (0xB87611, "740d", "eb0d"),
+        (0xB88604, "742b", "eb2b"),
+    ],
+    "bloom": [
+        (0xAEB202, "c783b401000001010101", "c783b401000001000101"),
+        # Packed flags at +0x1B4: bit/byte zero is "Use Bloom". Clear only
+        # AL at consumption, retaining "Use Tonemap" and subsequent flags.
+        (0xA86F8B, "84c0", "30c0"),
+    ],
     "sunlight_shadows": [
-        (0xA905B5,"0f85f6010000","e9f701000090"),
-        (0xA905AE,"80b89c000000000f85f6010000",None),
+        (0xA905B5, "0f85f6010000", "e9f701000090"),
+        (0xA905AE, "80b89c000000000f85f6010000", None),
     ],
     "subsurface": [
-        (0xA9250A,"0f840c060000","e90d06000090"),
-        (0xA92500,"488b0080b8942e0000000f840c060000",None),
+        (0xA9250A, "0f840c060000", "e90d06000090"),
+        (0xA92500, "488b0080b8942e0000000f840c060000", None),
     ],
 }
 

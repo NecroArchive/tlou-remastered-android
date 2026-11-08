@@ -14,7 +14,7 @@ import tlou_patches as patch
 
 EXPECTED_CONSUMERS = {
     "ssao": {0xF907},
-    "motion_blur": {0xACB868, 0xAE09C0, 0xAE0D7F, 0xAE0DD6, 0xAE0F25, 0xB8781E, 0x193B6A, 0x193BB0},
+    "motion_blur": {0xACB868, 0xAE09C0, 0xAE0D7F, 0xAE0DD6, 0xAE0F25, 0xB8781E, 0x193B6A, 0x193BB0, 0x2F2035},
     "depth_of_field": {0xA86FFE, 0xB87611, 0xB88604},
     "bloom": {0xA86F8B},
 }
@@ -74,6 +74,9 @@ class PersistentUpdate111EffectTests(unittest.TestCase):
         # instead of 01,01, and getter must always report disabled.
         self.assertEqual(rows[0x193B6A], ("66c7836c0100000101", "66c7836c0100000100"))
         self.assertEqual(rows[0x193BB0], ("8a876d010000", "31c090909090"))
+        # This independent scene-start setter writes through r13 to the
+        # global render-state object, not through the settings constructor.
+        self.assertEqual(rows[0x2F2035], ("41c6856d01000001", "41c6856d01000000"))
 
     def test_100_patches_unaffected(self):
         before = patch.PERFORMANCE_EFFECTS

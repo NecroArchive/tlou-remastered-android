@@ -143,7 +143,8 @@ static int32_t picture(Decoder *d, FrameBuffer *buffer, PictureInfo *info) {
     if (!scaled_in_place) {
         // Restore the native strides before the guest-buffer fallback copy:
         // the scaled scratch output must not change the original copy layout.
-        const uint32_t guest_pitch=align(width,64), guest_rows=align(height,16);
+        const uint32_t guest_pitch=align(width,64);
+        const uint32_t guest_rows=align(height,16);
         unsigned char *chroma=luma+(size_t)guest_pitch*guest_rows;
         for (uint32_t y=0;y<guest_rows;++y) {
             uint32_t from=y<height ? y : height-1;

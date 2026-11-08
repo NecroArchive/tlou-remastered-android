@@ -19,6 +19,20 @@ template <typename FullSignatureValid>
     FullSignatureValid&& valid) {
 #if defined(__aarch64__)
     const uint32x4_t target = vdupq_n_u32(signature_prefix);
+    // Four independent NEON loads inspect 16 DWORD-aligned metadata
+    // candidates per branch. The uncommon matching block is then checked
+    // in ORIGINAL ascending order; no stale shader bytes or saved hit.
+    for (; end - p >= 16; p += 16) {
+        const uint32x4_t m0 = vceqq_u32(vld1q_u32(p +  0), target);
+        const uint32x4_t m1 = vceqq_u32(vld1q_u32(p +  4), target);
+        const uint32x4_t m2 = vceqq_u32(vld1q_u32(p +  8), target);
+        const uint32x4_t m3 = vceqq_u32(vld1q_u32(p + 12), target);
+        const uint32x4_t any = vorrq_u32(vorrq_u32(m0,m1),vorrq_u32(m2,m3));
+        if (vmaxvq_u32(any) == 0) continue;
+        for (unsigned lane = 0; lane < 16; ++lane) {
+            if (p[lane] == signature_prefix && valid(p + lane)) return p + lane;
+        }
+    }
     for (; end - p >= 4; p += 4) {
         const uint32x4_t eq = vceqq_u32(vld1q_u32(p), target);
         if (vmaxvq_u32(eq) == 0) continue;
@@ -31,6 +45,22 @@ template <typename FullSignatureValid>
     }
 #elif defined(__SSE2__)
     const __m128i target = _mm_set1_epi32(static_cast<int>(signature_prefix));
+    for (; end - p >= 16; p += 16) {
+        const __m128i m0 = _mm_cmpeq_epi32(_mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(p +  0)), target);
+        const __m128i m1 = _mm_cmpeq_epi32(_mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(p +  4)), target);
+        const __m128i m2 = _mm_cmpeq_epi32(_mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(p +  8)), target);
+        const __m128i m3 = _mm_cmpeq_epi32(_mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(p + 12)), target);
+        const __m128i any = _mm_or_si128(_mm_or_si128(m0,m1),
+                                        _mm_or_si128(m2,m3));
+        if (_mm_movemask_ps(_mm_castsi128_ps(any)) == 0) continue;
+        for (unsigned lane = 0; lane < 16; ++lane) {
+            if (p[lane] == signature_prefix && valid(p + lane)) return p + lane;
+        }
+    }
     for (; end - p >= 4; p += 4) {
         const __m128i lanes =
             _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));

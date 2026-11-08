@@ -221,9 +221,13 @@ grep -Fq 'Detail::WaitForDeferredSignal(*deferred_signals_done, issued,' \
 grep -Fq 'done->notify_all();' \
   gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
 
-# Verify the logged 01.11 two-worker recovery without changing 01.00's
-# validated zero-worker default or introducing another untested frame scheduler.
+# Verify zero draw-preparation workers in both game releases without changing
+# the frame scheduler or correctness barriers.
 python3 android/tests/test_tlou_111_preparation_regression.py
+
+# A real 01.00 startup failure was the missing retail-memory report. Movie
+# conversion now bypasses the redundant guest-wide 1080p write with fallback.
+python3 android/tests/test_tlou_movie_memory_contract.py
 
 # v0.31 opt-in paths: exact memory bytes, packet-local bindings and copy completion.
 cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \

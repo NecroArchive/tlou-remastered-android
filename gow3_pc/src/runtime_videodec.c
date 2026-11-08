@@ -111,28 +111,14 @@ static int32_t picture(Decoder *d, FrameBuffer *buffer, PictureInfo *info) {
     uint32_t width=(uint32_t)f->width, height=(uint32_t)f->height;
     uint32_t pitch=align(width,64), rows=align(height,16);
     if ((uint64_t)pitch*rows*3/2>buffer->frame_buffer_size) return ERR_FRAME_BUFFER_SIZE;
-    unsigned char *luma=buffer->frame_buffer, *chroma=luma+(size_t)pitch*rows;
-    for (uint32_t y=0;y<rows;++y) {
-        uint32_t from=y<height ? y : height-1;
-        memcpy(luma+(size_t)y*pitch,f->data[0]+(size_t)from*(size_t)f->linesize[0],width);
-        if (y<rows/2) {
-            uint32_t c=y<height/2 ? y : height/2-1;
-            memcpy(chroma+(size_t)y*pitch,f->data[1]+(size_t)c*(size_t)f->linesize[1],width);
-        }
-    }
-    {
-        static int logged;
-        runtime_video_frame_lo=(uint64_t)(uintptr_t)luma;
-        runtime_video_frame_hi=(uint64_t)(uintptr_t)luma+(uint64_t)pitch*rows*3/2;
-        if (logged++<4)
-            printf("Runtime: Videodec2 frame %ux%u pitch %u rows %u into %p (buffer %llu bytes)\n", width, height,
-                   pitch, rows, (void *)luma, (unsigned long long)buffer->frame_buffer_size);
-    }
-    // Video-only bridge. Keep FFmpeg's decoded 1920x1080 NV12 source unchanged,
-    // but downscale the already allocated guest frame buffer in place when it fits.
-    // Original 1080p guest data is not needed after this frame is converted.
-    // The texture cache must see new Y/UV layout via Gow3Movie::Remap.
-    // On conversion failure, keep original guest data and metadata.
+    unsigned char *luma=buffer->frame_buffer;
+    // In the previous 720p movie path every frame was first written in its full
+    // 1920x1088 layout (~3.13 MiB), then converted directly FROM THE SAME FFmpeg
+    // source and overwritten with the scaled 1280x768 layout (~1.47 MiB).
+    // The redundant first write dirtied guest read-protected pages, magnifying
+    // movie stalls. Convert FIRST; the scaler writes/publishes Y and UV together
+    // and returns success only after both planes have been committed.
+    // Failure/same-size/no-movie preserve the complete original NV12 copy.
     uint32_t shown_width=width, shown_height=height;
     const int scaled=gow3_movie_scale_nv12(
         (uint64_t)(uintptr_t)luma, buffer->frame_buffer_size, f->data[0], f->data[1],
@@ -146,6 +132,29 @@ static int32_t picture(Decoder *d, FrameBuffer *buffer, PictureInfo *info) {
                    width, height, shown_width, shown_height);
         pitch=align(shown_width,64);
         rows=align(shown_height,16);
+    } else {
+        unsigned char *chroma=luma+(size_t)pitch*rows;
+        for (uint32_t y=0;y<rows;++y) {
+            uint32_t from=y<height ? y : height-1;
+            memcpy(luma+(size_t)y*pitch,f->data[0]+(size_t)from*(size_t)f->linesize[0],width);
+            if (y<rows/2) {
+                uint32_t c=y<height/2 ? y : height/2-1;
+                memcpy(chroma+(size_t)y*pitch,f->data[1]+(size_t)c*(size_t)f->linesize[1],width);
+            }
+        }
+    }
+    // The original video frame span, including 16-row-aligned fallbacks, is
+    // reported by the decoder, while the scaler's texture bridge separately
+    // owns the 64-row-aligned scaled Y/UV layout.
+    runtime_video_frame_lo=(uint64_t)(uintptr_t)luma;
+    runtime_video_frame_hi=(uint64_t)(uintptr_t)luma+
+        (scaled ? (uint64_t)align(shown_width,64)*align(shown_height,64)*3/2
+                : (uint64_t)pitch*rows*3/2);
+    {
+        static int logged;
+        if (logged++<4)
+            printf("Runtime: Videodec2 frame %ux%u pitch %u rows %u into %p (buffer %llu bytes)\n",
+                   width, height, pitch, rows, (void *)luma, (unsigned long long)buffer->frame_buffer_size);
     }
     info->is_valid=1; info->codec_type=0;
     info->frame_width=align(shown_width,16);

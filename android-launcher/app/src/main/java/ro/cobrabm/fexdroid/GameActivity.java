@@ -301,10 +301,14 @@ public final class GameActivity extends Activity {
             env.put("GOW3_FSR1","0");
             env.put("GOW3_RCAS","0");
             PortSettings.environment(this,env);
-            // TLOU 01.11 interprets the reported 5056 MiB retail+debug pool
-            // as a devkit and reserves an EXTRA 768 MiB (the supplied device
-            // log fails here). Present the verified retail 4608 MiB size while
-            // preserving the full host backing pool and map layout.
+            // The guest interprets 5056 MiB as a devkit (and requests an extra
+            // 768 MiB "Game Debug" arena). This was correctly fixed for 01.11,
+            // but 01.00 CUSA00557 still reported 5056 and hit AllocateMemory
+            // assertion after 2713714688+2097152000 bytes reserved.
+            // Report retail 4608 MiB for BOTH releases, without reducing the
+            // actual backing pool or disabling any GPU correctness barriers.
+            env.put("GOW3_DMEM_REPORT_MB","4608");
+            RunLog.write(this,"TLOU retail direct memory reported=4608 MiB (pool unchanged)");
             File ready=new File(base,"device-ready.json");
             if(ready.isFile()) {
                 org.json.JSONObject profile=new org.json.JSONObject(new String(
@@ -319,8 +323,6 @@ public final class GameActivity extends Activity {
                     // Movie-plane compatibility applies only to 01.11 with resized NV12.
                     if(env.containsKey("GOW3_MOVIE_SIZE"))
                         env.put("TLOU_MOVIE_111_LAYOUT","1");
-                    env.put("GOW3_DMEM_REPORT_MB","4608");
-                    RunLog.write(this,"TLOU 01.11: retail direct memory reported=4608 MiB (pool capacity unchanged)");
                 }
             }
             RunLog.write(this,PortSettings.experimentReport(this,env));

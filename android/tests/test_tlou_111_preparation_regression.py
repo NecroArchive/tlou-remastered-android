@@ -14,7 +14,7 @@ class VersionedPreparationRegressions(unittest.TestCase):
         game=GAME.read_text(encoding="utf-8")
         settings=SETTINGS.read_text(encoding="utf-8")
         guarded=game.index('if("01.11".equals(gameVersion)){')
-        end=game.index('env.put("GOW3_DMEM_REPORT_MB","4608");',guarded)
+        end=game.index('RunLog.write(this,PortSettings.experimentReport(this,env));',guarded)
         body=game[guarded:end]
         self.assertNotIn('GOW3_PREP_WORKERS', body)
         self.assertNotIn('TLOU_PREP_NORMAL_PRIORITY', body)

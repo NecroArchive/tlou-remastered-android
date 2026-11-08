@@ -1,0 +1,38 @@
+name: TLOU shader metadata SIMD search cost and parity (no APK)
+on:
+  push:
+    branches: ['perf/tlou-cpu-shader-scan-neon-20261108']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile production signature-search helper and microbenchmark
+        run: |
+          set -euo pipefail
+          mkdir -p out/shader-scan
+          uname -m | tee out/shader-scan/arch.txt
+          g++ -std=c++20 -O3 -Wall -Wextra -Werror \
+            gow3_pc/tests/test_tlou_shader_signature_scan.cpp -o out/shader-scan/test
+          out/shader-scan/test | tee out/shader-scan/result.txt
+          out/shader-scan/test | tee out/shader-scan/repeat.txt
+      - name: Sanitized exact signature matching test
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            gow3_pc/tests/test_tlou_shader_signature_scan.cpp -o /tmp/shader-scan-sanitized
+          /tmp/shader-scan-sanitized --correctness-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shader-scan-${{ matrix.runner }}
+          path: out/shader-scan/*.txt
+          if-no-files-found: error

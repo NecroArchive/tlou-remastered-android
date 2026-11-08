@@ -4,6 +4,7 @@
 #pragma once
 
 #include "gow3_movie.h"
+#include "video_core/amdgpu/tlou_shader_signature_scan.h"
 #include "common/assert.h"
 #include "common/types.h"
 #include "shader_recompiler/params.h"
@@ -233,10 +234,18 @@ static constexpr const BinaryInfo& SearchBinaryInfo(const u32* code) {
     constexpr u32 signature_size = sizeof(BinaryInfo::signature_ref) / sizeof(u8);
     constexpr u32 search_limit = 0x4000;
     const u32* end = code + search_limit;
-    for (const u32* it = code; it < end; ++it) {
-        if (const BinaryInfo* info = std::bit_cast<const BinaryInfo*>(it); info->Valid()) {
-            return *info;
-        }
+    // Experimental SIMD search: test 4 DWORD-aligned OrbShdr candidates at
+    // a time, always verify the full seven-byte signature in ascending order.
+    // No binary-info pointer or specialization is cached: shader code can be
+    // changed by the guest, and every call must use the CURRENT bytes.
+    // The original short token path above is unchanged.
+    static constexpr u32 first_word = 0x5362724fu; // "OrbS", little endian
+    if (const auto* hit = Detail::FindShaderSignature32(
+            code, end, first_word, [](const u32* candidate) {
+                const auto* info = std::bit_cast<const BinaryInfo*>(candidate);
+                return info->Valid();
+            })) {
+        return *std::bit_cast<const BinaryInfo*>(hit);
     }
     UNREACHABLE_MSG("Shader binary info not found.");
 }

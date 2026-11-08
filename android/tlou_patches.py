@@ -131,6 +131,13 @@ PERFORMANCE_EFFECTS_111 = {
         # r15d is zero at 0xB87801; replace conditional move with the
         # original disabled-value move while preserving flags.
         (0xB8781E, "410f44c7", "4489f890"),
+        # The 01.11 runtime setter at 0x193B50 rewrites bytes
+        # [option+0x16C..0x16D] to 01,01 after an initially disabled
+        # option is loaded. Fix the stored second byte AND the getter:
+        # otherwise later config loads reactivate blur despite all render
+        # consumers being patched. Both original SELF variants match.
+        (0x193B6A, "66c7836c0100000101", "66c7836c0100000100"),
+        (0x193BB0, "8a876d010000", "31c090909090"),
     ],
     "depth_of_field": [
         (0xAEB167, "c6837101000001", "c6837101000000"),

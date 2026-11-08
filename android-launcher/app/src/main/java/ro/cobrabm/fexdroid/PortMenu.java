@@ -210,6 +210,8 @@ final class PortMenu {
             case "patches":
                 heading("PATCHES");
                 note("Patches validados para o eboot reconhecido. Reinicie para aplicar.");
+                toggle("fps_unlock","Desbloquear FPS (até 120, experimental)",false);
+                note("Eleva o vblank do runtime para 480 Hz e limita a apresentação a 120 FPS. Vídeos mantêm 60 Hz; FPS acima de 60 depende do jogo e da tela.");
                 toggle("ssao","Desativar SSAO",false);
                 toggle("motion_blur","Desativar desfoque de movimento",false);
                 toggle("depth_of_field","Desativar profundidade de campo",false);
@@ -222,6 +224,7 @@ final class PortMenu {
                 row("Restaurar patches e resolução",()->{
                     SharedPreferences.Editor e=prefs.edit().putString("resolution","original");
                     for(String key:PortSettings.EFFECTS)e.putBoolean(key,false);
+                    e.putBoolean("fps_unlock",false);
                     e.apply();actions.changed();render();
                 });
                 break;

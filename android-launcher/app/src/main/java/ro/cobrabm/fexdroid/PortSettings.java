@@ -162,7 +162,12 @@ final class PortSettings {
         env.put("GOW3_DEFERRED_READBACK","0");
         env.put("GOW3_STALE_READBACK","0");
 
-        // Only presentation controls remain user-adjustable.
+        // FPS unlock for TLOU: the default PS4 vblank at 60 Hz caps flips
+        // regardless of guest work. Fast 480 Hz guest vblank plus a bounded
+        // 120 FPS present limit enables >60 FPS without an unbounded loop.
+        // VideoOutDriver retains its 60 Hz movie-specific pacing.
+        final boolean unlocked=p.getBoolean("fps_unlock",false);
+        env.put("GOW3_VBLANK_HZ",unlocked?"0":"60");
         env.put("GOW3_VSYNC",p.getBoolean("vsync",true)?"1":"0");
         env.put("GOW3_FPS_LIMIT",fpsLimit(context));
     }
@@ -188,11 +193,13 @@ final class PortSettings {
         result.append("; geometry-sync=full");
         result.append("; async-global-protect=").append(env.containsKey("GOW3_ASYNC_READBACK")?"on":"off");
         result.append("; geometry-sync policy=2 full only");
+        result.append("; fps-unlock=").append(prefs(context).getBoolean("fps_unlock",false)?"120":"off");
         result.append("; guest-job-worker-wake=patched-sleep");
         return result.toString();
     }
 
     static String fpsLimit(Context context) {
+        if(prefs(context).getBoolean("fps_unlock",false))return "120";
         return "30".equals(prefs(context).getString("fps_limit","60"))?"30":"60";
     }
     static String summary(Context context) {

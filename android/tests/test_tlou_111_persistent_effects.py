@@ -14,7 +14,7 @@ import tlou_patches as patch
 
 EXPECTED_CONSUMERS = {
     "ssao": {0xF907},
-    "motion_blur": {0xACB868, 0xAE09C0, 0xAE0D7F, 0xAE0DD6, 0xAE0F25, 0xB8781E},
+    "motion_blur": {0xACB868, 0xAE09C0, 0xAE0D7F, 0xAE0DD6, 0xAE0F25, 0xB8781E, 0x193B6A, 0x193BB0},
     "depth_of_field": {0xA86FFE, 0xB87611, 0xB88604},
     "bloom": {0xA86F8B},
 }
@@ -70,6 +70,10 @@ class PersistentUpdate111EffectTests(unittest.TestCase):
         # The motion-blur bitpack zeroes its disabled contribution only;
         # 0xB87801 already sets r15d to zero before this consumer.
         self.assertEqual(rows[0xB8781E], ("410f44c7", "4489f890"))
+        # Persistent motion-blur: re-enable setter must write 01,00
+        # instead of 01,01, and getter must always report disabled.
+        self.assertEqual(rows[0x193B6A], ("66c7836c0100000101", "66c7836c0100000100"))
+        self.assertEqual(rows[0x193BB0], ("8a876d010000", "31c090909090"))
 
     def test_100_patches_unaffected(self):
         before = patch.PERFORMANCE_EFFECTS

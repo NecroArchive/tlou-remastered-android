@@ -13,7 +13,7 @@ class VersionedPreparationRegressions(unittest.TestCase):
     def test_update_111_preserves_global_zero_worker_default(self):
         game=GAME.read_text(encoding="utf-8")
         settings=SETTINGS.read_text(encoding="utf-8")
-        guarded=game.index('if("01.11".equals(gameVersion)){')
+        guarded=game.index('if(("01.00".equals(gameVersion)||"01.11".equals(gameVersion)) &&')
         end=game.index('RunLog.write(this,PortSettings.experimentReport(this,env));',guarded)
         body=game[guarded:end]
         self.assertNotIn('GOW3_PREP_WORKERS', body)

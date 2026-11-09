@@ -669,6 +669,7 @@ private:
     Detail::PendingPruneGate pending_prune_gate{};
     // Telemetry updated once per prune pass, not on every draw.
     u64 pending_prune_skips = 0, pending_prune_scans = 0, pending_prune_erased = 0;
+    u64 pending_index_small_prunes = 0; // number of formerly costly rebuilds avoided
     // Stage A: exact cyclic-first overlap lookup; falls back to the old scan
     // for small or unusually large pending-write lists.
     Detail::PendingWriteIndex<PendingWrite> pending_write_index{};

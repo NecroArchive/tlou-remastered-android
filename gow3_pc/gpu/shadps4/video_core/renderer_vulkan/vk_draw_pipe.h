@@ -140,6 +140,13 @@ public:
         return consumed.load(std::memory_order_acquire) >= position;
     }
 
+    /// Stage A: one acquire snapshot for several pending-write checks. Stage B
+    /// only advances consumed, so checking against a snapshot can conservatively
+    /// retain a completed write, but can never retire an unfinished one.
+    [[nodiscard]] u64 CompletedPosition() const noexcept {
+        return consumed.load(std::memory_order_acquire);
+    }
+
     [[nodiscard]] bool Idle() const noexcept {
         return consumed.load(std::memory_order_acquire) == head;
     }

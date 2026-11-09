@@ -44,6 +44,7 @@
 #include "video_core/renderer_vulkan/ring_binding_cursor.h"
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
+#include "video_core/renderer_vulkan/tlou_pending_granule_filter.h"
 #include "shader_recompiler/backend/spirv/tlou_split_compute.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_threads.h"
@@ -1645,6 +1646,27 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
 void Rasterizer::FilterPendingRange(VAddr begin, VAddr end) {
     const u64 first = begin >> PendingGranuleBits;
     const u64 last = (end - 1) >> PendingGranuleBits;
+    // Retain the old short-range path (typical guest constants): a function
+    // call/extra branches cost more than just setting a handful of bits.
+    // Eight 64-KiB granules or more: word-wise OR measurably wins on the
+    // isolated x86 CPU test, without changing the same bitmap.
+    if (last - first < 8) {
+        for (u64 granule = first; granule <= last; ++granule) {
+            const u32 bit = u32(granule % PendingFilterBits);
+            pending_filter[bit / 64] |= u64{1} << (bit % 64);
+        }
+        return;
+    }
+    // GOW3_PENDING_GRANULE_WORDS=0 restores the original path for A/B.
+    static const bool word_mark = [] {
+        const char* env = std::getenv("GOW3_PENDING_GRANULE_WORDS");
+        return !(env && env[0] == '0');
+    }();
+    if (word_mark) {
+        Detail::MarkPendingGranules<PendingFilterBits, PendingGranuleBits>(
+            pending_filter, begin, end);
+        return;
+    }
     if (last - first >= PendingFilterBits) {
         pending_filter.fill(~u64{0});
         return;
@@ -1715,22 +1737,29 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
     // Now and then drop entries whose writes the recording thread has done: the bounds shrink.
     // (Not while PostDraw notes a packet: uncommitted_indices point into the vector.)
     if ((++pending_checks & 63) == 0 && uncommitted_indices.empty()) {
+        // One acquire is enough for this pruning pass. consumed only moves
+        // forward; a concurrently completed entry may remain until a future
+        // pass, but no pending write can be retired prematurely.
+        const u64 completed = draw_pipe->CompletedPosition();
         const size_t before_erase = pending_writes.size();
         std::erase_if(pending_writes, [&](const PendingWrite& write) {
-            return draw_pipe->Reached(write.position);
+            return write.position <= completed;
         });
         // Erasing shifts vector indices. Rebuild only when at least one
         // interval was removed; a no-op pruning pass must remain cheap.
+        // No erased ranges means that neither the bounds nor the bloom filter
+        // changed. Rebuilding them on every 64th check needlessly scans every
+        // pending write on the saturated Stage A command thread.
         if (before_erase != pending_writes.size()) {
             pending_write_index.Rebuild(pending_writes);
-        }
-        pending_min = ~VAddr{0};
-        pending_max = 0;
-        pending_filter.fill(0);
-        for (const auto& write : pending_writes) {
-            pending_min = std::min(pending_min, write.begin);
-            pending_max = std::max(pending_max, write.end);
-            FilterPendingRange(write.begin, write.end);
+            pending_min = ~VAddr{0};
+            pending_max = 0;
+            pending_filter.fill(0);
+            for (const auto& write : pending_writes) {
+                pending_min = std::min(pending_min, write.begin);
+                pending_max = std::max(pending_max, write.end);
+                FilterPendingRange(write.begin, write.end);
+            }
         }
     }
     const VAddr end = address + size;
@@ -1748,13 +1777,24 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
         const char* env = std::getenv("GOW3_PENDING_WRITE_INDEX");
         return !(env && env[0] == '0');
     }();
+    // The common negative path has no exact spatial overlap at all.
+    // Acquire Stage B's completion only on the first overlapping candidate,
+    // then reuse that monotonic snapshot for the rest of this read query.
+    // Late completions can only conservatively keep a write pending.
+    u64 completed = 0;
+    bool have_completed = false;
+    const auto live = [this, &completed, &have_completed](const PendingWrite& write) {
+        if (!have_completed) {
+            completed = draw_pipe->CompletedPosition();
+            have_completed = true;
+        }
+        return write.position > completed;
+    };
     if (indexed && pending_write_index.CanQueryLive(pending_writes.size())) {
-        return pending_write_index.AnyLiveOverlap(
-            pending_writes, address, end,
-            [this](const PendingWrite& write) { return !draw_pipe->Reached(write.position); });
+        return pending_write_index.AnyLiveOverlap(pending_writes, address, end, live);
     }
     for (const auto& write : pending_writes) {
-        if (address < write.end && write.begin < end && !draw_pipe->Reached(write.position)) {
+        if (address < write.end && write.begin < end && live(write)) {
             return true;
         }
     }

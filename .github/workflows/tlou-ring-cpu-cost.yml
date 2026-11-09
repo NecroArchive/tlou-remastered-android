@@ -1,0 +1,52 @@
+name: TLOU ring CPU correctness and A/B cost (no APK)
+on:
+  push:
+    branches: ['perf/tlou-ring-pending-prune-skip-20261108']
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_pending_granule_filter.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_draw_pipe.h'
+      - 'gow3_pc/tests/test_tlou_pending_write_index.cpp'
+      - 'gow3_pc/tests/test_tlou_pending_granule_filter.cpp'
+      - '.github/workflows/tlou-ring-cpu-cost.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ring-cpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production pending-write parity and CPU cost tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/ring-cpu
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_pending_write_index.cpp -o out/ring-cpu/index
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_pending_granule_filter.cpp -o out/ring-cpu/granules
+          out/ring-cpu/index --correctness-only
+          out/ring-cpu/granules --cost-gate | tee out/ring-cpu/results.txt
+      - name: Undefined behavior validation of pending granule boundary math
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_pending_granule_filter.cpp -o out/ring-cpu/granules-sanitized
+          out/ring-cpu/granules-sanitized --correctness-only
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tlou-ring-cpu-${{ matrix.runner }}
+          path: out/ring-cpu/results.txt
+          if-no-files-found: ignore

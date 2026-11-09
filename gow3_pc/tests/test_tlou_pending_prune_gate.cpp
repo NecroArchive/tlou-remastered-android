@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstdlib>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>

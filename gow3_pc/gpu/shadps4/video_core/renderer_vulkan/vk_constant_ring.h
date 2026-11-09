@@ -81,7 +81,7 @@ public:
         std::printf("TLOU constant ring recycle (5 s): used=%.2fMiB "
                     "head=%llu tail=%llu pending-stamps=%llu "
                     "probes=%llu skipped-probes=%llu gpu-refresh=%llu "
-                    "empty-probes=%llu stamps-retired=%llu alloc-misses=%llu\\n",
+                    "empty-probes=%llu stamps-retired=%llu alloc-misses=%llu\n",
                     double(position - retired) / double(1ull << 20),
                     (unsigned long long)head, (unsigned long long)tail,
                     (unsigned long long)(head - tail),

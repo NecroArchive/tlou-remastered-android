@@ -1715,9 +1715,13 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
     // Now and then drop entries whose writes the recording thread has done: the bounds shrink.
     // (Not while PostDraw notes a packet: uncommitted_indices point into the vector.)
     if ((++pending_checks & 63) == 0 && uncommitted_indices.empty()) {
+        // One acquire is enough for this pruning pass. consumed only moves
+        // forward; a concurrently completed entry may remain until a future
+        // pass, but no pending write can be retired prematurely.
+        const u64 completed = draw_pipe->CompletedPosition();
         const size_t before_erase = pending_writes.size();
         std::erase_if(pending_writes, [&](const PendingWrite& write) {
-            return draw_pipe->Reached(write.position);
+            return write.position <= completed;
         });
         // Erasing shifts vector indices. Rebuild only when at least one
         // interval was removed; a no-op pruning pass must remain cheap.
@@ -1751,13 +1755,17 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
         const char* env = std::getenv("GOW3_PENDING_WRITE_INDEX");
         return !(env && env[0] == '0');
     }();
+    // Stage B's completion position is monotonic. Test all candidates against
+    // one acquire snapshot rather than reloading the same atomic per overlap.
+    // A write completed just after the snapshot is conservatively retained.
+    const u64 completed = draw_pipe->CompletedPosition();
     if (indexed && pending_write_index.CanQueryLive(pending_writes.size())) {
         return pending_write_index.AnyLiveOverlap(
             pending_writes, address, end,
-            [this](const PendingWrite& write) { return !draw_pipe->Reached(write.position); });
+            [completed](const PendingWrite& write) { return write.position > completed; });
     }
     for (const auto& write : pending_writes) {
-        if (address < write.end && write.begin < end && !draw_pipe->Reached(write.position)) {
+        if (address < write.end && write.begin < end && write.position > completed) {
             return true;
         }
     }

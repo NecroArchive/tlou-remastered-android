@@ -43,7 +43,7 @@ struct SharpFetch {
         // branching over four load-mask bits. If any offset, immediate bit,
         // or descriptor length differs, take the unchanged general path.
         if constexpr (num_dwords == 4) {
-            if (load_mask == 0xf && offsets[0] != UNKNOWN_LOCATION &&
+            if ((load_mask & 0xf) == 0xf && offsets[0] != UNKNOWN_LOCATION &&
                 static_cast<u32>(offsets[0]) + 3 < UNKNOWN_LOCATION &&
                 offsets[1] == offsets[0] + 1 &&
                 offsets[2] == offsets[0] + 2 &&

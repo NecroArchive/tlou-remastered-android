@@ -1019,7 +1019,7 @@ static void tlou_report_backing_copy(int path) {
     // Diagnostic is enabled by the existing TLOU stage-CPU sampler; no new UI
     // setting and no clock calls on the normal 65,535/65,536 copy operations.
     static __thread int enabled=-1;
-    static __thread uint64_t one=0,two=0,fallback=0,calls=0;
+    static __thread uint64_t two=0,fallback=0,calls=0;
     static __thread time_t last=0;
     if (enabled<0) {
         const char *env=getenv("TLOU_CPU_PHASE_SAMPLES");
@@ -1027,18 +1027,17 @@ static void tlou_report_backing_copy(int path) {
     }
     if (!enabled) return;
     ++calls;
-    if (path==1) ++one;
-    else if (path==2) ++two;
+    if (path==2) ++two;
     else ++fallback;
     if ((calls & 65535u) != 0) return;
     const time_t now=time(NULL);
     if (!last) {last=now;return;}
     if (now-last<5) return;
-    printf("TLOU backing copies (5 s): single-vma=%" PRIu64
-           " dual-vma=%" PRIu64 " sparse-fallback=%" PRIu64
-           " total=%" PRIu64 "\n",one,two,fallback,calls);
+    printf("TLOU backing slow copies (5 s): dual-vma=%" PRIu64
+           " sparse-fallback=%" PRIu64 " slow-total=%" PRIu64
+           "\n",two,fallback,calls);
     fflush(stdout);
-    one=two=fallback=calls=0;
+    two=fallback=calls=0;
     last=now;
 }
 /* Writes through the backing view; 0 when part of the range has no backing. */
@@ -1081,7 +1080,7 @@ int runtime_memory_read_backing(uintptr_t address, void *data, uint64_t size) {
 void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
     unsigned char *out=dest;
     { const void *fast=cached_backing(address,size);
-      if (fast) { memcpy(dest,fast,size); tlou_report_backing_copy(1); return; } }
+      if (fast) { memcpy(dest,fast,size); return; } }
     // A small copy spanning exactly two guest VMAs can use both generation-
     // validated backing views from Stage A's immediately preceding clamp.
     // No guest/protected pointer is read, and the original locked sparse walk

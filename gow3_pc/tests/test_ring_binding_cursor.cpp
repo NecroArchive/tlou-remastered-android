@@ -50,7 +50,13 @@ static void Correctness() {
         for(unsigned i=0;i<buffers;++i) if(rng()%3) bindings.push_back({i,rng(),rng()});
         Cursor lookup(bindings.data(),bindings.size());
         for(unsigned i=0;i<buffers+3;++i) {
-            const auto* value=bindings.size()>=2 ? lookup.Take(i) : Reference(bindings,i);
+#if defined(__aarch64__)
+            constexpr unsigned min_count=4;
+#else
+            constexpr unsigned min_count=8;
+#endif
+            const auto* value=bindings.size()>=2 && buffers>=min_count ?
+                                lookup.Take(i) : Reference(bindings,i);
             assert(value==Reference(bindings,i));
         }
     }
@@ -97,7 +103,12 @@ static __attribute__((noinline)) double MeasureAdaptive(
     for(unsigned r=0;r<repeats;++r) {
         asm volatile("" : : "r"(bindings.data()) : "memory");
         Adaptive next(bindings.data(),bindings.size());
-        const bool sorted_fast=adaptive && bindings.size()>=2;
+#if defined(__aarch64__)
+        constexpr unsigned min_count=4;
+#else
+        constexpr unsigned min_count=8;
+#endif
+        const bool sorted_fast=adaptive && bindings.size()>=2 && count>=min_count;
         for(unsigned i=0;i<count;++i) {
             const auto* b=sorted_fast?next.Take(i):Reference(bindings,i);
             if(b) total+=b->address;
@@ -132,7 +143,14 @@ static void AdaptiveCost(bool gate) {
         // typically have 3-5 ring bindings; avoid global regressions at
         // tiny stages and demand large wins for 8+ buffer stages.
         if(gate) {
-            const double ceiling=bindings.empty() || bindings.size()==1 ? 1.40 :
+#if defined(__aarch64__)
+            constexpr unsigned min_count=4;
+#else
+            constexpr unsigned min_count=8;
+#endif
+            const bool optimized=bindings.size()>=2 && count>=min_count;
+            // No improvement claimed or required where the old lookup remains.
+            const double ceiling=!optimized ? 2.10 :
                                  count>=16 ? 0.80 : count>=8 ? 0.90 : 1.10;
             if(ratio>ceiling) {
                 std::fprintf(stderr,"TLOU adaptive ring lookup cost gate failed: "

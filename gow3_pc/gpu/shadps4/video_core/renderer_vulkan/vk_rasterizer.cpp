@@ -1585,6 +1585,7 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
         write.begin = std::min(write.begin, address);
         write.end = std::max(write.end, end);
         write.position = position;
+        pending_prune_gate.Note(position);
         pending_min = std::min(pending_min, address);
         pending_max = std::max(pending_max, end);
         // If the old range already covered the new one, all its filter bits
@@ -1635,6 +1636,7 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
         uncommitted_indices.push_back(static_cast<u32>(pending_writes.size()));
     }
     pending_writes.push_back({address, end, position});
+    pending_prune_gate.Note(position);
     if (indexed) {
         pending_write_index.Set(pending_writes.size() - 1, pending_writes.back());
     }
@@ -1741,24 +1743,30 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
         // forward; a concurrently completed entry may remain until a future
         // pass, but no pending write can be retired prematurely.
         const u64 completed = draw_pipe->CompletedPosition();
-        const size_t before_erase = pending_writes.size();
-        std::erase_if(pending_writes, [&](const PendingWrite& write) {
-            return write.position <= completed;
-        });
-        // Erasing shifts vector indices. Rebuild only when at least one
-        // interval was removed; a no-op pruning pass must remain cheap.
-        // No erased ranges means that neither the bounds nor the bloom filter
-        // changed. Rebuilding them on every 64th check needlessly scans every
-        // pending write on the saturated Stage A command thread.
-        if (before_erase != pending_writes.size()) {
-            pending_write_index.Rebuild(pending_writes);
-            pending_min = ~VAddr{0};
-            pending_max = 0;
-            pending_filter.fill(0);
-            for (const auto& write : pending_writes) {
-                pending_min = std::min(pending_min, write.begin);
-                pending_max = std::max(pending_max, write.end);
-                FilterPendingRange(write.begin, write.end);
+        // A completed packet position smaller than EVERY pending write
+        // cannot retire an entry. This test avoids walking the vector at all,
+        // and preserves the exact legacy list and filter state when skipped.
+        if (!pending_prune_gate.MayRetire(completed)) {
+            ++pending_prune_skips;
+        } else {
+            ++pending_prune_scans;
+            const size_t before_erase = pending_writes.size();
+            std::erase_if(pending_writes, [&](const PendingWrite& write) {
+                return write.position <= completed;
+            });
+            // Rebuild exactly when erase shifted vector indices.
+            if (before_erase != pending_writes.size()) {
+                pending_prune_erased += before_erase - pending_writes.size();
+                pending_prune_gate.Rebuild(pending_writes);
+                pending_write_index.Rebuild(pending_writes);
+                pending_min = ~VAddr{0};
+                pending_max = 0;
+                pending_filter.fill(0);
+                for (const auto& write : pending_writes) {
+                    pending_min = std::min(pending_min, write.begin);
+                    pending_max = std::max(pending_max, write.end);
+                    FilterPendingRange(write.begin, write.end);
+                }
             }
         }
     }
@@ -2077,6 +2085,7 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         for (const u32 i : uncommitted_indices) {
             if (pending_writes[i].position == PendingUncommitted) {
                 pending_writes[i].position = end;
+                pending_prune_gate.Note(end);
             }
         }
         uncommitted_indices.clear();
@@ -2271,6 +2280,23 @@ void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
 }
 
 void Rasterizer::PrintPipeStats() {
+    // The normal Android phase logger samples CPU time; this cheap count
+    // explains whether the prune gate actually skips whole vector walks
+    // during gameplay (rather than trusting only a synthetic benchmark).
+    if (CpuPhaseSamplingEnabled() && (draw_pipe->packets & 32767) == 0) {
+        static auto last_prune_report = std::chrono::steady_clock::now();
+        if (const auto now = std::chrono::steady_clock::now();
+            now - last_prune_report >= std::chrono::seconds(5)) {
+            last_prune_report = now;
+            std::printf("TLOU ring pending prune (5 s): skipped=%llu scanned=%llu "
+                        "erased=%llu remaining=%zu\n",
+                        (unsigned long long)pending_prune_skips,
+                        (unsigned long long)pending_prune_scans,
+                        (unsigned long long)pending_prune_erased,
+                        pending_writes.size());
+            pending_prune_skips = pending_prune_scans = pending_prune_erased = 0;
+        }
+    }
     static const bool stats = std::getenv("GOW3_FRAME_STATS") != nullptr;
     if (!stats || (draw_pipe->packets & 1023) != 0) {
         return;

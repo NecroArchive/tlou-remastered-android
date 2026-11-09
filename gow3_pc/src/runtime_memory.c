@@ -8,6 +8,7 @@
  * encode 40-bit addresses, so host-default 0x7f... addresses would not fit. */
 #define _GNU_SOURCE
 #include "runtime.h"
+#include "tlou_backing_span_copy.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1012,7 +1013,33 @@ void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalid
  * GPU thread copies through the backing view for every upload and every landed readback; the
  * read-write lock there cost ~15% of the GPU thread (winpthreads, 16 Oct). */
 static const void *cached_backing(uintptr_t address, uint64_t size);
+static int try_copy_two_cached_backing(uintptr_t address, void *dest, uint64_t size);
 static void cache_region(size_t i);
+static void tlou_report_backing_copy(int path) {
+    // Diagnostic is enabled by the existing TLOU stage-CPU sampler; no new UI
+    // setting and no clock calls on the normal 65,535/65,536 copy operations.
+    static __thread int enabled=-1;
+    static __thread uint64_t two=0,fallback=0,calls=0;
+    static __thread time_t last=0;
+    if (enabled<0) {
+        const char *env=getenv("TLOU_CPU_PHASE_SAMPLES");
+        enabled=env && env[0]=='1';
+    }
+    if (!enabled) return;
+    ++calls;
+    if (path==2) ++two;
+    else ++fallback;
+    if ((calls & 65535u) != 0) return;
+    const time_t now=time(NULL);
+    if (!last) {last=now;return;}
+    if (now-last<5) return;
+    printf("TLOU backing slow copies (5 s): dual-vma=%" PRIu64
+           " sparse-fallback=%" PRIu64 " slow-total=%" PRIu64
+           "\n",two,fallback,calls);
+    fflush(stdout);
+    two=fallback=calls=0;
+    last=now;
+}
 /* Writes through the backing view; 0 when part of the range has no backing. */
 int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t size) {
     { const void *fast=cached_backing(address,size); if (fast) { memcpy((void *)fast,data,size); return 1; } }
@@ -1052,7 +1079,17 @@ int runtime_memory_read_backing(uintptr_t address, void *data, uint64_t size) {
  * CPU-written bytes only, so it never needs to wait for a readback's GPU bytes. */
 void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
     unsigned char *out=dest;
-    { const void *fast=cached_backing(address,size); if (fast) { memcpy(dest,fast,size); return; } }
+    { const void *fast=cached_backing(address,size);
+      if (fast) { memcpy(dest,fast,size); return; } }
+    // A small copy spanning exactly two guest VMAs can use both generation-
+    // validated backing views from Stage A's immediately preceding clamp.
+    // No guest/protected pointer is read, and the original locked sparse walk
+    // handles every other case (gaps, reserved, 3+ mappings, changed tables).
+    if (size && size<=16384 && try_copy_two_cached_backing(address,dest,size)) {
+        tlou_report_backing_copy(2);
+        return;
+    }
+    tlou_report_backing_copy(0);
     read_lock();
     size_t i=vma_index(address);
     if (i<vma_count && vmas[i].start<=address) cache_region(i);
@@ -1107,6 +1144,34 @@ static const void *cached_backing(uintptr_t address, uint64_t size) {
     if (!c || c->kind==KIND_RESERVED || size>c->end-address) return NULL;
     return backing_base+c->phys+(address-c->start);
 }
+static int try_copy_two_cached_backing(uintptr_t address, void *dest, uint64_t size) {
+    if (!backing_base || (runtime_disabled_optimizations & 1)) return 0;
+    // Thread-local A/B switch: don't add getenv() overhead to every small
+    // constant-ring upload.
+    static __thread int enabled=-1;
+    if (enabled<0) {
+        const char *env=getenv("TLOU_BACKING_TWO_SPAN");
+        enabled=!(env && env[0]=='0');
+    }
+    if (!enabled) return 0;
+    const CachedRegion *first=cached_region(address);
+    if (!first || first->kind==KIND_RESERVED || address>=first->end) return 0;
+    // Only the segment extending beyond the first VMA is relevant.
+    const uint64_t first_size=first->end-address;
+    if (!first_size || first_size>=size) return 0;
+    // Copy these fields BEFORE looking up the adjacent VMA in the TLS cache.
+    const TlouBackingSpan a={
+        first->start,first->end,first->generation,
+        backing_base+first->phys,1
+    };
+    const CachedRegion *second=cached_region(first->end);
+    if (!second || second->kind==KIND_RESERVED) return 0;
+    const TlouBackingSpan b={
+        second->start,second->end,second->generation,
+        backing_base+second->phys,1
+    };
+    return tlou_copy_two_backing(address,dest,size,a,b);
+}
 /* Called under the read lock after a lookup of address. */
 static void cache_region(size_t i) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
@@ -1123,6 +1188,9 @@ uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
     uint64_t length=0;
     for (size_t i=tlou_memory_walk_once ? first : vma_index(address); i<vma_count && length<size; ++i) {
         if (vmas[i].start>address+length || vmas[i].kind==KIND_RESERVED) break;
+        // Make the second mapping available to the subsequent small ring copy
+        // as well. This slow clamp path already holds the VMA read lock.
+        if (i==first+1 && size<=16385) cache_region(i);
         length=vmas[i].end-address;
     }
     read_unlock();

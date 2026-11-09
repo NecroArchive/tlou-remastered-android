@@ -5705,7 +5705,13 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         cursor_enabled && num_ring_stages ? FindRingStage(stage) : nullptr;
     // A single resource is faster with the old lookup. Use the cursor only
     // where it wins measured CPU time: two or more sorted ring descriptors.
-    const bool sorted_fast = ring_stage && ring_stage->count >= 2;
+#if defined(__aarch64__)
+    constexpr u32 MinCursorBuffers = 4; // verified on native ARM64 host
+#else
+    constexpr u32 MinCursorBuffers = 8; // 4-buffer x86-64 microcase regressed
+#endif
+    const bool sorted_fast = ring_stage && ring_stage->count >= 2 &&
+                             stage.buffers.size() >= MinCursorBuffers;
     Detail::RingBindingCursor<RingBinding> ring_cursor(
         sorted_fast ? ring_stage->bindings : nullptr, sorted_fast ? ring_stage->count : 0);
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {

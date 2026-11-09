@@ -1755,17 +1755,24 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
         const char* env = std::getenv("GOW3_PENDING_WRITE_INDEX");
         return !(env && env[0] == '0');
     }();
-    // Stage B's completion position is monotonic. Test all candidates against
-    // one acquire snapshot rather than reloading the same atomic per overlap.
-    // A write completed just after the snapshot is conservatively retained.
-    const u64 completed = draw_pipe->CompletedPosition();
+    // The common negative path has no exact spatial overlap at all.
+    // Acquire Stage B's completion only on the first overlapping candidate,
+    // then reuse that monotonic snapshot for the rest of this read query.
+    // Late completions can only conservatively keep a write pending.
+    u64 completed = 0;
+    bool have_completed = false;
+    const auto live = [this, &completed, &have_completed](const PendingWrite& write) {
+        if (!have_completed) {
+            completed = draw_pipe->CompletedPosition();
+            have_completed = true;
+        }
+        return write.position > completed;
+    };
     if (indexed && pending_write_index.CanQueryLive(pending_writes.size())) {
-        return pending_write_index.AnyLiveOverlap(
-            pending_writes, address, end,
-            [completed](const PendingWrite& write) { return write.position > completed; });
+        return pending_write_index.AnyLiveOverlap(pending_writes, address, end, live);
     }
     for (const auto& write : pending_writes) {
-        if (address < write.end && write.begin < end && write.position > completed) {
+        if (address < write.end && write.begin < end && live(write)) {
             return true;
         }
     }

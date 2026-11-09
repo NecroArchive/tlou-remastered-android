@@ -263,6 +263,74 @@ static void benchmark(void) {
         printf("%s %-23s old_ns=%.2f new_ns=%.2f saved_ns/call=%.2f reduction=%.1f%%\n",kind==2?"clamp+copy":kind?"copy":"clamp",names[w],old[4],next[4],old[4]-next[4],100*(old[4]-next[4])/old[4]);
     }
 }
+/* Real production cross-VMA copy, not a synthetic implementation.
+ * The clamp first validates/warms both adjacent mappings, exactly as
+ * CollectRingBindings does before its small guest copy.
+ */
+static void correctness_two_span(void) {
+    unsigned char expected[2048],actual[2048];
+    size_t tested=0;
+    for (size_t i=1;i+1<vma_count;++i) {
+        if(vmas[i].end!=vmas[i+1].start ||
+           vmas[i].kind==KIND_RESERVED || vmas[i+1].kind==KIND_RESERVED) continue;
+        for(unsigned n=64;n<=1024;n+=64) {
+            const uintptr_t addr=vmas[i].end-32;
+            const uint64_t size=n+32;
+            cold_cache();
+            assert(runtime_memory_clamp(addr,size)==size);
+            memset(expected,0xa5,sizeof(expected));
+            memset(actual,0xa5,sizeof(actual));
+            reference_copy(addr,expected+8,size);
+            runtime_memory_copy_backing(addr,actual+8,size);
+            assert(memcmp(expected,actual,sizeof(expected))==0);
+            ++tested;
+        }
+    }
+    assert(tested>=100);
+    printf("two-span backing parity: %zu real runtime cross-VMA copies passed\n",tested);
+}
+static __attribute__((noinline)) double run_two_span_copy(Copy fn,int including_clamp) {
+    unsigned char dest[768];
+    uint64_t sum=0;
+    const uintptr_t addr=vmas[1].end-256;
+    const uint64_t size=512;
+    cold_cache();
+    assert(runtime_memory_clamp(addr,size)==size);
+    const uint64_t begin=now_ns();
+    for(unsigned i=0;i<200000;++i) {
+        if(including_clamp) assert(runtime_memory_clamp(addr,size)==size);
+        fn(addr,dest,size);
+        sum+=dest[i&511u];
+    }
+    result_sink=sum;
+    return (double)(now_ns()-begin)/200000.0;
+}
+static void benchmark_two_span(int strict_gate) {
+    for(int with_clamp=0;with_clamp<=1;++with_clamp) {
+        double reference[9],next[9];
+        for(unsigned i=0;i<9;++i) {
+            if(i&1) {
+                next[i]=run_two_span_copy(runtime_memory_copy_backing,with_clamp);
+                reference[i]=run_two_span_copy(reference_copy,with_clamp);
+            } else {
+                reference[i]=run_two_span_copy(reference_copy,with_clamp);
+                next[i]=run_two_span_copy(runtime_memory_copy_backing,with_clamp);
+            }
+        }
+        qsort(reference,9,sizeof(double),compare_double);
+        qsort(next,9,sizeof(double),compare_double);
+        const double ratio=next[4]/reference[4];
+        printf("two-span backing %-12s baseline=%.2fns optimized=%.2fns ratio=%.3f\n",
+               with_clamp?"clamp+copy":"copy-only",
+               reference[4],next[4],ratio);
+        // Measured CPU win must include the exact production fallback,
+        // not only a mocked two-region helper. Host CPU is NOT device FPS.
+        if(strict_gate && ratio>=0.85) {
+            fprintf(stderr,"two-span CPU regression gate: %.3f ratio\n",ratio);
+            abort();
+        }
+    }
+}
 static void count_work(void) {
 #ifdef TEST_VMA_LOOKUP_COUNTS
     unsigned char out[4*16384];
@@ -285,7 +353,13 @@ static void count_work(void) {
 int main(int argc,char **argv) {
     setup(); count_work(); correctness();
     tlou_memory_walk_once=0; correctness(); tlou_memory_walk_once=1;
-    if(argc<2 || strcmp(argv[1],"--correctness-only")) {
+    // Exercise the new two-VMA path with the actual runtime-memory.c
+    // implementation and independent locked reference.
+    correctness_two_span();
+    const int two_span_gate=argc==2 && strcmp(argv[1],"--two-span-gate")==0;
+    if(two_span_gate) benchmark_two_span(1);
+    if(argc<2 || (strcmp(argv[1],"--correctness-only") && !two_span_gate)) {
+        benchmark_two_span(0);
         benchmark();
         benchmark_shader_buffer_clamp();
         benchmark_region_hint();

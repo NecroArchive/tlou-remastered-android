@@ -236,6 +236,14 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_pending_prune_gate.cpp -o "$test_dir/tlou-pending-prune"
 "$test_dir/tlou-pending-prune" --cost-gate
 
+# When ring allocations fail, querying Vulkan's timeline for EVERY attempt
+# spends CPU without freeing anything unless the GPU advances. Preserve
+# immediate probes on new published stamps / externally known GPU ticks and
+# bound an otherwise invisible GPU completion to 32 missed allocations.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_constant_ring_recycle_gate.cpp -o "$test_dir/constant-ring-recycle"
+"$test_dir/constant-ring-recycle"
+
 # A stalled 32-MiB constant ring must publish its final position after the
 # GPU submission tick changes even if no Allocate() succeeds in that tick.
 # Exercise the actual production stamp state machine, safe timeline retirement,

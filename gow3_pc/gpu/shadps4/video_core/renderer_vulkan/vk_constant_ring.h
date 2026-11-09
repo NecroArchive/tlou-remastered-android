@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/tlou_constant_ring_flush.h"
 #include "video_core/renderer_vulkan/tlou_constant_ring_stamp.h"
+#include "video_core/renderer_vulkan/tlou_constant_ring_recycle_gate.h"
 
 namespace Vulkan {
 
@@ -46,9 +47,23 @@ public:
         }
         const auto in_use = [&] { return at + size > Capacity && at + size - Capacity > retired; };
         if (in_use()) {
-            Retire();
+            // Under sustained GPU pressure, the former code called the
+            // Vulkan timeline Refresh() on EVERY failed snapshot, sometimes
+            // hundreds of thousands of times per five seconds. A ring stamp
+            // cannot retire until its published head or known GPU tick moves.
+            // Probe immediately on either change and at least once every
+            // 32 blocked allocations to discover GPU progress otherwise.
+            const auto* semaphore = scheduler.GetWorkSemaphore();
+            const u64 head = stamps_head.load(std::memory_order_acquire);
+            if (recycle_gate.ShouldProbe(head, semaphore->KnownGpuTick())) {
+                ++recycle_probes;
+                Retire();
+            } else {
+                ++recycle_skipped;
+            }
             if (in_use()) {
-                return std::nullopt;
+                ++recycle_misses;
+                return std::nullopt; // existing correct Stage-B buffer fallback
             }
         }
         position = at + size;
@@ -58,6 +73,28 @@ public:
     [[nodiscard]] u8* Data(u64 offset) noexcept {
         return buffer.mapped_data.data() + offset;
     }
+    // Stage-A-only counters; called when the existing 5-second CPU sample
+    // emits its report. No additional clock or output in the draw hot path.
+    void PrintRecycleStats() {
+        const u64 head = stamps_head.load(std::memory_order_acquire);
+        const u64 tail = stamps_tail.load(std::memory_order_relaxed);
+        std::printf("TLOU constant ring recycle (5 s): used=%.2fMiB "
+                    "head=%llu tail=%llu pending-stamps=%llu "
+                    "probes=%llu skipped-probes=%llu gpu-refresh=%llu "
+                    "empty-probes=%llu stamps-retired=%llu alloc-misses=%llu\n",
+                    double(position - retired) / double(1ull << 20),
+                    (unsigned long long)head, (unsigned long long)tail,
+                    (unsigned long long)(head - tail),
+                    (unsigned long long)recycle_probes,
+                    (unsigned long long)recycle_skipped,
+                    (unsigned long long)recycle_gpu_refreshes,
+                    (unsigned long long)recycle_empty_probes,
+                    (unsigned long long)recycle_retired_stamps,
+                    (unsigned long long)recycle_misses);
+        recycle_probes = recycle_skipped = recycle_gpu_refreshes = 0;
+        recycle_empty_probes = recycle_retired_stamps = recycle_misses = 0;
+    }
+
     /// The ring's buffer (late-constant refresh, vk_rasterizer.cpp).
     [[nodiscard]] VideoCore::Buffer& Storage() noexcept {
         return buffer;
@@ -112,13 +149,20 @@ private:
     }
 
     void Retire() {
-        auto* semaphore = scheduler.GetWorkSemaphore();
-        semaphore->Refresh();
         u64 at = stamps_tail.load(std::memory_order_relaxed);
         const u64 head = stamps_head.load(std::memory_order_acquire);
+        if (at == head) {
+            // Refreshing the GPU cannot retire an as-yet unpublished stamp.
+            ++recycle_empty_probes;
+            return;
+        }
+        auto* semaphore = scheduler.GetWorkSemaphore();
+        ++recycle_gpu_refreshes;
+        semaphore->Refresh();
         while (at < head && semaphore->IsFree(stamps[at % stamps.size()].tick)) {
             retired = stamps[at % stamps.size()].end;
             ++at;
+            ++recycle_retired_stamps;
         }
         stamps_tail.store(at, std::memory_order_release);
     }
@@ -131,6 +175,9 @@ private:
     VideoCore::Buffer buffer;
     u64 position = 0;     ///< stage A
     u64 retired = 0;      ///< stage A: the GPU is done with everything before this
+    Detail::ConstantRingRecycleGate recycle_gate{}; ///< stage A: rate-limit Vulkan tick queries
+    u64 recycle_probes = 0, recycle_skipped = 0, recycle_gpu_refreshes = 0;
+    u64 recycle_empty_probes = 0, recycle_retired_stamps = 0, recycle_misses = 0;
     Detail::ConstantRingStampProgress stamp_progress{}; ///< stage B; tracks epoch even without new copies
     std::array<StampEntry, 1024> stamps{};
     alignas(64) std::atomic<u64> stamps_head{0}; ///< stage B writes

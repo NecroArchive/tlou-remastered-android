@@ -1857,6 +1857,9 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
                             hot.ring_alloc_ns * scale, hot.backing_copy_ns * scale,
                             double(hot.copy_ns - hot.ring_alloc_ns - hot.backing_copy_ns) * scale,
                             (unsigned long long)hot.ring_alloc_misses);
+                if (constant_ring) {
+                    constant_ring->PrintRecycleStats();
+                }
             }
             const u64 calls = hot.calls;
             hot = {};

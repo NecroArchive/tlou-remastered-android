@@ -6,6 +6,7 @@
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <random>
@@ -87,7 +88,7 @@ struct Model {
         }
         if(pending)uncommitted.push_back(u32(writes.size()));
         writes.push_back({lo,hi,pos});
-        if(optimized)index.Set(writes.size()-1,writes.back());
+        if(optimized)index.Append(writes);
         min=std::min(min,lo);max=std::max(max,hi);Mark(lo,hi);
     }
     bool Equals(const Model& rhs)const {
@@ -149,6 +150,40 @@ void Verify(){
     }
     assert(reference.Equals(optimized));
     assert(optimized.hint_hits>20000);
+    // Force repeated 31 -> 32 -> 0 transitions (the real runtime prunes
+    // frequently with only a few dozen pending intervals). The bitmap
+    // must never become queryable until all 32 entries were indexed.
+    {
+        Model old_path, fast_path;
+        for (u32 round=0;round<3000;++round) {
+            for (u32 i=0;i<31;++i) {
+                const u64 at=0x70000000+u64(i)*0x20000+u64(round%5)*64;
+                old_path.Note(at,4096,false,false);
+                fast_path.Note(at,4096,false,true);
+            }
+            assert(old_path.Equals(fast_path));
+            assert(!fast_path.index.Active());
+            assert(!fast_path.index.CanQuery(fast_path.writes.size()));
+            {
+                const u64 at=0x70000000+u64(31)*0x20000+u64(round%5)*64;
+                old_path.Note(at,4096,false,false);
+                fast_path.Note(at,4096,false,true);
+            }
+            assert(old_path.Equals(fast_path));
+            assert(fast_path.index.Active());
+            assert(fast_path.index.CanQuery(fast_path.writes.size()));
+            for(u32 i=0;i<33;++i) {
+                const u64 lo=0x70000000+u64(i)*0x20000;
+                const u64 end=lo+8192;
+                assert(LegacyLive(old_path.writes,lo,end,0)==
+                       IndexedLive(fast_path,lo,end,0));
+            }
+            old_path.Retire(old_path.tick,false);
+            fast_path.Retire(fast_path.tick,true);
+            assert(old_path.Equals(fast_path));
+            assert(!fast_path.index.Active());
+        }
+    }
     assert(optimized.marks<reference.marks);
     assert(optimized.checks==reference.checks);
     // Repeated pruning before Stage B advances must not mutate the live
@@ -268,6 +303,81 @@ void BenchmarkLive(unsigned n){
     std::printf("pending live-read %u ranges, 280000 queries: old=%.3fms indexed=%.3fms ratio=%.3f (host, not FPS)\n",
                 n,before[3],after[3],after[3]/before[3]);
 }
+
+/* Compare the exact old eager 2048-slot index maintenance against the new
+ * production lazy index for 16/24/31-range retire cycles. No guessed device
+ * FPS: this benchmarks the work actually repeated by Stage A. Both variants
+ * use the same writes, address distribution, retire cadence, and vector data.
+ */
+double BenchMaintenance(bool lazy,unsigned count) {
+    constexpr unsigned Cycles=24000;
+    using Raw=VideoCore::Detail::GpuRangeCacheIndex<2048,64,16>;
+    Vulkan::Detail::PendingWriteIndex<Write> next;
+    Raw eager{};
+    std::vector<Write> writes;
+    writes.reserve(64);
+    u64 observed=0;
+    const auto start=std::chrono::steady_clock::now();
+    for(unsigned round=0;round<Cycles;++round) {
+        writes.clear();
+        // The same set grows through 16-31 writes, then roughly half the
+        // ranges retire. In normal TLOU this occurs ~30k times/5s.
+        for(unsigned i=0;i<count;++i) {
+            const u64 begin=0x40000000+u64(i)*0x20000+u64(round&15)*128;
+            writes.push_back({begin,begin+4096,u64(round+1)});
+            if(lazy) {
+                next.Append(writes);
+            } else {
+                eager.Replace(i,begin,4097);
+            }
+        }
+        const unsigned retire=count/2;
+        writes.erase(writes.begin(), writes.begin()+retire);
+        if(lazy) {
+            next.Rebuild(writes);
+        } else {
+            eager={};
+            for(unsigned i=0;i<writes.size();++i)
+                eager.Replace(i,writes[i].begin,writes[i].end-writes[i].begin+1);
+        }
+        // Prevent dead-code elimination of raw index builds without adding
+        // extra query work to every hot maintenance iteration.
+        if((round & 255u)==0 && !lazy) {
+            eager.ForCandidates(writes[0].begin,4096,
+                                [&](std::size_t i){observed+=i+1;});
+        }
+        if((round & 255u)==0 && lazy) {
+            observed+=writes.size();
+        }
+    }
+    sink=sink+observed+writes.size();
+    return std::chrono::duration<double,std::milli>(
+        std::chrono::steady_clock::now()-start).count();
+}
+void CostLazy(bool gate) {
+    for(unsigned count:{16u,24u,31u}) {
+        std::array<double,7> eager{},lazy{};
+        for(unsigned i=0;i<7;++i) {
+            if(i&1) {
+                lazy[i]=BenchMaintenance(true,count);
+                eager[i]=BenchMaintenance(false,count);
+            } else {
+                eager[i]=BenchMaintenance(false,count);
+                lazy[i]=BenchMaintenance(true,count);
+            }
+        }
+        std::sort(eager.begin(),eager.end());
+        std::sort(lazy.begin(),lazy.end());
+        const double ratio=lazy[3]/eager[3];
+        std::printf("pending-index maintenance %u small writes, 24000 retire cycles: "
+                    "eager=%.3fms lazy=%.3fms ratio=%.3f (CPU host, not FPS)\n",
+                    count,eager[3],lazy[3],ratio);
+        if(gate && ratio>=0.65) {
+            std::fprintf(stderr,"Stage-A maintenance gate failed (%u): %.3f\n",count,ratio);
+            std::abort();
+        }
+    }
+}
 double Run(const std::vector<Event>& events,bool indexed){
     Model state;
     const auto start=std::chrono::steady_clock::now();
@@ -289,6 +399,15 @@ void Cost(int reuse){
 }
 int main(int argc,char** argv){
     Verify();
-    if(argc==1){Cost(90);Cost(70);Cost(40);BenchmarkLive(512);BenchmarkLive(1024);return 0;}
-    return argc==2&&std::string_view(argv[1])=="--correctness-only"?0:2;
+    if(argc==2&&std::string_view(argv[1])=="--correctness-only") return 0;
+    if(argc==2&&std::string_view(argv[1])=="--maintenance-gate") {
+        CostLazy(true);
+        return 0;
+    }
+    if(argc==1) {
+        CostLazy(false);
+        Cost(90);Cost(70);Cost(40);BenchmarkLive(512);BenchmarkLive(1024);
+        return 0;
+    }
+    return 2;
 }

@@ -27,5 +27,4 @@ private:
     const Binding* next;
     std::size_t left;
 };
-
 } // namespace Vulkan::Detail

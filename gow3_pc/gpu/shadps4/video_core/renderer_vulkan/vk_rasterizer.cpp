@@ -1585,6 +1585,7 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
         write.begin = std::min(write.begin, address);
         write.end = std::max(write.end, end);
         write.position = position;
+        pending_prune_gate.Note(position);
         pending_min = std::min(pending_min, address);
         pending_max = std::max(pending_max, end);
         // If the old range already covered the new one, all its filter bits
@@ -1635,6 +1636,7 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
         uncommitted_indices.push_back(static_cast<u32>(pending_writes.size()));
     }
     pending_writes.push_back({address, end, position});
+    pending_prune_gate.Note(position);
     if (indexed) {
         pending_write_index.Set(pending_writes.size() - 1, pending_writes.back());
     }
@@ -1741,24 +1743,30 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
         // forward; a concurrently completed entry may remain until a future
         // pass, but no pending write can be retired prematurely.
         const u64 completed = draw_pipe->CompletedPosition();
-        const size_t before_erase = pending_writes.size();
-        std::erase_if(pending_writes, [&](const PendingWrite& write) {
-            return write.position <= completed;
-        });
-        // Erasing shifts vector indices. Rebuild only when at least one
-        // interval was removed; a no-op pruning pass must remain cheap.
-        // No erased ranges means that neither the bounds nor the bloom filter
-        // changed. Rebuilding them on every 64th check needlessly scans every
-        // pending write on the saturated Stage A command thread.
-        if (before_erase != pending_writes.size()) {
-            pending_write_index.Rebuild(pending_writes);
-            pending_min = ~VAddr{0};
-            pending_max = 0;
-            pending_filter.fill(0);
-            for (const auto& write : pending_writes) {
-                pending_min = std::min(pending_min, write.begin);
-                pending_max = std::max(pending_max, write.end);
-                FilterPendingRange(write.begin, write.end);
+        // A completed packet position smaller than EVERY pending write
+        // cannot retire an entry. This test avoids walking the vector at all,
+        // and preserves the exact legacy list and filter state when skipped.
+        if (!pending_prune_gate.MayRetire(completed)) {
+            ++pending_prune_skips;
+        } else {
+            ++pending_prune_scans;
+            const size_t before_erase = pending_writes.size();
+            std::erase_if(pending_writes, [&](const PendingWrite& write) {
+                return write.position <= completed;
+            });
+            // Rebuild exactly when erase shifted vector indices.
+            if (before_erase != pending_writes.size()) {
+                pending_prune_erased += before_erase - pending_writes.size();
+                pending_prune_gate.Rebuild(pending_writes);
+                pending_write_index.Rebuild(pending_writes);
+                pending_min = ~VAddr{0};
+                pending_max = 0;
+                pending_filter.fill(0);
+                for (const auto& write : pending_writes) {
+                    pending_min = std::min(pending_min, write.begin);
+                    pending_max = std::max(pending_max, write.end);
+                    FilterPendingRange(write.begin, write.end);
+                }
             }
         }
     }
@@ -1803,6 +1811,46 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
 
 void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDraw* prepared,
                            boost::container::static_vector<RingBinding, Shader::NUM_BUFFERS>& out) {
+    // CollectRingBindings dominates the sampled Stage-A CPU time in TLOU.
+    // Charge individual suboperations on just 1/8192 stage calls, using
+    // thread-CPU time (no GPU waits) so future logs identify the *next*
+    // actual hotspot. No clocks, locks or allocations on unsampled calls.
+    struct RingHotStats {
+        u64 calls = 0, samples = 0, binds = 0, copied = 0, writes = 0;
+        u64 sharp_ns = 0, clamp_ns = 0, dirty_ns = 0;
+        u64 pending_ns = 0, copy_ns = 0, write_ns = 0;
+        u64 last_wall_ns = 0;
+    };
+    static thread_local RingHotStats hot{};
+    const bool sample = CpuPhaseSamplingEnabled() && ((++hot.calls & 8191) == 0);
+    if (sample) {
+        ++hot.samples;
+    }
+    if (CpuPhaseSamplingEnabled() && (hot.calls & 32767) == 0) {
+        const u64 now = Detail::ThreadCpuSampleClock::WallNs();
+        if (!hot.last_wall_ns) {
+            hot.last_wall_ns = now;
+        } else if (now - hot.last_wall_ns >= 5000000000ull) {
+            if (hot.samples) {
+                const double scale = 1.0 / (1000.0 * double(hot.samples));
+                std::printf("TLOU ring breakdown (5 s): sampled-stages=%llu binds=%llu "
+                            "copies=%llu writes=%llu mean-sampled-stage-us "
+                            "sharp=%.3f clamp=%.3f gpu-dirty=%.3f pending=%.3f "
+                            "copy=%.3f note-write=%.3f\n",
+                            (unsigned long long)hot.samples,
+                            (unsigned long long)hot.binds,
+                            (unsigned long long)hot.copied,
+                            (unsigned long long)hot.writes,
+                            hot.sharp_ns * scale, hot.clamp_ns * scale,
+                            hot.dirty_ns * scale, hot.pending_ns * scale,
+                            hot.copy_ns * scale, hot.write_ns * scale);
+            }
+            const u64 calls = hot.calls;
+            hot = {};
+            hot.calls = calls;
+            hot.last_wall_ns = now;
+        }
+    }
     const PreparedStage* prepared_stage = nullptr;
     if (prepared && !Gow3Toggle::Disabled(Gow3Toggle::PreparedResources)) {
         for (u32 i = 0; i < prepared->num_stages; ++i) {
@@ -1838,6 +1886,8 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         }
     }
     const auto copy = [&](u32 index, const void* source, VAddr address, u64 size) {
+        const u64 start_ns = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
+        if (sample) ++hot.copied;
         if (ring_stats && !source) {
             ++ring_copy_count;
             ring_copy_bytes += size;
@@ -1854,6 +1904,7 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         }
         const auto offset = constant_ring->Allocate(size, alignment);
         if (!offset) {
+            if (sample) hot.copy_ns += Detail::ThreadCpuSampleClock::CpuNs() - start_ns;
             return;
         }
         u8* dst = constant_ring->Data(*offset);
@@ -1883,6 +1934,7 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
             }
         }
         out.push_back({index, static_cast<u32>(size), *offset, address});
+        if (sample) hot.copy_ns += Detail::ThreadCpuSampleClock::CpuNs() - start_ns;
     };
     for (u32 index = 0; index < stage.buffers.size(); ++index) {
         const auto& desc = stage.buffers[index];
@@ -1894,8 +1946,13 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
             }
             continue;
         }
+        const u64 sharp_ns = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
         const auto vsharp = prepared_stage ? prepared_stage->buffer_sharps[index]
                                            : desc.GetSharp(stage);
+        if (sample) {
+            hot.sharp_ns += Detail::ThreadCpuSampleClock::CpuNs() - sharp_ns;
+            ++hot.binds;
+        }
         const VAddr address = vsharp.base_address;
         if (address == 0 || vsharp.GetSize() == 0) {
             continue;
@@ -1914,17 +1971,31 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         const u64 query_size = !desc.is_written && clamp_cap
             ? std::min<u64>(raw_size, VideoCore::BufferCache::STREAM_THRESHOLD + 1)
             : raw_size;
+        const u64 clamp_ns = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
         const u64 size = memory->ClampRangeSize(address, query_size);
+        if (sample) hot.clamp_ns += Detail::ThreadCpuSampleClock::CpuNs() - clamp_ns;
         if (desc.is_written) {
+            const u64 note_ns = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
             NotePendingGpuWrite(address, size);
+            if (sample) {
+                ++hot.writes;
+                hot.write_ns += Detail::ThreadCpuSampleClock::CpuNs() - note_ns;
+            }
             continue;
         }
         // The stream path of BufferCache::ObtainBuffer, taken here: small, read-only, not
         // written by the GPU (now or by work still queued for the recording thread).
-        if (size == 0 || size > VideoCore::BufferCache::STREAM_THRESHOLD ||
-            buffer_cache.IsRegionGpuModified(address, size) || PendingWriteOverlaps(address, size)) {
+        if (size == 0 || size > VideoCore::BufferCache::STREAM_THRESHOLD) {
             continue;
         }
+        const u64 dirty_start = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
+        const bool gpu_dirty = buffer_cache.IsRegionGpuModified(address, size);
+        if (sample) hot.dirty_ns += Detail::ThreadCpuSampleClock::CpuNs() - dirty_start;
+        if (gpu_dirty) continue;
+        const u64 pending_start = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
+        const bool pending_write = PendingWriteOverlaps(address, size);
+        if (sample) hot.pending_ns += Detail::ThreadCpuSampleClock::CpuNs() - pending_start;
+        if (pending_write) continue;
         copy(index, nullptr, address, size);
     }
 }
@@ -2077,6 +2148,7 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         for (const u32 i : uncommitted_indices) {
             if (pending_writes[i].position == PendingUncommitted) {
                 pending_writes[i].position = end;
+                pending_prune_gate.Note(end);
             }
         }
         uncommitted_indices.clear();
@@ -2271,6 +2343,23 @@ void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
 }
 
 void Rasterizer::PrintPipeStats() {
+    // The normal Android phase logger samples CPU time; this cheap count
+    // explains whether the prune gate actually skips whole vector walks
+    // during gameplay (rather than trusting only a synthetic benchmark).
+    if (CpuPhaseSamplingEnabled() && (draw_pipe->packets & 32767) == 0) {
+        static auto last_prune_report = std::chrono::steady_clock::now();
+        if (const auto now = std::chrono::steady_clock::now();
+            now - last_prune_report >= std::chrono::seconds(5)) {
+            last_prune_report = now;
+            std::printf("TLOU ring pending prune (5 s): skipped=%llu scanned=%llu "
+                        "erased=%llu remaining=%zu\n",
+                        (unsigned long long)pending_prune_skips,
+                        (unsigned long long)pending_prune_scans,
+                        (unsigned long long)pending_prune_erased,
+                        pending_writes.size());
+            pending_prune_skips = pending_prune_scans = pending_prune_erased = 0;
+        }
+    }
     static const bool stats = std::getenv("GOW3_FRAME_STATS") != nullptr;
     if (!stats || (draw_pipe->packets & 1023) != 0) {
         return;

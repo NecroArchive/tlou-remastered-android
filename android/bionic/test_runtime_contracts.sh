@@ -214,6 +214,15 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_pending_granule_filter.cpp -o "$test_dir/tlou-pending-granules"
 "$test_dir/tlou-pending-granules" --cost-gate
 
+# Stage-A pending write pruning: compare every resulting range under
+# 180k interleaved merge/commit/retirement events, then require measured
+# reduction of needless vector walks on x86/ARM host CPU. Never defer a
+# per-draw constant snapshot or an uncommitted packet.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_pending_prune_gate.cpp -o "$test_dir/tlou-pending-prune"
+"$test_dir/tlou-pending-prune" --cost-gate
+
 # Flush constant-ring snapshots by packet, preserving exact byte coverage.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   -I gow3_pc/gpu/shadps4 \

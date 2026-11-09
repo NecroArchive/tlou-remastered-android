@@ -5693,16 +5693,21 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
     const u64 alignment = instance.StorageMinAlignment();
     const bool compute_stage = stage.hw_stage == Shader::HwStage::Compute;
     ClothTrace(stage.pgm_hash, ~0u, 0, 0, false, compute_stage);
+    // Precompute one packet-stage match rather than searching ring_stages
+    // again for every buffer. O(1) for a single ring binding and O(N) across
+    // the entire ordered set for two or more bindings. The fallback retains
+    // the exact former per-buffer lookup for A/B diagnosis.
     static const bool cursor_enabled = [] {
         const char* env=std::getenv("TLOU_RING_BINDING_CURSOR");
-        return env && env[0]=='1' && env[1]==0;
+        return !(env && env[0]=='0');
     }();
-    const RingStage* ring_stage = cursor_enabled ? FindRingStage(stage) : nullptr;
-    Detail::RingBindingCursor<RingBinding> ring_cursor(
+    const RingStage* ring_stage =
+        cursor_enabled && num_ring_stages ? FindRingStage(stage) : nullptr;
+    Detail::RingBindingLookup<RingBinding> ring_lookup(
         ring_stage ? ring_stage->bindings : nullptr, ring_stage ? ring_stage->count : 0);
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {
         const auto& desc = stage.buffers[buffer_index];
-        const RingBinding* ring = cursor_enabled ? ring_cursor.Take(buffer_index) :
+        const RingBinding* ring = cursor_enabled ? ring_lookup.Take(buffer_index) :
             (num_ring_stages ? FindRingBinding(stage, buffer_index) : nullptr);
         if (!desc.IsSpecial() && !desc.is_written &&
             (stage.pgm_hash == 0x1c957b01 || stage.pgm_hash == 0x809864d3)) {

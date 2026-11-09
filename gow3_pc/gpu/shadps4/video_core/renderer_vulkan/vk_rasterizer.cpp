@@ -1638,7 +1638,7 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
     pending_writes.push_back({address, end, position});
     pending_prune_gate.Note(position);
     if (indexed) {
-        pending_write_index.Set(pending_writes.size() - 1, pending_writes.back());
+        pending_write_index.Append(pending_writes);
     }
     pending_min = std::min(pending_min, address);
     pending_max = std::max(pending_max, end);
@@ -1758,6 +1758,9 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
             if (before_erase != pending_writes.size()) {
                 pending_prune_erased += before_erase - pending_writes.size();
                 pending_prune_gate.Rebuild(pending_writes);
+                if (pending_writes.size() < Detail::PendingWriteIndex<PendingWrite>::MinQuerySize) {
+                    ++pending_index_small_prunes;
+                }
                 pending_write_index.Rebuild(pending_writes);
                 pending_min = ~VAddr{0};
                 pending_max = 0;
@@ -1817,6 +1820,7 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
     // actual hotspot. No clocks, locks or allocations on unsampled calls.
     struct RingHotStats {
         u64 calls = 0, samples = 0, binds = 0, copied = 0, writes = 0;
+        u64 eligible_direct_fetches = 0, prepared_fetches = 0;
         u64 sharp_ns = 0, clamp_ns = 0, dirty_ns = 0;
         u64 pending_ns = 0, copy_ns = 0, write_ns = 0;
         u64 last_wall_ns = 0;
@@ -1834,13 +1838,16 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
             if (hot.samples) {
                 const double scale = 1.0 / (1000.0 * double(hot.samples));
                 std::printf("TLOU ring breakdown (5 s): sampled-stages=%llu binds=%llu "
-                            "copies=%llu writes=%llu mean-sampled-stage-us "
+                            "copies=%llu writes=%llu direct-sharp=%llu prepared-sharp=%llu "
+                            "mean-sampled-stage-us "
                             "sharp=%.3f clamp=%.3f gpu-dirty=%.3f pending=%.3f "
                             "copy=%.3f note-write=%.3f\n",
                             (unsigned long long)hot.samples,
                             (unsigned long long)hot.binds,
                             (unsigned long long)hot.copied,
                             (unsigned long long)hot.writes,
+                            (unsigned long long)hot.eligible_direct_fetches,
+                            (unsigned long long)hot.prepared_fetches,
                             hot.sharp_ns * scale, hot.clamp_ns * scale,
                             hot.dirty_ns * scale, hot.pending_ns * scale,
                             hot.copy_ns * scale, hot.write_ns * scale);
@@ -1952,6 +1959,19 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         if (sample) {
             hot.sharp_ns += Detail::ThreadCpuSampleClock::CpuNs() - sharp_ns;
             ++hot.binds;
+            if (prepared_stage) {
+                ++hot.prepared_fetches;
+            } else {
+                const auto& fetch = desc.sharp_fetch;
+                if ((fetch.load_mask & 0xf) == 0xf &&
+                    fetch.offsets[0] != Shader::UNKNOWN_LOCATION &&
+                    static_cast<u32>(fetch.offsets[0]) + 3 < Shader::UNKNOWN_LOCATION &&
+                    fetch.offsets[1] == fetch.offsets[0] + 1 &&
+                    fetch.offsets[2] == fetch.offsets[0] + 2 &&
+                    fetch.offsets[3] == fetch.offsets[0] + 3) {
+                    ++hot.eligible_direct_fetches;
+                }
+            }
         }
         const VAddr address = vsharp.base_address;
         if (address == 0 || vsharp.GetSize() == 0) {
@@ -2352,12 +2372,14 @@ void Rasterizer::PrintPipeStats() {
             now - last_prune_report >= std::chrono::seconds(5)) {
             last_prune_report = now;
             std::printf("TLOU ring pending prune (5 s): skipped=%llu scanned=%llu "
-                        "erased=%llu remaining=%zu\n",
+                        "erased=%llu index-small-prunes=%llu remaining=%zu\n",
                         (unsigned long long)pending_prune_skips,
                         (unsigned long long)pending_prune_scans,
                         (unsigned long long)pending_prune_erased,
+                        (unsigned long long)pending_index_small_prunes,
                         pending_writes.size());
             pending_prune_skips = pending_prune_scans = pending_prune_erased = 0;
+            pending_index_small_prunes = 0;
         }
     }
     static const bool stats = std::getenv("GOW3_FRAME_STATS") != nullptr;

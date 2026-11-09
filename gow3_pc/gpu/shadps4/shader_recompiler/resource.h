@@ -37,6 +37,21 @@ struct SharpFetch {
     template <u32 num_dwords = N>
         requires(num_dwords <= N)
     constexpr bool Fetch(const u32* flatbuf, T* out) const {
+        // Read-only SRT descriptors are commonly four contiguous guest
+        // words. A direct 16-byte copy preserves the exact per-dispatch
+        // descriptor snapshot without assembling an intermediate array or
+        // branching over four load-mask bits. If any offset, immediate bit,
+        // or descriptor length differs, take the unchanged general path.
+        if constexpr (num_dwords == 4) {
+            if ((load_mask & 0xf) == 0xf && offsets[0] != UNKNOWN_LOCATION &&
+                static_cast<u32>(offsets[0]) + 3 < UNKNOWN_LOCATION &&
+                offsets[1] == offsets[0] + 1 &&
+                offsets[2] == offsets[0] + 2 &&
+                offsets[3] == offsets[0] + 3) {
+                std::memcpy(out, flatbuf + offsets[0], 4 * sizeof(u32));
+                return true;
+            }
+        }
         u8 mask = load_mask;
         for (u32 i = 0; i < num_dwords; i++) {
             if (offsets[i] == UNKNOWN_LOCATION) {

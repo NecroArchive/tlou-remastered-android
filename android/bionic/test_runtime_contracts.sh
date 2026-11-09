@@ -204,6 +204,10 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   -I gow3_pc/gpu/shadps4 \
   gow3_pc/tests/test_tlou_pending_write_index.cpp -o "$test_dir/pending-write-index"
 "$test_dir/pending-write-index"
+# Most TLOU Stage-A retire passes leave fewer than 32 pending writes.
+# Require the real index to skip its large membership-table rebuild until
+# the first 32nd write and preserve exact overlap/cyclic-first behavior.
+"$test_dir/pending-write-index" --maintenance-gate
 
 # Measure the actual pending-write filter marking path selected for Stage A:
 # 250k randomized exact bitmask comparisons and host CPU A/B speedup on the

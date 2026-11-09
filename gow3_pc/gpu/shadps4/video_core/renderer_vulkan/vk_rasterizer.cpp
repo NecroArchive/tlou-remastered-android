@@ -45,7 +45,6 @@
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
 #include "video_core/renderer_vulkan/tlou_pending_granule_filter.h"
-#include "video_core/renderer_vulkan/tlou_dirty_packet_write.h"
 #include "shader_recompiler/backend/spirv/tlou_split_compute.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_threads.h"
@@ -1824,7 +1823,6 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         u64 eligible_direct_fetches = 0, prepared_fetches = 0;
         u64 sharp_ns = 0, clamp_ns = 0, dirty_ns = 0;
         u64 pending_ns = 0, copy_ns = 0, write_ns = 0;
-        u64 ring_alloc_ns = 0, backing_copy_ns = 0, ring_alloc_misses = 0;
         u64 last_wall_ns = 0;
     };
     static thread_local RingHotStats hot{};
@@ -1843,8 +1841,7 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
                             "copies=%llu writes=%llu direct-sharp=%llu prepared-sharp=%llu "
                             "mean-sampled-stage-us "
                             "sharp=%.3f clamp=%.3f gpu-dirty=%.3f pending=%.3f "
-                            "copy=%.3f note-write=%.3f alloc=%.3f source-copy=%.3f "
-                            "copy-other=%.3f alloc-miss=%llu\n",
+                            "copy=%.3f note-write=%.3f\n",
                             (unsigned long long)hot.samples,
                             (unsigned long long)hot.binds,
                             (unsigned long long)hot.copied,
@@ -1853,10 +1850,7 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
                             (unsigned long long)hot.prepared_fetches,
                             hot.sharp_ns * scale, hot.clamp_ns * scale,
                             hot.dirty_ns * scale, hot.pending_ns * scale,
-                            hot.copy_ns * scale, hot.write_ns * scale,
-                            hot.ring_alloc_ns * scale, hot.backing_copy_ns * scale,
-                            double(hot.copy_ns - hot.ring_alloc_ns - hot.backing_copy_ns) * scale,
-                            (unsigned long long)hot.ring_alloc_misses);
+                            hot.copy_ns * scale, hot.write_ns * scale);
             }
             const u64 calls = hot.calls;
             hot = {};
@@ -1915,28 +1909,17 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
                 ring_repeat_bytes += size;
             }
         }
-        // Only sampled copies read the CPU clock. Separate ring allocation,
-        // the actual backing memcpy, and all remaining work without ever
-        // changing which draw captures guest bytes or their original order.
-        const u64 alloc_start_ns = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
         const auto offset = constant_ring->Allocate(size, alignment);
-        const u64 alloc_end_ns = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
-        if (sample) hot.ring_alloc_ns += alloc_end_ns - alloc_start_ns;
         if (!offset) {
-            if (sample) {
-                ++hot.ring_alloc_misses;
-                hot.copy_ns += Detail::ThreadCpuSampleClock::CpuNs() - start_ns;
-            }
+            if (sample) hot.copy_ns += Detail::ThreadCpuSampleClock::CpuNs() - start_ns;
             return;
         }
         u8* dst = constant_ring->Data(*offset);
-        const u64 backing_start_ns = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
         if (source) {
             std::memcpy(dst, source, size);
         } else {
             memory->CopySparseMemory(address, dst, size);
         }
-        if (sample) hot.backing_copy_ns += Detail::ThreadCpuSampleClock::CpuNs() - backing_start_ns;
         // The batch path flushes all packet snapshots once, before the
         // draw pipe publishes the packet to the Vulkan recording thread.
         // A/B fallback preserves the original per-buffer flush behavior.
@@ -2057,20 +2040,9 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         dirty.Clear();
         pipe_synced = true;
     }
-    // Avoid the scratch list and the second register walk on the production
-    // packet path. The packet ABI and snapshot point stay byte-identical.
-    // GOW3_DIRTY_PACKET_DIRECT=0 restores the legacy encoder for A/B.
-    static const bool direct_packet = [] {
-        const char* env = std::getenv("GOW3_DIRTY_PACKET_DIRECT");
-        return !(env && env[0] == '0' && env[1] == '\0');
-    }();
     std::array<u16, AmdGpu::RegDirty::NumBlocks> blocks;
     u32 num_blocks = 0;
-    if (direct_packet) {
-        num_blocks = Detail::CountDirtyBlocks(dirty);
-    } else {
-        dirty.ForEach([&](u32 block) { blocks[num_blocks++] = static_cast<u16>(block); });
-    }
+    dirty.ForEach([&](u32 block) { blocks[num_blocks++] = static_cast<u16>(block); });
     cpu_sample.Phase(1);
     const auto stages = pipeline  ? pipeline->GetStages()
                         : pending ? PipelineCache::PendingStages(pending)
@@ -2144,19 +2116,13 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     packet.db_extent = liverpool->last_db_extent;
     packet.ring_end = constant_ring ? constant_ring->Position() : 0;
     out += sizeof(DrawPacket);
-    if (direct_packet) {
-        Detail::WriteDirtyBlocks(dirty, liverpool->regs.reg_array.data(), out, num_blocks);
-        out += AlignPacket(num_blocks * sizeof(u16)) +
-               num_blocks * AmdGpu::RegDirty::BlockWords * sizeof(u32);
-    } else {
-        std::memcpy(out, blocks.data(), num_blocks * sizeof(u16));
-        out += AlignPacket(num_blocks * sizeof(u16));
-        for (u32 i = 0; i < num_blocks; ++i) {
-            std::memcpy(out,
-                        liverpool->regs.reg_array.data() + blocks[i] * AmdGpu::RegDirty::BlockWords,
-                        AmdGpu::RegDirty::BlockWords * sizeof(u32));
-            out += AmdGpu::RegDirty::BlockWords * sizeof(u32);
-        }
+    std::memcpy(out, blocks.data(), num_blocks * sizeof(u16));
+    out += AlignPacket(num_blocks * sizeof(u16));
+    for (u32 i = 0; i < num_blocks; ++i) {
+        std::memcpy(out,
+                    liverpool->regs.reg_array.data() + blocks[i] * AmdGpu::RegDirty::BlockWords,
+                    AmdGpu::RegDirty::BlockWords * sizeof(u32));
+        out += AmdGpu::RegDirty::BlockWords * sizeof(u32);
     }
     u32 stage_index = 0;
     for (const auto* stage : stages) {

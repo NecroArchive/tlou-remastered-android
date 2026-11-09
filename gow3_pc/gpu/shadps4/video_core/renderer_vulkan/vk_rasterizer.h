@@ -21,6 +21,7 @@
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 #include "video_core/renderer_vulkan/vk_draw_pipe.h"
 #include "video_core/renderer_vulkan/tlou_pending_write_index.h"
+#include "video_core/renderer_vulkan/tlou_pending_prune_gate.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -663,6 +664,11 @@ private:
         u64 position;
     };
     std::vector<PendingWrite> pending_writes;
+    // Conservative minimum of their completion positions; prevents O(N)
+    // periodic pruning when Stage B cannot possibly have finished a write.
+    Detail::PendingPruneGate pending_prune_gate{};
+    // Telemetry updated once per prune pass, not on every draw.
+    u64 pending_prune_skips = 0, pending_prune_scans = 0, pending_prune_erased = 0;
     // Stage A: exact cyclic-first overlap lookup; falls back to the old scan
     // for small or unusually large pending-write lists.
     Detail::PendingWriteIndex<PendingWrite> pending_write_index{};

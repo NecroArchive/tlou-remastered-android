@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Measure actual Stage-B cursor against linear lookup
         run: |
-          g++ -std=c++20 -O3 -Wall -Wextra -Werror \
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror \
             gow3_pc/tests/test_ring_binding_cursor.cpp -o /tmp/cursor
           /tmp/cursor --cost-gate
       - name: ASan UBSan exact pointer parity

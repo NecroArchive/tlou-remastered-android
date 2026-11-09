@@ -1191,7 +1191,7 @@ uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
         if (vmas[i].start>address+length || vmas[i].kind==KIND_RESERVED) break;
         // Make the second mapping available to the subsequent small ring copy
         // as well. This slow clamp path already holds the VMA read lock.
-        if (i==first+1) cache_region(i);
+        if (i==first+1 && size<=16385) cache_region(i);
         length=vmas[i].end-address;
     }
     read_unlock();

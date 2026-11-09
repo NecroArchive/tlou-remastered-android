@@ -306,6 +306,14 @@ static __attribute__((noinline)) double run_two_span_copy(Copy fn,int including_
     return (double)(now_ns()-begin)/200000.0;
 }
 static void benchmark_two_span(int strict_gate) {
+    // correctness() deliberately changes VMA kinds/aliases 100,000 times.
+    // Restore the measured pair to two real, contiguous backed mappings.
+    assert(vmas[1].end==vmas[2].start);
+    write_lock();
+    vmas[1].kind=KIND_DIRECT; vmas[1].phys=PAGE;
+    vmas[2].kind=KIND_DIRECT; vmas[2].phys=2*PAGE;
+    write_unlock();
+    cold_cache();
     for(int with_clamp=0;with_clamp<=1;++with_clamp) {
         double reference[9],next[9];
         for(unsigned i=0;i<9;++i) {

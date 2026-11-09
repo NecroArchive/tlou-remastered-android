@@ -1,0 +1,37 @@
+name: TLOU lazy pending index actual CPU A/B
+on:
+  push:
+    branches: [perf/tlou-lazy-write-index-20261109]
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_pending_write_index.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
+      - 'gow3_pc/tests/test_tlou_pending_write_index.cpp'
+      - 'android/bionic/test_runtime_contracts.sh'
+      - '.github/workflows/tlou-lazy-pending-index-temp.yml'
+permissions:
+  contents: read
+jobs:
+  cpu:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare production lazy-index retirement with eager algorithm
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_pending_write_index.cpp -o /tmp/pending-index
+          /tmp/pending-index --maintenance-gate
+      - name: ASan UBSan exact range and order parity
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_pending_write_index.cpp -o /tmp/pending-index-sanitized
+          /tmp/pending-index-sanitized --correctness-only

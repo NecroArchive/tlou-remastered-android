@@ -1,0 +1,36 @@
+name: TLOU two-VMA backing copy validation
+on:
+  push:
+    branches: ['perf/tlou-backing-span-copy-20261109']
+    paths:
+      - 'gow3_pc/src/runtime_memory.c'
+      - 'gow3_pc/src/tlou_backing_span_copy.h'
+      - 'gow3_pc/tests/test_memory_walk_cost.c'
+      - '.github/workflows/tlou-two-span-benchmark-temp.yml'
+permissions:
+  contents: read
+jobs:
+  two-span:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exact production-memory A/B and guest byte parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            gow3_pc/tests/test_memory_walk_cost.c -o /tmp/tlou-memory-span
+          /tmp/tlou-memory-span --two-span-gate
+      - name: Undefined behavior and address validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            gow3_pc/tests/test_memory_walk_cost.c -o /tmp/tlou-memory-span-san
+          /tmp/tlou-memory-span-san --correctness-only

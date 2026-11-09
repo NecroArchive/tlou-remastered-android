@@ -28,21 +28,4 @@ private:
     std::size_t left;
 };
 
-// Select the cheapest lookup once for this stage packet:
-// no ring entries -> null, one -> direct equality, two+ -> sorted cursor.
-// Never cache a pointer beyond BindBuffers: Stage B owns the packet data.
-template<class Binding>
-class RingBindingLookup {
-public:
-    RingBindingLookup(const Binding* bindings, std::size_t count)
-        : single(count==1 ? bindings : nullptr),
-          cursor(count>=2 ? bindings : nullptr, count>=2 ? count : 0) {}
-    const Binding* Take(std::size_t index) {
-        if (single) return single->index==index ? single : nullptr;
-        return cursor.Take(index);
-    }
-private:
-    const Binding* single;
-    RingBindingCursor<Binding> cursor;
-};
 } // namespace Vulkan::Detail

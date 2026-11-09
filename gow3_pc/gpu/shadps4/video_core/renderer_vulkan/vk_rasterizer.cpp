@@ -44,6 +44,7 @@
 #include "video_core/renderer_vulkan/ring_binding_cursor.h"
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
+#include "video_core/renderer_vulkan/tlou_pending_granule_filter.h"
 #include "shader_recompiler/backend/spirv/tlou_split_compute.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_threads.h"
@@ -1643,6 +1644,18 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
 }
 
 void Rasterizer::FilterPendingRange(VAddr begin, VAddr end) {
+    // A/B escape hatch for the TLOU Stage-A CPU optimization. This only
+    // changes HOW the same spatial bits are set; the read predicate and each
+    // per-draw constant snapshot remain at their original positions.
+    static const bool word_mark = [] {
+        const char* env = std::getenv("GOW3_PENDING_GRANULE_WORDS");
+        return !(env && env[0] == '0');
+    }();
+    if (word_mark) {
+        Detail::MarkPendingGranules<PendingFilterBits, PendingGranuleBits>(
+            pending_filter, begin, end);
+        return;
+    }
     const u64 first = begin >> PendingGranuleBits;
     const u64 last = (end - 1) >> PendingGranuleBits;
     if (last - first >= PendingFilterBits) {

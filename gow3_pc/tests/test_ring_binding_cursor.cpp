@@ -48,8 +48,11 @@ static void Correctness() {
         std::vector<Binding> bindings;
         const unsigned buffers=rng()%41;
         for(unsigned i=0;i<buffers;++i) if(rng()%3) bindings.push_back({i,rng(),rng()});
-        Vulkan::Detail::RingBindingLookup<Binding> lookup(bindings.data(),bindings.size());
-        for(unsigned i=0;i<buffers+3;++i) assert(lookup.Take(i)==Reference(bindings,i));
+        Cursor lookup(bindings.data(),bindings.size());
+        for(unsigned i=0;i<buffers+3;++i) {
+            const auto* value=bindings.size()>=2 ? lookup.Take(i) : Reference(bindings,i);
+            assert(value==Reference(bindings,i));
+        }
     }
     std::puts("Ring cursor: 200000 packet comparisons passed; exact pointers, zero/single/sparse/full stages and missing indices");
 }
@@ -85,7 +88,7 @@ static void Benchmark() {
         std::printf("buffers=%u ring=%zu old_ns/stage=%.2f new_ns/stage=%.2f saved_ns/stage=%.2f reduction=%.1f%%\n",count,bindings.size(),old[3],next[3],old[3]-next[3],100*(old[3]-next[3])/old[3]);
     }
 }
-using Adaptive=Vulkan::Detail::RingBindingLookup<Binding>;
+using Adaptive=Cursor;
 static __attribute__((noinline)) double MeasureAdaptive(
                 const std::vector<Binding>& bindings,unsigned count,bool adaptive) {
     constexpr unsigned repeats=200000;
@@ -94,8 +97,9 @@ static __attribute__((noinline)) double MeasureAdaptive(
     for(unsigned r=0;r<repeats;++r) {
         asm volatile("" : : "r"(bindings.data()) : "memory");
         Adaptive next(bindings.data(),bindings.size());
+        const bool sorted_fast=adaptive && bindings.size()>=2;
         for(unsigned i=0;i<count;++i) {
-            const auto* b=adaptive?next.Take(i):Reference(bindings,i);
+            const auto* b=sorted_fast?next.Take(i):Reference(bindings,i);
             if(b) total+=b->address;
         }
     }

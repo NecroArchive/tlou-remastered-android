@@ -45,6 +45,7 @@
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
 #include "video_core/renderer_vulkan/tlou_pending_granule_filter.h"
+#include "video_core/renderer_vulkan/tlou_dirty_packet_write.h"
 #include "shader_recompiler/backend/spirv/tlou_split_compute.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_threads.h"
@@ -2020,9 +2021,20 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         dirty.Clear();
         pipe_synced = true;
     }
+    // Only the packet *encoding* is changed: all guest constant snapshots
+    // remain at the exact original draw/dispatch point. A/B fallback exists
+    // to compare the old scratch-list path on device if necessary.
+    static const bool compact_dirty_packet = [] {
+        const char* env = std::getenv("GOW3_DIRTY_PACKET_DIRECT");
+        return !(env && env[0] == '0');
+    }();
     std::array<u16, AmdGpu::RegDirty::NumBlocks> blocks;
     u32 num_blocks = 0;
-    dirty.ForEach([&](u32 block) { blocks[num_blocks++] = static_cast<u16>(block); });
+    if (compact_dirty_packet) {
+        num_blocks = Detail::CountDirtyBlocks(dirty);
+    } else {
+        dirty.ForEach([&](u32 block) { blocks[num_blocks++] = static_cast<u16>(block); });
+    }
     cpu_sample.Phase(1);
     const auto stages = pipeline  ? pipeline->GetStages()
                         : pending ? PipelineCache::PendingStages(pending)
@@ -2096,13 +2108,19 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     packet.db_extent = liverpool->last_db_extent;
     packet.ring_end = constant_ring ? constant_ring->Position() : 0;
     out += sizeof(DrawPacket);
-    std::memcpy(out, blocks.data(), num_blocks * sizeof(u16));
-    out += AlignPacket(num_blocks * sizeof(u16));
-    for (u32 i = 0; i < num_blocks; ++i) {
-        std::memcpy(out,
-                    liverpool->regs.reg_array.data() + blocks[i] * AmdGpu::RegDirty::BlockWords,
-                    AmdGpu::RegDirty::BlockWords * sizeof(u32));
-        out += AmdGpu::RegDirty::BlockWords * sizeof(u32);
+    if (compact_dirty_packet) {
+        Detail::WriteDirtyBlocks(dirty, liverpool->regs.reg_array.data(), out, num_blocks);
+        out += AlignPacket(num_blocks * sizeof(u16)) +
+               num_blocks * AmdGpu::RegDirty::BlockWords * sizeof(u32);
+    } else {
+        std::memcpy(out, blocks.data(), num_blocks * sizeof(u16));
+        out += AlignPacket(num_blocks * sizeof(u16));
+        for (u32 i = 0; i < num_blocks; ++i) {
+            std::memcpy(out,
+                        liverpool->regs.reg_array.data() + blocks[i] * AmdGpu::RegDirty::BlockWords,
+                        AmdGpu::RegDirty::BlockWords * sizeof(u32));
+            out += AmdGpu::RegDirty::BlockWords * sizeof(u32);
+        }
     }
     u32 stage_index = 0;
     for (const auto* stage : stages) {

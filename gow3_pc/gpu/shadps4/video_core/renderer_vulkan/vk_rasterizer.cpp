@@ -1644,9 +1644,20 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
 }
 
 void Rasterizer::FilterPendingRange(VAddr begin, VAddr end) {
-    // A/B escape hatch for the TLOU Stage-A CPU optimization. This only
-    // changes HOW the same spatial bits are set; the read predicate and each
-    // per-draw constant snapshot remain at their original positions.
+    const u64 first = begin >> PendingGranuleBits;
+    const u64 last = (end - 1) >> PendingGranuleBits;
+    // Retain the old short-range path (typical guest constants): a function
+    // call/extra branches cost more than just setting a handful of bits.
+    // Eight 64-KiB granules or more: word-wise OR measurably wins on the
+    // isolated x86 CPU test, without changing the same bitmap.
+    if (last - first < 8) {
+        for (u64 granule = first; granule <= last; ++granule) {
+            const u32 bit = u32(granule % PendingFilterBits);
+            pending_filter[bit / 64] |= u64{1} << (bit % 64);
+        }
+        return;
+    }
+    // GOW3_PENDING_GRANULE_WORDS=0 restores the original path for A/B.
     static const bool word_mark = [] {
         const char* env = std::getenv("GOW3_PENDING_GRANULE_WORDS");
         return !(env && env[0] == '0');
@@ -1656,8 +1667,6 @@ void Rasterizer::FilterPendingRange(VAddr begin, VAddr end) {
             pending_filter, begin, end);
         return;
     }
-    const u64 first = begin >> PendingGranuleBits;
-    const u64 last = (end - 1) >> PendingGranuleBits;
     if (last - first >= PendingFilterBits) {
         pending_filter.fill(~u64{0});
         return;

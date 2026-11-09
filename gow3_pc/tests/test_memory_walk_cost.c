@@ -305,6 +305,47 @@ static __attribute__((noinline)) double run_two_span_copy(Copy fn,int including_
     result_sink=sum;
     return (double)(now_ns()-begin)/200000.0;
 }
+/* The overwhelmingly common one-VMA ring copy must not regress: it
+ * already uses the original cached_backing+memcpy fast path. Compare the
+ * new optional counter overhead with the locked-reference source's same
+ * fast copy, using a properly warmed TLS VMA cache.
+ */
+static __attribute__((noinline)) double run_single_span_copy(Copy fn) {
+    unsigned char dest[768];
+    uint64_t sum=0;
+    const uintptr_t addr=vmas[1].start+256;
+    const uint64_t size=512;
+    cold_cache();
+    assert(runtime_memory_clamp(addr,size)==size);
+    const uint64_t begin=now_ns();
+    for(unsigned i=0;i<200000;++i) {
+        fn(addr,dest,size);
+        sum+=dest[i&511u];
+    }
+    result_sink=sum;
+    return (double)(now_ns()-begin)/200000.0;
+}
+static void benchmark_single_span_gate(void) {
+    double reference[9],next[9];
+    for(unsigned i=0;i<9;++i) {
+        if(i&1) {
+            next[i]=run_single_span_copy(runtime_memory_copy_backing);
+            reference[i]=run_single_span_copy(reference_copy);
+        } else {
+            reference[i]=run_single_span_copy(reference_copy);
+            next[i]=run_single_span_copy(runtime_memory_copy_backing);
+        }
+    }
+    qsort(reference,9,sizeof(double),compare_double);
+    qsort(next,9,sizeof(double),compare_double);
+    const double ratio=next[4]/reference[4];
+    printf("single-VMA ring regression gate: baseline=%.2fns current=%.2fns ratio=%.3f\n",
+           reference[4],next[4],ratio);
+    if(ratio>1.10) {
+        fprintf(stderr,"common one-VMA ring copy regressed by >10%%\\n");
+        abort();
+    }
+}
 static void benchmark_two_span(int strict_gate) {
     // correctness() deliberately changes VMA kinds/aliases 100,000 times.
     // Restore the measured pair to two real, contiguous backed mappings.
@@ -314,6 +355,7 @@ static void benchmark_two_span(int strict_gate) {
     vmas[2].kind=KIND_DIRECT; vmas[2].phys=2*PAGE;
     write_unlock();
     cold_cache();
+    if(strict_gate) benchmark_single_span_gate();
     for(int with_clamp=0;with_clamp<=1;++with_clamp) {
         double reference[9],next[9];
         for(unsigned i=0;i<9;++i) {

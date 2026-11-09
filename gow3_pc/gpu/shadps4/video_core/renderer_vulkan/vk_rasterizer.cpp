@@ -1836,7 +1836,7 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
                 std::printf("TLOU ring breakdown (5 s): sampled-stages=%llu binds=%llu "
                             "copies=%llu writes=%llu mean-sampled-stage-us "
                             "sharp=%.3f clamp=%.3f gpu-dirty=%.3f pending=%.3f "
-                            "copy=%.3f note-write=%.3f\\n",
+                            "copy=%.3f note-write=%.3f\n",
                             (unsigned long long)hot.samples,
                             (unsigned long long)hot.binds,
                             (unsigned long long)hot.copied,

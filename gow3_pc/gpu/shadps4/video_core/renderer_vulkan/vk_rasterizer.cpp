@@ -6416,7 +6416,16 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                               bool& barrier, bool on_helper) {
     // gow3 21 Oct 2026 (GOW3_CPU_TRIMS=1): a stage without images only binds its samplers (the
     // path below did the same after clearing its lists and initializing ~1 KiB of memo state).
-    if (CpuTrims() && stage.images.empty()) {
+    // The no-image case is independent of the other CPU_TRIMS experiments.
+    // A buffer-only compute shader has no T# descriptors, texture transitions,
+    // image cache entries or image barriers. Preserve the sole required work:
+    // bind its samplers (if any). Keep the full old texture path for all image-
+    // using stages and offer an exact run-time A/B rollback.
+    static const bool tlou_empty_image_fast = [] {
+        const char* env=std::getenv("TLOU_EMPTY_TEXTURE_FAST");
+        return !(env && env[0]=='0');
+    }();
+    if ((CpuTrims() || tlou_empty_image_fast) && stage.images.empty()) {
         BindSamplers(stage, prepared, binding, write_index);
         return;
     }

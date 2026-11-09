@@ -205,6 +205,15 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_pending_write_index.cpp -o "$test_dir/pending-write-index"
 "$test_dir/pending-write-index"
 
+# Measure the actual pending-write filter marking path selected for Stage A:
+# 250k randomized exact bitmask comparisons and host CPU A/B speedup on the
+# 2-MiB and 16-MiB cases. 1-KiB writes intentionally retain the old loop.
+# No Android-FPS claims are inferred from these local timings.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_pending_granule_filter.cpp -o "$test_dir/tlou-pending-granules"
+"$test_dir/tlou-pending-granules" --cost-gate
+
 # Flush constant-ring snapshots by packet, preserving exact byte coverage.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   -I gow3_pc/gpu/shadps4 \

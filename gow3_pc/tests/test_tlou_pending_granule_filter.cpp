@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstdlib>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -23,6 +24,18 @@ void LegacyMark(Filter& filter, u64 begin, u64 end) {
         const unsigned bit = static_cast<unsigned>(g % 4096);
         filter[bit / 64] |= u64{1} << (bit % 64);
     }
+}
+
+void ProductionMark(Filter& filter, u64 begin, u64 end) {
+    const u64 first = begin >> 16, last = (end - 1) >> 16;
+    if (last - first < 8) {
+        for (u64 granule = first; granule <= last; ++granule) {
+            const unsigned bit = static_cast<unsigned>(granule % 4096);
+            filter[bit / 64] |= u64{1} << (bit % 64);
+        }
+        return;
+    }
+    Vulkan::Detail::MarkPendingGranules<4096, 16>(filter, begin, end);
 }
 
 bool LegacyHit(const Filter& filter, u64 begin, u64 end) {
@@ -49,7 +62,7 @@ void Verify() {
                          i % 11 == 0 ? u64{5} * 65536 :
                                        1 + rng() % 65536;
         LegacyMark(legacy, address, address + size);
-        Vulkan::Detail::MarkPendingGranules<4096, 16>(optimized, address, address + size);
+        ProductionMark(optimized, address, address + size);
         if ((i & 127) == 0) {
             assert(legacy == optimized);
             for (unsigned j = 0; j < 16; ++j) {
@@ -78,7 +91,7 @@ double Benchmark(bool optimized, u64 size) {
     const auto start = std::chrono::steady_clock::now();
     for (u64 address : addresses) {
         if (optimized) {
-            Vulkan::Detail::MarkPendingGranules<4096, 16>(filter, address, address + size);
+            ProductionMark(filter, address, address + size);
         } else {
             LegacyMark(filter, address, address + size);
         }
@@ -88,7 +101,7 @@ double Benchmark(bool optimized, u64 size) {
         std::chrono::steady_clock::now() - start).count();
 }
 
-void Cost() {
+void Cost(bool gate) {
     for (const u64 size : {u64{1024}, u64{2} << 20, u64{16} << 20}) {
         std::array<double, 7> legacy{}, optimized{};
         for (unsigned i = 0; i < legacy.size(); ++i) {
@@ -102,15 +115,29 @@ void Cost() {
         }
         std::sort(legacy.begin(), legacy.end());
         std::sort(optimized.begin(), optimized.end());
-        std::printf("pending-granule mark size=%llu: old=%.3fms word=%.3fms ratio=%.3f (host, not FPS)\n",
-                    (unsigned long long)size, legacy[3], optimized[3],
-                    optimized[3] / legacy[3]);
+        const double ratio = optimized[3] / legacy[3];
+        std::printf("pending-granule mark size=%llu: old=%.3fms selected=%.3fms ratio=%.3f (host, not FPS)\\n",
+                    (unsigned long long)size, legacy[3], optimized[3], ratio);
+        // A/B CPU gate: large pending write marks must beat the old path.
+        // The 1 KiB path is deliberately kept identical to the legacy loop.
+        if (gate && size == (u64{2} << 20) && ratio >= 0.80) {
+            std::fprintf(stderr, "ERROR: 2 MiB mark speedup not measured\\n");
+            std::abort();
+        }
+        if (gate && size == (u64{16} << 20) && ratio >= 0.55) {
+            std::fprintf(stderr, "ERROR: 16 MiB mark speedup not measured\\n");
+            std::abort();
+        }
     }
 }
 } // namespace
 
 int main(int argc, char** argv) {
     Verify();
-    if (argc == 1) { Cost(); return 0; }
+    if (argc == 1) { Cost(false); return 0; }
+    if (argc == 2 && std::string_view(argv[1]) == "--cost-gate") {
+        Cost(true);
+        return 0;
+    }
     return argc == 2 && std::string_view(argv[1]) == "--correctness-only" ? 0 : 2;
 }

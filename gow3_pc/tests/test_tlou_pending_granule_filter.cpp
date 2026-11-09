@@ -116,16 +116,16 @@ void Cost(bool gate) {
         std::sort(legacy.begin(), legacy.end());
         std::sort(optimized.begin(), optimized.end());
         const double ratio = optimized[3] / legacy[3];
-        std::printf("pending-granule mark size=%llu: old=%.3fms selected=%.3fms ratio=%.3f (host, not FPS)\\n",
+        std::printf("pending-granule mark size=%llu: old=%.3fms selected=%.3fms ratio=%.3f (host, not FPS)\n",
                     (unsigned long long)size, legacy[3], optimized[3], ratio);
         // A/B CPU gate: large pending write marks must beat the old path.
         // The 1 KiB path is deliberately kept identical to the legacy loop.
         if (gate && size == (u64{2} << 20) && ratio >= 0.80) {
-            std::fprintf(stderr, "ERROR: 2 MiB mark speedup not measured\\n");
+            std::fprintf(stderr, "ERROR: 2 MiB mark speedup not measured\n");
             std::abort();
         }
         if (gate && size == (u64{16} << 20) && ratio >= 0.55) {
-            std::fprintf(stderr, "ERROR: 16 MiB mark speedup not measured\\n");
+            std::fprintf(stderr, "ERROR: 16 MiB mark speedup not measured\n");
             std::abort();
         }
     }

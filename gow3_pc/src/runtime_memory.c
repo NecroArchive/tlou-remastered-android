@@ -1080,36 +1080,23 @@ void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
 typedef struct { uint64_t generation; uintptr_t start, end; int kind; uint64_t phys; } CachedRegion;
 static __thread CachedRegion region_cache[8];
 static __thread unsigned region_cache_next;
-static __thread unsigned region_cache_hot;
 static const CachedRegion *cached_region(uintptr_t address) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
     if (generation & 1) return NULL;
-    /* Stage A commonly clamps a range and then copies it. The most recently
-     * USED region is often not the most recently INSERTED region: repeated
-     * shader constants hit old cache slots. Test that hot slot first, while
-     * still validating generation and bounds on every lookup. */
-    const unsigned hot=region_cache_hot&7u;
-    const CachedRegion *c=&region_cache[hot];
-    if (c->generation==generation && c->end &&
-        c->start<=address && address<c->end) return c;
+    /* GPU command Stage A clamps a guest constant range, then usually
+     * copies the same range through the backing view. On that hot path the
+     * clamp just installed the region at region_cache_next-1. Probe it
+     * first, avoiding a second linear 8-entry scan. Generation and bounds
+     * are checked exactly as in the full search; old cache entries never
+     * survive guest mapping changes. */
     if (region_cache_next) {
-        const unsigned newest=(region_cache_next-1u)&7u;
-        if (newest!=hot) {
-            c=&region_cache[newest];
-            if (c->generation==generation && c->end &&
-                c->start<=address && address<c->end) {
-                region_cache_hot=newest;
-                return c;
-            }
-        }
+        const CachedRegion *recent=&region_cache[(region_cache_next-1u)&7u];
+        if (recent->generation==generation && recent->end &&
+            recent->start<=address && address<recent->end) return recent;
     }
     for (unsigned i=0;i<8;++i) {
-        c=&region_cache[i];
-        if (c->generation==generation && c->end &&
-            c->start<=address && address<c->end) {
-            region_cache_hot=i;
-            return c;
-        }
+        const CachedRegion *c=&region_cache[i];
+        if (c->generation==generation && c->end && c->start<=address && address<c->end) return c;
     }
     return NULL;
 }
@@ -1124,9 +1111,7 @@ static const void *cached_backing(uintptr_t address, uint64_t size) {
 static void cache_region(size_t i) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
     if (i==vma_count || (generation & 1)) return;
-    const unsigned slot=region_cache_next++&7u;
-    region_cache[slot]=(CachedRegion){generation,vmas[i].start,vmas[i].end,vmas[i].kind,vmas[i].phys};
-    region_cache_hot=slot;
+    region_cache[region_cache_next++ % 8]=(CachedRegion){generation,vmas[i].start,vmas[i].end,vmas[i].kind,vmas[i].phys};
 }
 /* Mapped length from address, up to size, across adjacent mappings. */
 uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {

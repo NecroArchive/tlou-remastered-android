@@ -10,6 +10,10 @@
 #include <array>
 #include <cstdio>
 #include <atomic>
+#include <cstdlib>
+#if defined(__ANDROID__)
+#include <unistd.h>
+#endif
 
 #include "common/assert.h"
 #include "common/types.h"
@@ -18,19 +22,21 @@
 #include "video_core/renderer_vulkan/tlou_constant_ring_flush.h"
 #include "video_core/renderer_vulkan/tlou_constant_ring_stamp.h"
 #include "video_core/renderer_vulkan/tlou_constant_ring_recycle_gate.h"
+#include "video_core/renderer_vulkan/tlou_constant_ring_capacity.h"
 
 namespace Vulkan {
 
 class ConstantRing {
 public:
-    static constexpr u64 Capacity = 32ull << 20;
-
+    // Select 32/64/128 MiB by available physical RAM. For 12-GiB Android
+    // devices, 128 MiB avoids early Stage-A snapshot fallback under pressure.
     ConstantRing(const Instance& instance, Scheduler& scheduler_)
-        : scheduler{scheduler_},
-          buffer{instance, 0, Capacity, VideoCore::MemoryType::Stream, "gow3 constant ring"} {
+        : capacity{ChooseCapacity()}, scheduler{scheduler_},
+          buffer{instance, 0, capacity, VideoCore::MemoryType::Stream, "gow3 constant ring"} {
         ASSERT(!buffer.mapped_data.empty());
-        std::printf("GPU: constant ring allocation is %s (batched flush can skip "
-                    "per-copy host barriers on coherent memory)\\n",
+        std::printf("GPU: constant ring capacity=%llu MiB, allocation=%s "
+                    "(coherent flush optimization enabled when available)\n",
+                    (unsigned long long)(capacity >> 20),
                     buffer.is_coherent ? "host-coherent" : "non-coherent");
     }
 
@@ -41,11 +47,10 @@ public:
     /// Stage A: `size` bytes at `alignment`; returns the ring offset, or nullopt when the ring is
     /// still in use by the GPU (the caller leaves the binding to stage B).
     std::optional<u64> Allocate(u64 size, u64 alignment) {
-        u64 at = (position + alignment - 1) & ~(alignment - 1);
-        if (at % Capacity + size > Capacity) {
-            at += Capacity - at % Capacity; // wrap to the ring start
-        }
-        const auto in_use = [&] { return at + size > Capacity && at + size - Capacity > retired; };
+        const u64 at = Detail::ConstantRingAlignAndWrap(position, size, alignment, capacity);
+        const auto in_use = [&] {
+            return Detail::ConstantRingOverlapsInFlight(at, size, retired, capacity);
+        };
         if (in_use()) {
             // Under sustained GPU pressure, the former code called the
             // Vulkan timeline Refresh() on EVERY failed snapshot, sometimes
@@ -67,7 +72,7 @@ public:
             }
         }
         position = at + size;
-        return at % Capacity;
+        return at % capacity;
     }
 
     [[nodiscard]] u8* Data(u64 offset) noexcept {
@@ -78,10 +83,11 @@ public:
     void PrintRecycleStats() {
         const u64 head = stamps_head.load(std::memory_order_acquire);
         const u64 tail = stamps_tail.load(std::memory_order_relaxed);
-        std::printf("TLOU constant ring recycle (5 s): used=%.2fMiB "
+        std::printf("TLOU constant ring recycle (5 s): cap=%lluMiB used=%.2fMiB "
                     "head=%llu tail=%llu pending-stamps=%llu "
                     "probes=%llu skipped-probes=%llu gpu-refresh=%llu "
                     "empty-probes=%llu stamps-retired=%llu alloc-misses=%llu\n",
+                    (unsigned long long)(capacity >> 20),
                     double(position - retired) / double(1ull << 20),
                     (unsigned long long)head, (unsigned long long)tail,
                     (unsigned long long)(head - tail),
@@ -114,7 +120,7 @@ public:
         if (buffer.is_coherent || begin == position) {
             return; // coherent host writes need no Vulkan flush at all
         }
-        Detail::ForRingFlushSegments(begin, position, Capacity, [this](u64 offset, u64 size) {
+        Detail::ForRingFlushSegments(begin, position, capacity, [this](u64 offset, u64 size) {
             buffer.Flush(offset, size);
         });
     }
@@ -138,6 +144,27 @@ public:
     }
 
 private:
+    static u64 ChooseCapacity() {
+        u64 physical = 0;
+#if defined(__ANDROID__)
+        const long pages = sysconf(_SC_PHYS_PAGES);
+        const long page_size = sysconf(_SC_PAGESIZE);
+        if (pages > 0 && page_size > 0) {
+            physical = u64(pages) * u64(page_size);
+        }
+#endif
+        // Emergency A/B override; intentionally not exposed in the UI.
+        u32 forced = 0;
+        if (const char* env = std::getenv("GOW3_CONSTANT_RING_MIB")) {
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(env, &end, 10);
+            if (end != env && *end == '\0' && (parsed == 32 || parsed == 64 || parsed == 128)) {
+                forced = u32(parsed);
+            }
+        }
+        return u64(Detail::ConstantRingMiB(physical, forced)) << 20;
+    }
+
     void Publish(u64 end, u64 tick) {
         const u64 at = stamps_head.load(std::memory_order_relaxed);
         if (at - stamps_tail.load(std::memory_order_acquire) >= stamps.size()) {
@@ -171,6 +198,7 @@ private:
         u64 end;
         u64 tick;
     };
+    const u64 capacity; ///< initialized before allocating the Vulkan memory
     Scheduler& scheduler;
     VideoCore::Buffer buffer;
     u64 position = 0;     ///< stage A

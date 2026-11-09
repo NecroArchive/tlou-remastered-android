@@ -236,6 +236,15 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_pending_prune_gate.cpp -o "$test_dir/tlou-pending-prune"
 "$test_dir/tlou-pending-prune" --cost-gate
 
+# Device-RAM-tiered constant-ring capacity (32/64/128 MiB). Prove
+# that increasing space never overwrites an in-flight GPU snapshot
+# and preserves exactly the previous wrap and alignment semantics.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_constant_ring_capacity.cpp \
+  -o "$test_dir/tlou-ring-capacity"
+"$test_dir/tlou-ring-capacity"
+
 # When ring allocations fail, querying Vulkan's timeline for EVERY attempt
 # spends CPU without freeing anything unless the GPU advances. Preserve
 # immediate probes on new published stamps / externally known GPU ticks and

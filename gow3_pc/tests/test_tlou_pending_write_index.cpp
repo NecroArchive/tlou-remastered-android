@@ -47,9 +47,14 @@ struct Model {
         }
         return false;
     }
-    void Retire(u64 before) {
+    u64 skipped_rebuilds=0;
+    void Retire(u64 before,bool skip_unchanged=false) {
         const auto old_count=writes.size();
         std::erase_if(writes,[&](const Write& w){return w.position!=Uncommitted&&w.position<=before;});
+        if(old_count==writes.size()&&skip_unchanged){
+            ++skipped_rebuilds;
+            return; // production fast path: all filter/index/bounds state is unchanged
+        }
         if(old_count!=writes.size())index.Rebuild(writes);
         min=~u64{0};max=0;filter.fill(0);
         for(const auto& w:writes){min=std::min(min,w.begin);max=std::max(max,w.end);Mark(w.begin,w.end);}
@@ -121,7 +126,7 @@ void Verify(){
         }
         if(i&&i%709==0){
             const auto cut=reference.tick-24;
-            reference.Retire(cut);optimized.Retire(cut);
+            reference.Retire(cut);optimized.Retire(cut,true);
         }
         if(i%7==0)current=rng()%hot.size();
         if(!hot[current])hot[current]=(rng()%8192)*65536+0x1000000;
@@ -146,6 +151,32 @@ void Verify(){
     assert(optimized.hint_hits>20000);
     assert(optimized.marks<reference.marks);
     assert(optimized.checks==reference.checks);
+    // Repeated pruning before Stage B advances must not mutate the live
+    // ranges, even when the optimized path skips filter rebuilding.
+    Model idle_old,idle_new;
+    for(u32 i=0;i<256;++i) {
+        const u64 address=0x40000000+u64(i)*0x10000;
+        idle_old.Note(address,8192,false,false);
+        idle_new.Note(address,8192,false,true);
+    }
+    for(u32 i=0;i<2000;++i) {
+        idle_old.Retire(0);
+        idle_new.Retire(0,true);
+        assert(idle_old.Equals(idle_new));
+    }
+    assert(idle_new.skipped_rebuilds==2000);
+    // A completion snapshot can conservatively observe an older value,
+    // but must not overlook any still-live write at a newer completion.
+    for(u64 completed=0;completed<255;++completed){
+        for(u64 next=completed;next<256;next+=7) {
+            for(u32 i=0;i<8;++i) {
+                const u64 address=0x40000000+u64(i*31)*0x10000;
+                const bool fresh=LegacyLive(idle_old.writes,address,address+8192,next);
+                const bool snap=LegacyLive(idle_new.writes,address,address+8192,completed);
+                assert(!fresh||snap);
+            }
+        }
+    }
     // The original bloom filter ignores adjacent ranges separated exactly
     // at a 64 KiB boundary if it has not marked the next window. A spatial
     // index must reproduce this decision even if its own inclusive index sees
@@ -167,7 +198,7 @@ void Verify(){
     a.Note(0x10000000+65536,128,false,false);
     b.Note(0x10000000+65536,128,false,true);
     assert(a.Equals(b));
-    a.Retire(a.tick-1300);b.Retire(b.tick-1300);
+    a.Retire(a.tick-1300);b.Retire(b.tick-1300,true);
     assert(a.Equals(b)); // after vector compaction, index must be rebuilt
     for(u32 i=0;i<1000;++i){
         const u64 lo=0x10000000+u64(i%32)*0x20000;

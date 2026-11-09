@@ -1029,7 +1029,11 @@ static void tlou_report_backing_copy(int path) {
     ++calls;
     if (path==2) ++two;
     else ++fallback;
-    if ((calls & 65535u) != 0) return;
+    // A typical session may have fewer than 65,536 slow copies total,
+    // so the former 65,536-call trigger never printed any breakdown.
+    // Check the clock once per 1,024 SLOW copies only; the common fast
+    // one-VMA memcpy has no added branch or timestamp work.
+    if ((calls & 1023u) != 0) return;
     const time_t now=time(NULL);
     if (!last) {last=now;return;}
     if (now-last<5) return;

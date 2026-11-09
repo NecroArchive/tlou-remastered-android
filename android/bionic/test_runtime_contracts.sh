@@ -273,6 +273,9 @@ for test in ring_binding_cursor tlou_host_copy_batch; do
     "gow3_pc/tests/test_${test}.cpp" -o "$test_dir/$test"
   "$test_dir/$test" --correctness-only
 done
+# Stage B uses the cursor only for 2+ ring descriptors; require parity and
+# a CPU cost reduction against the original per-buffer linear lookup.
+"$test_dir/ring_binding_cursor" --cost-gate
 python3 gow3_pc/tests/extract_host_copy_chunks.py "$test_dir"
 g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
   -I "$test_dir" -I gow3_pc/gpu/shim -I gow3_pc/gpu/shadps4 \

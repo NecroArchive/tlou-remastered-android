@@ -198,6 +198,15 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_gpu_write_window_cost.cpp -o "$test_dir/gpu-window-cost"
 "$test_dir/gpu-window-cost"
 
+# Stage-A packet encoding must preserve EXACT register IDs and 32-word values
+# even across sparse/multiple 64-block dirty masks. ARM64 host microbenchmarks
+# gate a measurable 2- and 4-block common-path win before constructing the APK.
+# Never equate this encoder-local speedup with a measured Android FPS gain.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_dirty_packet_write.cpp -o "$test_dir/tlou-packet-direct"
+"$test_dir/tlou-packet-direct"
+
 # The busiest GPU command-thread path: index pending write ranges while
 # preserving the original cyclic-first candidate and fence ordering.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \

@@ -16,6 +16,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/tlou_constant_ring_flush.h"
+#include "video_core/renderer_vulkan/tlou_constant_ring_stamp.h"
 
 namespace Vulkan {
 
@@ -89,15 +90,14 @@ public:
     /// Stage B, after recording a packet whose allocations end at `end`. Stamps of one
     /// submission tick are merged: only the last end per tick is published.
     void Stamp(u64 end) {
-        if (end == pending_end) {
-            return;
-        }
-        const u64 tick = scheduler.CurrentTick();
-        if (tick != pending_tick && pending_end != last_published) {
-            Publish(pending_end, pending_tick);
-        }
-        pending_end = end;
-        pending_tick = tick;
+        // A full ring leaves end unchanged on every failed Allocate(). The
+        // previous end-only early return then suppressed tick transitions, so
+        // the final stamp was never published and the ring stayed full forever.
+        // Check BOTH position and GPU submission epoch before returning.
+        stamp_progress.Stamp(end, scheduler.CurrentTick(),
+                             [this](u64 prior_end, u64 prior_tick) {
+                                 Publish(prior_end, prior_tick);
+                             });
     }
 
 private:
@@ -108,7 +108,7 @@ private:
         }
         stamps[at % stamps.size()] = {end, tick};
         stamps_head.store(at + 1, std::memory_order_release);
-        last_published = end;
+        stamp_progress.last_published = end;
     }
 
     void Retire() {
@@ -131,7 +131,7 @@ private:
     VideoCore::Buffer buffer;
     u64 position = 0;     ///< stage A
     u64 retired = 0;      ///< stage A: the GPU is done with everything before this
-    u64 pending_end = 0, pending_tick = 0, last_published = 0; ///< stage B
+    Detail::ConstantRingStampProgress stamp_progress{}; ///< stage B; tracks epoch even without new copies
     std::array<StampEntry, 1024> stamps{};
     alignas(64) std::atomic<u64> stamps_head{0}; ///< stage B writes
     alignas(64) std::atomic<u64> stamps_tail{0}; ///< stage A reads

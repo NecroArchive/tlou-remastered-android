@@ -236,6 +236,14 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_pending_prune_gate.cpp -o "$test_dir/tlou-pending-prune"
 "$test_dir/tlou-pending-prune" --cost-gate
 
+# A stalled 32-MiB constant ring must publish its final position after the
+# GPU submission tick changes even if no Allocate() succeeds in that tick.
+# Exercise the actual production stamp state machine, safe timeline retirement,
+# complete-ring recovery and 100k randomized epoch transitions.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_constant_ring_stamp.cpp -o "$test_dir/constant-ring-stamp"
+"$test_dir/constant-ring-stamp"
+
 # Flush constant-ring snapshots by packet, preserving exact byte coverage.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   -I gow3_pc/gpu/shadps4 \

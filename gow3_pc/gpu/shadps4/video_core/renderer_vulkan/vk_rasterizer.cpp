@@ -1638,7 +1638,7 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
     pending_writes.push_back({address, end, position});
     pending_prune_gate.Note(position);
     if (indexed) {
-        pending_write_index.Set(pending_writes.size() - 1, pending_writes.back());
+        pending_write_index.Append(pending_writes);
     }
     pending_min = std::min(pending_min, address);
     pending_max = std::max(pending_max, end);

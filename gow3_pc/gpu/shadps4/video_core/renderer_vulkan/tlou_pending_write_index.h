@@ -30,6 +30,13 @@ template <class Write, std::size_t Capacity = 2048>
 class PendingWriteIndex {
     static_assert(Capacity % 64 == 0);
     VideoCore::Detail::GpuRangeCacheIndex<Capacity, 64, 16> index{};
+    // Stage-A writes are usually fewer than 32 after each 64-read retire
+    // sweep (TLOU gameplay logs: 27k-30k sweeps per 5 seconds). An indexed
+    // query is NEVER used below that size. Avoid rebuilding/clearing the
+    // 32 KiB index and avoid inserting each tiny-set write.
+    // Its stale buckets are inaccessible while inactive; the first
+    // transition to 32 entries fully rebuilds before any indexed query.
+    bool active = false;
     static std::uint64_t Span(std::uint64_t begin, std::uint64_t end) noexcept {
         if (end < begin) return 0;
         const auto delta = end - begin;
@@ -41,12 +48,12 @@ public:
     static constexpr std::size_t MaxQuerySize = Capacity;
 
     [[nodiscard]] bool CanQuery(std::size_t count) const noexcept {
-        return count >= MinQuerySize && count <= Capacity;
+        return active && count >= MinQuerySize && count <= Capacity;
     }
 
     static constexpr std::size_t MinLiveQuerySize = 128;
     [[nodiscard]] bool CanQueryLive(std::size_t count) const noexcept {
-        return count >= MinLiveQuerySize && count <= Capacity;
+        return active && count >= MinLiveQuerySize && count <= Capacity;
     }
 
     // The read-only constant ring can skip a guest snapshot only if no
@@ -70,14 +77,35 @@ public:
     }
 
     void Set(std::size_t slot, const Write& write) noexcept {
-        if (slot >= Capacity) return;
+        if (!active || slot >= Capacity) return;
         index.Replace(slot, write.begin, Span(write.begin, write.end));
     }
+
+    // Called after a new interval is appended to the SAME vector. No
+    // index-maintenance work below the 32-entry query threshold. At exactly
+    // that threshold, rebuild the entire set before queries become eligible.
+    void Append(const std::vector<Write>& writes) noexcept {
+        if (writes.empty()) return;
+        if (!active) {
+            if (writes.size() >= MinQuerySize) Rebuild(writes);
+            return;
+        }
+        Set(writes.size() - 1, writes.back());
+    }
+
+    [[nodiscard]] bool Active() const noexcept { return active; }
 
     // Required when std::erase_if shifts vector indices after Stage B completes.
     // Do not rebuild on a pruning pass that erased no elements.
     void Rebuild(const std::vector<Write>& writes) noexcept {
+        if (writes.size() < MinQuerySize) {
+            active = false;
+            // Intentionally retain stale buckets: CanQuery and Set are
+            // disabled, and crossing 32 entries always clears them first.
+            return;
+        }
         index = {};
+        active = true;
         for (std::size_t i = 0; i < std::min(writes.size(), Capacity); ++i) {
             Set(i, writes[i]);
         }

@@ -5703,11 +5703,14 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
     }();
     const RingStage* ring_stage =
         cursor_enabled && num_ring_stages ? FindRingStage(stage) : nullptr;
-    Detail::RingBindingLookup<RingBinding> ring_lookup(
-        ring_stage ? ring_stage->bindings : nullptr, ring_stage ? ring_stage->count : 0);
+    // A single resource is faster with the old lookup. Use the cursor only
+    // where it wins measured CPU time: two or more sorted ring descriptors.
+    const bool sorted_fast = ring_stage && ring_stage->count >= 2;
+    Detail::RingBindingCursor<RingBinding> ring_cursor(
+        sorted_fast ? ring_stage->bindings : nullptr, sorted_fast ? ring_stage->count : 0);
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {
         const auto& desc = stage.buffers[buffer_index];
-        const RingBinding* ring = cursor_enabled ? ring_lookup.Take(buffer_index) :
+        const RingBinding* ring = sorted_fast ? ring_cursor.Take(buffer_index) :
             (num_ring_stages ? FindRingBinding(stage, buffer_index) : nullptr);
         if (!desc.IsSpecial() && !desc.is_written &&
             (stage.pgm_hash == 0x1c957b01 || stage.pgm_hash == 0x809864d3)) {

@@ -1,0 +1,28 @@
+name: TLOU ring-stamp ARM64 x86 one-off validation
+on:
+  push:
+    branches: [fix/tlou-constant-ring-stamp-progress-20261109]
+    paths: [gow3_pc/**, .github/workflows/tlou-ring-stamp-validation.yml]
+permissions:
+  contents: read
+jobs:
+  stamp-safety:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and execute original-vs-fixed ring recovery and randomized stress
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_constant_ring_stamp.cpp -o /tmp/tlou-ring-stamp
+          /tmp/tlou-ring-stamp
+      - name: Address and undefined-behavior sanitizer verification
+        run: |
+          g++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_constant_ring_stamp.cpp -o /tmp/tlou-ring-sanitize
+          /tmp/tlou-ring-sanitize

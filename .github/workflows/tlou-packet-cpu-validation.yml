@@ -1,0 +1,21 @@
+name: TLOU packet CPU one-off validation
+on:
+  push:
+    branches: [perf/tlou-ring-copy-split-packet-direct-20261109]
+    paths: [gow3_pc/**, .github/workflows/tlou-packet-cpu-validation.yml]
+permissions:
+  contents: read
+jobs:
+  packet-cpu-parity:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and check dirty register packet parity and CPU gate
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_dirty_packet_write.cpp -o /tmp/tlou-packet
+          /tmp/tlou-packet

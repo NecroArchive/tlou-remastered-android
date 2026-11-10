@@ -216,6 +216,14 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_compute_cached_hit_gate.cpp -o "$test_dir/tlou-compute-hit"
 "$test_dir/tlou-compute-hit"
 
+# ADPF must report only a real, monotonic, completed native frame cycle.
+# Regression covers zero-frame startup, 2k unchanged frames, 3-frame
+# jumps, counter reset and 1 million simulated stage-A observations.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_adpf_frame_progress.cpp -o "$test_dir/tlou-adpf-progress"
+"$test_dir/tlou-adpf-progress"
+
 # Shader descriptor flat-view hoisting + readback-only recording-thread stats
 # are protected by a fresh-per-stage data equivalence check and 5M readback
 # decisions. Native Vulkan compilation validates the real BufferResource ABI.

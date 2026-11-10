@@ -8,6 +8,7 @@
 //
 // The API was added in Android 13 (NDK API 33). Resolve symbols at runtime so
 // older devices and unsupported HALs silently keep the original scheduler.
+#include "video_core/renderer_vulkan/tlou_adpf_frame_progress.h"
 #ifdef __ANDROID__
 #include <cstdint>
 #include <cstdio>
@@ -32,10 +33,9 @@ class TlouAdpfCommandHint {
     APerformanceHintSession* session = nullptr;
     Report report = nullptr;
     CloseSession close = nullptr;
-    uint64_t last_frame = 0;
-    int64_t last_cpu = 0;
+    TlouAdpfFrameProgress frames{};
     int64_t last_report_wall = 0;
-    uint64_t reports = 0, failures = 0;
+    uint64_t reports = 0, failures = 0, attempts = 0, oversized = 0;
     unsigned callbacks = 0;
     bool started = false;
     bool enabled = false;
@@ -74,7 +74,6 @@ class TlouAdpfCommandHint {
         if (manager && tid > 0) session = create(manager, &tid, 1, target_ns);
         std::printf("TLOU ADPF: %s tid=%d target=%lldns (native command thread)\n",
                     session ? "active" : "unsupported", int(tid), (long long)target_ns);
-        last_cpu = Nanos(CLOCK_THREAD_CPUTIME_ID);
         last_report_wall = Nanos(CLOCK_MONOTONIC);
     }
 public:
@@ -87,30 +86,44 @@ public:
     }
     void NotePostDraw(uint64_t current_frame) {
         if (!started) Start();
+        // No new syscall or CPU clock work on 511 out of 512 packet calls.
         if (!session || (++callbacks & 511u)) return;
-        if (!last_frame) {
-            last_frame = current_frame;
-            last_cpu = Nanos(CLOCK_THREAD_CPUTIME_ID);
-            return;
-        }
-        if (current_frame <= last_frame) return;
-        const int64_t cpu = Nanos(CLOCK_THREAD_CPUTIME_ID);
-        const uint64_t frames = current_frame - last_frame;
-        if (cpu > last_cpu && frames > 0) {
-            const int64_t duration = (cpu - last_cpu) / int64_t(frames);
-            if (duration > 0) {
-                const int rc = report(session, duration);
-                if (rc == 0) ++reports;
-                else ++failures;
-            }
-        }
-        last_cpu = cpu;
-        last_frame = current_frame;
+
+        // The Android NDK requires MONOTONIC durations for each completed
+        // cycle. CPU-thread clock measured active CPU usage, NOT frame work
+        // duration; use elapsed monotonic time between published frame IDs.
         const int64_t now = Nanos(CLOCK_MONOTONIC);
-        if (last_report_wall && now-last_report_wall >= 5000000000LL) {
-            std::printf("TLOU ADPF (5 s): reports=%llu errors=%llu frame-hints=yes\n",
-                        (unsigned long long)reports,(unsigned long long)failures);
-            reports = failures = 0;
+        const int64_t duration = frames.Sample(current_frame, now);
+        if (duration > 0 && duration <= 1000000000LL) {
+            ++attempts;
+            const int rc = report(session, duration);
+            if (rc == 0) ++reports;
+            else ++failures;
+        } else if (duration > 1000000000LL) {
+            // Ignore stale loading gaps, rather than telling the governor
+            // that a single gameplay frame consumed multiple seconds.
+            ++oversized;
+        }
+
+        // The old code returned before the diagnostic when current_frame
+        // failed to advance: a seemingly "active" session could send zero
+        // reports forever, with no way to distinguish it from a healthy one.
+        if (last_report_wall && now - last_report_wall >= 5000000000LL) {
+            std::printf("TLOU ADPF (5 s): attempted=%llu reports=%llu errors=%llu "
+                        "frame-advances=%llu no-frame-advance=%llu resets=%llu "
+                        "oversized=%llu last-frame=%llu target=%lldns\n",
+                        (unsigned long long)attempts,
+                        (unsigned long long)reports,
+                        (unsigned long long)failures,
+                        (unsigned long long)frames.completed_frames,
+                        (unsigned long long)frames.no_progress,
+                        (unsigned long long)frames.counter_resets,
+                        (unsigned long long)oversized,
+                        (unsigned long long)frames.last_frame,
+                        (long long)target_ns);
+            std::fflush(stdout);
+            reports = failures = attempts = oversized = 0;
+            frames.ResetDiagnostics();
             last_report_wall = now;
         }
     }

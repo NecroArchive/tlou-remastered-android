@@ -20,7 +20,7 @@ static void reference_copy(uintptr_t address, void *dest, uint64_t size) {
     unsigned char *out=dest;
     { const void *fast=cached_backing(address,size); if (fast) { memcpy(dest,fast,size); return; } }
     read_lock();
-    { size_t first=vma_index(address); if (first<vma_count && vmas[first].start<=address) cache_region(first); }
+    { size_t first=vma_index(address); if (first<vma_count && vmas[first].start<=address) cache_region(first,address); }
     for (uintptr_t at=address, end=address+size; at<end;) {
         size_t i=vma_index(at);
         uintptr_t next=end;
@@ -41,7 +41,7 @@ static uint64_t reference_clamp(uintptr_t address, uint64_t size) {
     const CachedRegion *c=(runtime_disabled_optimizations & 1) ? NULL : cached_region(address);
     if (c && c->kind!=KIND_RESERVED && size<=c->end-address) return size;
     read_lock();
-    { size_t i=vma_index(address); if (i<vma_count && vmas[i].start<=address) cache_region(i); }
+    { size_t i=vma_index(address); if (i<vma_count && vmas[i].start<=address) cache_region(i,address); }
     uint64_t length=0;
     for (size_t i=vma_index(address); i<vma_count && length<size; ++i) {
         if (vmas[i].start>address+length || vmas[i].kind==KIND_RESERVED) break;
@@ -64,14 +64,25 @@ static const CachedRegion *reference_cached_region(uintptr_t address) {
 }
 static void check_region_hint(uintptr_t address) {
     const CachedRegion *a=reference_cached_region(address),*b=cached_region(address);
-    assert((a!=NULL)==(b!=NULL));
-    if(a&&b) {
+    // The new 256-slot hot cache legitimately finds regions evicted from the
+    // original 8-entry list. Old hits must still match exactly, while extra
+    // hot hits must validate against the CURRENT VMA generation and table.
+    if(a) {
+        assert(b);
         assert(a->start==b->start && a->end==b->end && a->kind==b->kind && a->phys==b->phys);
+    }
+    if(b) {
+        assert(b->generation==__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE));
+        assert(b->start<=address && address<b->end);
+        size_t i=vma_index(address);
+        assert(i<vma_count && vmas[i].start<=address);
+        assert(b->start==vmas[i].start && b->end==vmas[i].end &&
+               b->kind==vmas[i].kind && b->phys==vmas[i].phys);
     }
 }
 static uint64_t rng=0xd48b36aa19ULL;
 static uint64_t random_value(void) { rng^=rng<<13; rng^=rng>>7; rng^=rng<<17; return rng; }
-static void cold_cache(void) { memset(region_cache,0,sizeof(region_cache)); region_cache_next=0; }
+static void cold_cache(void) { memset(region_cache,0,sizeof(region_cache)); memset(hot_region_cache,0,sizeof(hot_region_cache)); region_cache_next=0; }
 static void setup(void) {
     tlou_memory_walk_once=1;
     vma_count=vma_capacity=512;

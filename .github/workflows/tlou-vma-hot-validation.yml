@@ -20,6 +20,10 @@ jobs:
             -Wall -Wextra -Werror -I gow3_pc/src \
             gow3_pc/tests/test_tlou_region_hot_cache.c -o /tmp/tlou-vma
           /tmp/tlou-vma
+          g++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_ring_stage_lookup.cpp -o /tmp/tlou-ring-stage
+          /tmp/tlou-ring-stage
       - name: Address + UB sanitizers (exact map and remap)
         run: |
           cc -std=c11 -D_POSIX_C_SOURCE=200809L -O1 -UNDEBUG -g \
@@ -27,3 +31,8 @@ jobs:
             -fno-omit-frame-pointer -I gow3_pc/src \
             gow3_pc/tests/test_tlou_region_hot_cache.c -o /tmp/tlou-vma-san
           /tmp/tlou-vma-san
+          g++ -std=c++20 -O1 -g -UNDEBUG -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_ring_stage_lookup.cpp -o /tmp/tlou-ring-stage-san
+          /tmp/tlou-ring-stage-san

@@ -35,12 +35,42 @@
 #include <dlfcn.h>
 #ifdef __ANDROID__
 #include <sys/prctl.h>
+#include <sys/auxv.h>
 #else
 #include <execinfo.h>
 #endif
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include "crash_guest_dump.h"
+#endif
+
+#if defined(__ANDROID__) && defined(__aarch64__)
+/* The normal fault handlers are installed only after guest_cpu_init().
+ * A6xx/older SoC reports can therefore lose an early FEX SIGILL entirely.
+ * Capture just the native PC and si_code with async-signal-safe operations;
+ * FEX may replace this temporary handler during its own initialization.
+ */
+static void tlou_early_sigill(int sig, siginfo_t *info, void *context) {
+    static const char hex[] = "0123456789abcdef";
+    char line[] = "TLOU early SIGILL pc=0x0000000000000000 code=0x00000000\n";
+    const ucontext_t *uc = (const ucontext_t *)context;
+    uint64_t pc = uc ? (uint64_t)uc->uc_mcontext.pc : 0;
+    uint32_t code = info ? (uint32_t)info->si_code : 0;
+    for (int i = 0; i < 16; ++i) line[21 + i] = hex[(pc >> (60 - i * 4)) & 15];
+    for (int i = 0; i < 8; ++i) line[45 + i] = hex[(code >> (28 - i * 4)) & 15];
+    (void)write(STDERR_FILENO, line, sizeof(line) - 1);
+    _exit(128 + sig);
+}
+static void tlou_install_early_sigill(void) {
+    struct sigaction sa = {0};
+    sa.sa_sigaction = tlou_early_sigill;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGILL, &sa, NULL) != 0) {
+        static const char warning[] = "TLOU bootstrap: cannot install early SIGILL handler\n";
+        (void)write(STDERR_FILENO, warning, sizeof(warning) - 1);
+    }
+}
 #endif
 
 typedef struct { uint64_t address, size, flags; } Segment;
@@ -1010,6 +1040,15 @@ void runtime_restart(void) {
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifdef __ANDROID__
+#if defined(__aarch64__)
+    tlou_install_early_sigill();
+    Dl_info exe = {0}, cpu = {0};
+    (void)dladdr((void *)&main, &exe);
+    (void)dladdr((void *)&guest_cpu_init, &cpu);
+    fprintf(stderr, "TLOU bootstrap: main entered; exe_base=%p cpu_base=%p hwcap=0x%lx hwcap2=0x%lx\\n",
+            exe.dli_fbase, cpu.dli_fbase,
+            getauxval(AT_HWCAP), getauxval(AT_HWCAP2));
+#endif
     tlou_cpu_policy_prepare();
 #endif
 #ifndef _WIN32
@@ -1020,7 +1059,9 @@ int main(int argc, char **argv) {
     mallopt(M_MMAP_THRESHOLD,32*1024*1024);
 #endif
     /* FEX uses runtime_low_map to keep guest pointers representable in 40 bits. */
+    fputs("TLOU bootstrap: entering guest_cpu_init\\n", stderr);
     guest_cpu_init(runtime_low_map);
+    fputs("TLOU bootstrap: guest_cpu_init completed\\n", stderr);
 #endif
     if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
 #ifdef _WIN32

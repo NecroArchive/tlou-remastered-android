@@ -35,6 +35,7 @@
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "shader_recompiler/backend/spirv/tlou_split_compute.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/tlou_compute_cached_hit_gate.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 extern thread_local bool gow3_assert_throws; // shim/common/assert.cpp
@@ -1429,6 +1430,58 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
 }
 
 const ComputePipeline* PipelineCache::GetComputePipeline(bool allow_split64) {
+    // TLOU's gameplay performs ~425k compute lookups per five seconds.
+    // Reuse an *exactly matched* existing compute pipeline without repeatedly
+    // polling compiler queues. Still reconstruct the shader/specialization
+    // key for every dispatch; never cache guest user-data or ring snapshots.
+    // Maintain asynchronous builds on the first hit, at least every 64
+    // lookups, immediately when a compiler/prefetch result is pending, and
+    // on every cache miss. GOW3_COMPUTE_CACHED_HIT=0 preserves the old path.
+    static const bool cached_hit_enabled = [] {
+        const char* env = std::getenv("GOW3_COMPUTE_CACHED_HIT");
+        return !(env && env[0] == '0' && env[1] == '\0');
+    }();
+    static thread_local Detail::ComputeCachedHitServiceGate service_gate{};
+    struct ComputeLookupStats {
+        u64 calls = 0, hits = 0, misses = 0, serviced = 0;
+        std::chrono::steady_clock::time_point last_report{};
+    };
+    static thread_local ComputeLookupStats stats{};
+    if (cached_hit_enabled && (++stats.calls & 65535u) == 0u) {
+        const auto now = std::chrono::steady_clock::now();
+        if (stats.last_report == std::chrono::steady_clock::time_point{}) {
+            stats.last_report = now;
+        } else if (now - stats.last_report >= std::chrono::seconds(5)) {
+            std::printf("TLOU compute pipeline cached hit (5 s): fast=%llu "
+                        "misses=%llu full-service=%llu\n",
+                        (unsigned long long)stats.hits,
+                        (unsigned long long)stats.misses,
+                        (unsigned long long)stats.serviced);
+            stats.hits = stats.misses = stats.serviced = 0;
+            stats.last_report = now;
+        }
+    }
+    const bool pending_work =
+        !pending_programs.empty() || !pending_graphics.empty() ||
+        prefetch_inbox_size.load(std::memory_order_acquire) != 0 ||
+        precompile_ready.load(std::memory_order_acquire);
+    if (cached_hit_enabled && service_gate.TryCachedHit(pending_work)) {
+        if (RefreshComputeKey(allow_split64)) {
+            if (const auto found = compute_pipelines.find(compute_key);
+                found != compute_pipelines.end() && found->second) {
+                found->second->last_use = scheduler.CurrentTick();
+                ++stats.hits;
+                // Preserve the warmup-order maintenance cadence even on hits.
+                NoteWarmupOrder();
+                return found->second.get();
+            }
+        }
+        ++stats.misses;
+        service_gate.OnCacheMiss();
+        // A missing shader/variant must publish completed builds FIRST,
+        // then run the original key construction and synchronous fallback.
+    }
+    ++stats.serviced;
     PublishShaders();
     PublishGraphics();
     DrainPrefetch();

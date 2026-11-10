@@ -207,6 +207,15 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_dirty_packet_write.cpp -o "$test_dir/tlou-packet-direct"
 "$test_dir/tlou-packet-direct"
 
+# TLOU heavy gameplay calls GetComputePipeline 400k+ times per five seconds.
+# Keep shader variant/guest snapshot selection per dispatch; service pending
+# builds immediately and cached-hit maintenance at least every 64 lookups.
+# One million randomized lookup/worker-completion events must preserve keys.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_compute_cached_hit_gate.cpp -o "$test_dir/tlou-compute-hit"
+"$test_dir/tlou-compute-hit"
+
 # The busiest GPU command-thread path: index pending write ranges while
 # preserving the original cyclic-first candidate and fence ordering.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \

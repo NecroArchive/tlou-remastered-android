@@ -314,7 +314,7 @@ uint64_t ReadGuest(uintptr_t address) {
 extern "C" {
 void guest_cpu_init(void* (*map)(size_t size, int prot)) {
     low_map = map;
-    std::fputs("TLOU FEX bootstrap: allocator begin\\n", stderr);
+    std::fputs("TLOU FEX bootstrap: allocator begin\n", stderr);
     // FEXCore's allocator maps its first arena on first use: before the free address space
     // above 47 bits is listed and claimed, so that the arena does not land in a listed gap.
     FEXCore::Allocator::free(FEXCore::Allocator::malloc(64));
@@ -323,7 +323,7 @@ void guest_cpu_init(void* (*map)(size_t size, int prot)) {
     std::atexit(FEXCore::Allocator::ClearHooks);
     LogMan::Throw::InstallHandler(LogAssert);
     LogMan::Msg::InstallHandler(LogMessage);
-    std::fputs("TLOU FEX bootstrap: allocator ready; loading config\\n", stderr);
+    std::fputs("TLOU FEX bootstrap: allocator ready; loading config\n", stderr);
     FEX::Config::LoadConfig("bb-probe", environ);
     FEXCore::Config::ReloadMetaLayer();
     FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
@@ -342,18 +342,18 @@ void guest_cpu_init(void* (*map)(size_t size, int prot)) {
                          dynamic_l1 ? "1" : "0");
     std::printf("TLOU FEX cache: dynamic_l1=%d disk_cache=unchanged tso=unchanged\n",
                 int(dynamic_l1));
-    std::fputs("TLOU FEX bootstrap: detecting host CPU features\\n", stderr);
+    std::fputs("TLOU FEX bootstrap: detecting host CPU features\n", stderr);
     const auto features = FEX::FetchHostFeatures();
-    std::fputs("TLOU FEX bootstrap: host CPU features ready\\n", stderr);
+    std::fputs("TLOU FEX bootstrap: host CPU features ready\n", stderr);
     wide_xmm = features.SupportsAVX && features.SupportsSVE256;
     ctx = FEXCore::Context::Context::CreateNewContext(features).release();
     ctx->SetSignalDelegator(&delegator);
     ctx->SetSyscallHandler(&handler);
-    std::fputs("TLOU FEX bootstrap: initializing JIT core\\n", stderr);
+    std::fputs("TLOU FEX bootstrap: initializing JIT core\n", stderr);
     if (!ctx->InitCore()) {
         Fatal("FEXCore initialization failed");
     }
-    std::fputs("TLOU FEX bootstrap: JIT core ready\\n", stderr);
+    std::fputs("TLOU FEX bootstrap: JIT core ready\n", stderr);
     unaligned_type = FEXCore::Config::Get_HALFBARRIERTSOENABLED()() ? FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::HalfBarrier :
                                                                        FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::NonAtomic;
     uint64_t frequency;

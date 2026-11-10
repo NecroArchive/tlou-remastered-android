@@ -1453,7 +1453,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline(bool allow_split64) {
             stats.last_report = now;
         } else if (now - stats.last_report >= std::chrono::seconds(5)) {
             std::printf("TLOU compute pipeline cached hit (5 s): fast=%llu "
-                        "misses=%llu full-service=%llu\\n",
+                        "misses=%llu full-service=%llu\n",
                         (unsigned long long)stats.hits,
                         (unsigned long long)stats.misses,
                         (unsigned long long)stats.serviced);

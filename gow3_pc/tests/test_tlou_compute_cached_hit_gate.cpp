@@ -17,7 +17,7 @@ int main() {
     using Gate = ComputeCachedHitServiceGate;
     static_assert(Gate::ServiceInterval==64);
     Gate gate;
-    std::uint64_t serviced=0, fast=0, misses=0;
+    std::uint64_t serviced=0, fast=0;
     for(std::uint64_t i=0;i<1000000;++i) {
         if (gate.TryCachedHit(false)) ++fast;
         else ++serviced;

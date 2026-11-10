@@ -5789,6 +5789,11 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
     const u64 stage_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
     const u64 alignment = instance.StorageMinAlignment();
     const bool compute_stage = stage.hw_stage == Shader::HwStage::Compute;
+    // All are immutable for the duration of this one binding stage. Avoid
+    // re-reading their global/static toggles for each guest descriptor.
+    const bool capture_active = FrameCapture::Active();
+    const bool bone_trace = VideoCore::BufferCache::BoneTraceEnabled();
+    const bool traced_stage = TracedShader(stage.pgm_hash);
     // Hoist a stable per-stage user-data view only, never a V# value.
     static const bool hoist_flat = [] {
         const char* env = std::getenv("TLOU_HOIST_SHARP_FLAT");
@@ -5864,7 +5869,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
             }
         }
-        if (TracedShader(stage.pgm_hash) && !desc.IsSpecial()) {
+        if (traced_stage && !desc.IsSpecial()) {
             static std::atomic<int> traced{0};
             if (traced.fetch_add(1) < 40) {
                 VAddr address = 0;
@@ -5901,7 +5906,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         if (ring) {
             if (sample_bind) ++hot.ring_buffers;
             // Copied by the GPU command thread into the constant ring (read-only).
-            if (FrameCapture::Active() && memory->IsValidGpuMapping(ring->address, 0)) {
+            if (capture_active && memory->IsValidGpuMapping(ring->address, 0)) {
                 FrameCapture::Buffer(stage.pgm_hash, buffer_index, ring->address,
                                      reinterpret_cast<const void*>(ring->address), ring->size);
             }
@@ -5922,7 +5927,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             } else if (desc.buffer_type == Shader::BufferType::Flatbuf) {
                 auto& vk_buffer = buffer_cache.GetStreamBuffer();
                 const u32 ubo_size = stage.FlatUserData().size() * sizeof(u32);
-                if (FrameCapture::Active()) {
+                if (capture_active) {
                     FrameCapture::Buffer(stage.pgm_hash, binding.buffer, 0,
                                          stage.FlatUserData().data(), ubo_size);
                 }
@@ -5979,7 +5984,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 camera_motion->OnConstants(reinterpret_cast<const float*>(vsharp.base_address));
             }
             // Object motion research: the vertex shader buffers of G-buffer draws.
-            if (FrameCapture::Active() && gbuffer_draw && stage.sw_stage == Shader::SwStage::Vertex &&
+            if (capture_active && gbuffer_draw && stage.sw_stage == Shader::SwStage::Vertex &&
                 vsharp.base_address != 0 && memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 const auto* f = reinterpret_cast<const float*>(vsharp.base_address);
                 char note[192];
@@ -5990,7 +5995,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                               u32(vsharp.GetStride()), f[0], f[1], f[2], f[3]);
                 FrameCapture::Note(note);
             }
-            if (FrameCapture::Active() && vsharp.base_address != 0 && vsharp.GetSize() != 0 &&
+            if (capture_active && vsharp.base_address != 0 && vsharp.GetSize() != 0 &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 FrameCapture::Buffer(stage.pgm_hash, binding.buffer, vsharp.base_address,
                                      reinterpret_cast<const void*>(vsharp.base_address),
@@ -6137,12 +6142,12 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 // gow3 26 Oct 2026 diagnostics (GOW3_BONE_TRACE=1): The Last of Us's skinning
                 // (cs 45df1f62) bone bindings, checked after the GPU has run them, and the
                 // physics shader's (106beafd) writes of joint slots.
-                if (VideoCore::BufferCache::BoneTraceEnabled() && stage.pgm_hash == 0x45df1f62 &&
+                if (bone_trace && stage.pgm_hash == 0x45df1f62 &&
                     desc.is_written && size >= 64_KB && size <= 256_KB && size % 52 == 0) {
                     skin_outputs.push_back({vsharp.base_address, size, stage.pgm_hash, binding.buffer,
                                             true, buffer, offset});
                 }
-                if (VideoCore::BufferCache::BoneTraceEnabled() && size >= 1_KB && size <= 16_KB) {
+                if (bone_trace && size >= 1_KB && size <= 16_KB) {
                     if (stage.pgm_hash == 0x45df1f62 && !desc.is_written &&
                         (!VideoCore::BufferCache::BoneTraceLight() || binding.buffer == 6 ||
                          binding.buffer == 7)) {
@@ -6155,7 +6160,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
                 // The physics shader's bindings (what it reads, written ones too: the joint
                 // slots it updates in place), up to 64 KiB.
-                if (VideoCore::BufferCache::BoneTraceEnabled() &&
+                if (bone_trace &&
                     !VideoCore::BufferCache::BoneTraceLight() && stage.pgm_hash == 0x106beafd &&
                     size <= 64_KB) {
                     bone_peeks.push_back({vsharp.base_address, size, stage.pgm_hash, binding.buffer,

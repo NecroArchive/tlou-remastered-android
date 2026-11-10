@@ -42,6 +42,8 @@
 #include "video_core/renderer_vulkan/tlou_physics_readback.h"
 #include "video_core/renderer_vulkan/tlou_auto_readback.h"
 #include "video_core/renderer_vulkan/ring_binding_cursor.h"
+#include "video_core/renderer_vulkan/tlou_adpf.h"
+#include "video_core/renderer_vulkan/tlou_readback_hot_stats.h"
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
 #include "video_core/renderer_vulkan/tlou_pending_granule_filter.h"
@@ -2049,6 +2051,18 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
 void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_prepared,
                           bool is_indexed, u32 index_offset, const AmdGpu::ComputeProgram* cs,
                           const IndirectDraw* indirect, const void* pending) {
+#ifdef __ANDROID__
+    // NDK Performance Hint session belongs to the actual native GPU command
+    // thread in the Bionic child process, NOT to the Java launcher.
+    static const bool adpf_enabled = [] {
+        const char* flag = std::getenv("GOW3_ADPF");
+        return flag && flag[0] == '1' && flag[1] == '\0';
+    }();
+    if (adpf_enabled) {
+        static thread_local Detail::TlouAdpfCommandHint adpf;
+        adpf.NotePostDraw(Gow3Stats::gpu_frames.load(std::memory_order_relaxed));
+    }
+#endif
     // This is the saturated command thread's most expensive sampled phase:
     // 4-5us per dispatched compute packet in TLOU gameplay. Attribute the
     // cost to register delta, constant-ring capture, packet encoding and
@@ -6193,18 +6207,19 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                             compute_stage, desc.is_written, exact_result,
                             vsharp.stride, vsharp.num_records, size, queued);
                     if (compute_stage && desc.is_written) {
-                        static std::atomic<u32> accepted{0};
-                        static std::atomic<s64> last_report{0};
-                        static std::atomic<u32> report_probes{0};
-                        if (automatic_result) accepted.fetch_add(1, std::memory_order_relaxed);
-                        if ((report_probes.fetch_add(1, std::memory_order_relaxed) & 511u) == 0u) {
+                        // These counters are diagnostic, not GPU synchronization.
+                        // They run exclusively on this recording thread. Remove
+                        // global atomic RMWs from every written buffer binding.
+                        static thread_local Detail::TlouReadbackHotStats stats{};
+                        static thread_local s64 last_report = 0;
+                        if (stats.Note(automatic_result)) {
                             const s64 now = std::chrono::duration_cast<std::chrono::seconds>(
                                 std::chrono::steady_clock::now().time_since_epoch()).count();
-                            if (s64 last = last_report.load(std::memory_order_relaxed);
-                                now - last >= 5 && last_report.compare_exchange_strong(last, now)) {
-                                std::printf("TLOU automatic small compute readbacks (5 s): %u "
+                            if (now - last_report >= 5) {
+                                last_report = now;
+                                std::printf("TLOU automatic small compute readbacks (5 s): %llu "
                                             "accepted; mode=full\n",
-                                            accepted.exchange(0, std::memory_order_relaxed));
+                                            (unsigned long long)stats.TakeAccepted());
                                 std::fflush(stdout);
                             }
                         }

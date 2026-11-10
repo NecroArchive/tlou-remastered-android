@@ -1014,7 +1014,7 @@ void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalid
  * read-write lock there cost ~15% of the GPU thread (winpthreads, 16 Oct). */
 static const void *cached_backing(uintptr_t address, uint64_t size);
 static int try_copy_two_cached_backing(uintptr_t address, void *dest, uint64_t size);
-static void cache_region(size_t i);
+static void cache_region(size_t i, uintptr_t request_address);
 static void tlou_report_backing_copy(int path) {
     // Diagnostic is enabled by the existing TLOU stage-CPU sampler; no new UI
     // setting and no clock calls on the normal 65,535/65,536 copy operations.
@@ -1048,7 +1048,7 @@ static void tlou_report_backing_copy(int path) {
 int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t size) {
     { const void *fast=cached_backing(address,size); if (fast) { memcpy((void *)fast,data,size); return 1; } }
     read_lock();
-    { size_t first=vma_index(address); if (first<vma_count && vmas[first].start<=address) cache_region(first); }
+    { size_t first=vma_index(address); if (first<vma_count && vmas[first].start<=address) cache_region(first,address); }
     int ok=1;
     for (uintptr_t at=address, end=address+size; at<end && ok;) {
         size_t i=vma_index(at);
@@ -1096,7 +1096,7 @@ void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
     tlou_report_backing_copy(0);
     read_lock();
     size_t i=vma_index(address);
-    if (i<vma_count && vmas[i].start<=address) cache_region(i);
+    if (i<vma_count && vmas[i].start<=address) cache_region(i,address);
     for (uintptr_t at=address, end=address+size; at<end;) {
         /* The table cannot change under this read lock, and at only advances. */
         if (tlou_memory_walk_once) {
@@ -1120,6 +1120,10 @@ void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
  * entries hold for as long as the table generation they were read at. */
 typedef struct { uint64_t generation; uintptr_t start, end; int kind; uint64_t phys; } CachedRegion;
 static __thread CachedRegion region_cache[8];
+/* A direct-page hot region survives 8+ unrelated descriptor lookups.
+ * Every hit checks the exact VMA bounds and current table generation. */
+#include "tlou_region_hot_lookup.h"
+static __thread CachedRegion hot_region_cache[TLOU_HOT_REGION_SLOTS];
 static __thread unsigned region_cache_next;
 static const CachedRegion *cached_region(uintptr_t address) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
@@ -1135,9 +1139,16 @@ static const CachedRegion *cached_region(uintptr_t address) {
         if (recent->generation==generation && recent->end &&
             recent->start<=address && address<recent->end) return recent;
     }
+    const size_t slot=tlou_hot_region_slot(address);
+    CachedRegion *hot=&hot_region_cache[slot];
+    if (tlou_hot_region_contains(hot->generation,generation,hot->start,hot->end,address))
+        return hot;
     for (unsigned i=0;i<8;++i) {
         const CachedRegion *c=&region_cache[i];
-        if (c->generation==generation && c->end && c->start<=address && address<c->end) return c;
+        if (tlou_hot_region_contains(c->generation,generation,c->start,c->end,address)) {
+            *hot=*c;
+            return hot;
+        }
     }
     return NULL;
 }
@@ -1177,10 +1188,14 @@ static int try_copy_two_cached_backing(uintptr_t address, void *dest, uint64_t s
     return tlou_copy_two_backing(address,dest,size,a,b);
 }
 /* Called under the read lock after a lookup of address. */
-static void cache_region(size_t i) {
+static void cache_region(size_t i, uintptr_t request_address) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
     if (i==vma_count || (generation & 1)) return;
-    region_cache[region_cache_next++ % 8]=(CachedRegion){generation,vmas[i].start,vmas[i].end,vmas[i].kind,vmas[i].phys};
+    const CachedRegion entry={generation,vmas[i].start,vmas[i].end,
+                              vmas[i].kind,vmas[i].phys};
+    region_cache[region_cache_next++ % 8]=entry;
+    if (entry.start<=request_address && request_address<entry.end)
+        hot_region_cache[tlou_hot_region_slot(request_address)]=entry;
 }
 /* Mapped length from address, up to size, across adjacent mappings. */
 uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
@@ -1188,13 +1203,13 @@ uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
     if (c && c->kind!=KIND_RESERVED && size<=c->end-address) return size;
     read_lock();
     size_t first=vma_index(address);
-    if (first<vma_count && vmas[first].start<=address) cache_region(first);
+    if (first<vma_count && vmas[first].start<=address) cache_region(first,address);
     uint64_t length=0;
     for (size_t i=tlou_memory_walk_once ? first : vma_index(address); i<vma_count && length<size; ++i) {
         if (vmas[i].start>address+length || vmas[i].kind==KIND_RESERVED) break;
         // Make the second mapping available to the subsequent small ring copy
         // as well. This slow clamp path already holds the VMA read lock.
-        if (i==first+1 && size<=16385) cache_region(i);
+        if (i==first+1 && size<=16385) cache_region(i,vmas[i].start);
         length=vmas[i].end-address;
     }
     read_unlock();
@@ -1208,7 +1223,7 @@ int runtime_memory_region(uintptr_t address, uintptr_t *start, uintptr_t *end, i
     size_t i=vma_index(address);
     int found=i<vma_count;
     if (found && vmas[i].start<=address) {
-        cache_region(i);
+        cache_region(i,address);
         *start=vmas[i].start; *end=vmas[i].end; *mapped=vmas[i].kind!=KIND_RESERVED;
     } else if (found) {
         *start=i ? vmas[i-1].end : 0; *end=vmas[i].start; *mapped=0;

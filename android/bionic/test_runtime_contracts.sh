@@ -246,6 +246,32 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_hot_bindings.cpp -o "$test_dir/tlou-hot-bindings"
 "$test_dir/tlou-hot-bindings"
 
+# Stage B: resolve the packet's shader stage once and perform exactly the
+# original first-match lookup inside it. Prove parity for null/missing stages
+# and repeated/duplicate resource bindings before allowing an APK.
+g++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_ring_stage_lookup.cpp \
+  -o "$test_dir/tlou-ring-stage"
+"$test_dir/tlou-ring-stage"
+
+# A read-only clean arena buffer can bypass the empty upload walk, but
+# writable buffers, texel-image aliases and the legacy correctness toggle
+# must still execute full synchronization and mark GPU-written pages.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_clean_buffer_upload.cpp \
+  -o "$test_dir/tlou-clean-upload"
+"$test_dir/tlou-clean-upload"
+
+# TLOU Stage-A GPU buffer snapshots revisit dozens of guest VMAs.
+# Require correct generation/bounds invalidation and an observed native host
+# CPU reduction in the reusable-page microcase before building an APK.
+cc -std=c11 -D_POSIX_C_SOURCE=200809L -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/src gow3_pc/tests/test_tlou_region_hot_cache.c \
+  -o "$test_dir/tlou-region-hot"
+"$test_dir/tlou-region-hot"
+
 # The busiest GPU command-thread path: index pending write ranges while
 # preserving the original cyclic-first candidate and fence ordering.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \

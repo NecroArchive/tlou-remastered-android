@@ -2060,7 +2060,13 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     }();
     if (adpf_enabled) {
         static thread_local Detail::TlouAdpfCommandHint adpf;
-        adpf.NotePostDraw(Gow3Stats::gpu_frames.load(std::memory_order_relaxed));
+        // In this port, Gow3Stats::gpu_frames only advances when camera
+        // motion/upscaling or the GPU profiler is enabled. TLOU at native
+        // unified rendering with those modes off never advances it, so the
+        // ADPF session got no frame-work samples. VideoOut instead increments
+        // this atomic for EVERY guest flip at the command stream's actual
+        // frame boundary. Preserve the native TID and per-512-call sampling.
+        adpf.NotePostDraw(AmdGpu::g_gow3_flips.load(std::memory_order_relaxed));
     }
 #endif
     // This is the saturated command thread's most expensive sampled phase:

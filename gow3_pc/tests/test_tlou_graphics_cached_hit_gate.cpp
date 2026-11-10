@@ -79,7 +79,10 @@ int main() {
     }
     assert(original.compiled == new_path.compiled);
     assert(original.draws == new_path.draws && original.draws == 1000000);
-    assert(original.key_constructed == new_path.key_constructed);
+    // A fast probe followed by an absent pipeline must reconstruct its key
+    // after servicing compiler completions, exactly as the production fallback.
+    // No draw skips key construction; only misses deliberately do it twice.
+    assert(new_path.key_constructed == original.key_constructed + new_path.misses);
     assert(new_path.serviced < original.serviced / 6);
     assert(new_path.fast > 800000 && new_path.misses > 0);
     std::printf("graphics cached-hit: 1M draws, pipeline-key parity PASS; "

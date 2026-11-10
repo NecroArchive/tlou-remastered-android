@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install native header dependencies
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libfmt-dev libboost-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libfmt-dev libboost-dev libspdlog-dev
       - name: Build and verify exact shader sharp fetch and readback counts
         run: |
           g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \

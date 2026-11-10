@@ -299,6 +299,16 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_pending_granule_filter.cpp -o "$test_dir/tlou-pending-granules"
 "$test_dir/tlou-pending-granules" --cost-gate
 
+# The saturated TLOU command thread executes hundreds of thousands of
+# graphics pipeline lookups each 5s. Verify full compiler service on the
+# first lookup, every 64th hit, all queue completions and all misses; no
+# graphics keys, snapshots or pending builds may be reused across draws.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_graphics_cached_hit_gate.cpp \
+  -o "$test_dir/tlou-graphics-cached-hit"
+"$test_dir/tlou-graphics-cached-hit"
+
 # Stage-A pending write pruning: compare every resulting range under
 # 180k interleaved merge/commit/retirement events, then require measured
 # reduction of needless vector walks on x86/ARM host CPU. Never defer a

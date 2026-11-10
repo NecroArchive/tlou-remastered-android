@@ -1248,6 +1248,46 @@ void PipelineCache::DrainPrefetch() {
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
                                                            const PreparedDraw* prepared) {
+    // TLOU records roughly 400k-550k graphics draws per 5 seconds. Publishing
+    // shader/graphics compilation queues on EVERY already-compiled hit made
+    // maintenance part of the saturated command thread's draw-pipeline cost.
+    // Keep the original mandatory key construction for EVERY draw: shaders,
+    // render targets, specializations and indirect parameters can all change.
+    // Only bypass redundant compiler-service polling on a confirmed cache hit.
+    // The first request, all misses, every 64th lookup and all pending work
+    // still execute the full original publication/worker service path.
+    static thread_local Detail::ComputeCachedHitServiceGate graphics_service_gate{};
+    const bool pending_work =
+        !pending_programs.empty() || !pending_graphics.empty() ||
+        prefetch_inbox_size.load(std::memory_order_acquire) != 0 ||
+        precompile_ready.load(std::memory_order_acquire);
+    // A prepared draw has a separate lifetime/selection contract; never use
+    // the generic fast path for it.
+    if (!prepared && graphics_service_gate.TryCachedHit(pending_work)) {
+        used_prepared = nullptr;
+        last_pending.reset();
+        sel.draw_indirect_params = params;
+        sync_compile = SmallTargetDraw(liverpool->regs);
+        const bool valid_key = RefreshGraphicsKey(sel);
+        sync_compile = false; // same post-call state as the legacy SyncReset
+        if (valid_key) {
+            if (const auto found = graphics_pipelines.find(sel.graphics_key);
+                found != graphics_pipelines.end() && found->second) {
+                // Failed cached pipelines return null, exactly as the full
+                // GetGraphicsPipeline path; never publish a stale pipeline.
+                const GraphicsPipeline* pipeline =
+                    found->second->Failed() ? nullptr : found->second.get();
+                if (pipeline) {
+                    pipeline->last_use = scheduler.CurrentTick();
+                }
+                NoteWarmupOrder();
+                return pipeline;
+            }
+        }
+        graphics_service_gate.OnCacheMiss();
+        // Key absent, invalid or still compiling: publish completions, then
+        // REBUILD the key with the original path, preserving draw ordering.
+    }
     SeedWorkerCaches();
     PublishShaders();
     PublishGraphics();

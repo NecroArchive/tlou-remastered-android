@@ -5769,6 +5769,16 @@ static void FixAimFocusCentre(Core::MemoryManager* memory, VideoCore::BufferCach
 void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* prepared,
                              Shader::Backend::Bindings& binding,
                              Shader::PushData& push_data, u32& write_index) {
+    // Track which fraction of the expensive dispatch-record "buffers" phase
+    // is actually spent in BufferCache::ObtainBuffer, before another broad
+    // and unsafe buffering optimization. One stage in 8192 is sampled,
+    // with no clock reads on unsampled binds.
+    struct BindCpuStats {
+        u64 calls=0,sampled=0,obtains=0,stage_ns=0,obtain_ns=0,last_wall=0;
+    };
+    static thread_local BindCpuStats hot{};
+    const bool sample_bind = CpuPhaseSamplingEnabled() && ((++hot.calls & 8191u) == 0u);
+    const u64 stage_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
     const u64 alignment = instance.StorageMinAlignment();
     const bool compute_stage = stage.hw_stage == Shader::HwStage::Compute;
     // Hoist a stable per-stage user-data view only, never a V# value.
@@ -6102,8 +6112,13 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                             ? u64(vsharp.num_records - 1) * vsharp.stride + desc.access_extent
                             : 0;
                 }
+                const u64 obtain_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
                 const auto [buffer, offset] = buffer_cache.ObtainBuffer(
                     vsharp.base_address, size, desc.is_written, desc.is_formatted);
+                if (sample_bind) {
+                    ++hot.obtains;
+                    hot.obtain_ns += Detail::ThreadCpuSampleClock::CpuNs() - obtain_start;
+                }
                 // gow3 26 Oct 2026 diagnostics (GOW3_BONE_TRACE=1): The Last of Us's skinning
                 // (cs 45df1f62) bone bindings, checked after the GPU has run them, and the
                 // physics shader's (106beafd) writes of joint slots.
@@ -6439,6 +6454,29 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         set_write.descriptorType = vk::DescriptorType::eStorageBuffer;
         set_write.pBufferInfo = &buffer_infos.back();
         ++binding.buffer;
+    }
+    if (sample_bind) {
+        ++hot.sampled;
+        hot.stage_ns += Detail::ThreadCpuSampleClock::CpuNs() - stage_start;
+    }
+    if (CpuPhaseSamplingEnabled() && ((hot.calls & 32767u) == 0u)) {
+        const u64 now = Detail::ThreadCpuSampleClock::WallNs();
+        if (!hot.last_wall) hot.last_wall = now;
+        else if (now - hot.last_wall >= 5000000000ull) {
+            if (hot.sampled) {
+                const double scale = 1.0 / (1000.0 * double(hot.sampled));
+                std::printf("TLOU buffers hot (5 s): sampled-stages=%llu sampled-obtains=%llu "
+                            "stage=%.3fus ObtainBuffer=%.3fus other=%.3fus\n",
+                            (unsigned long long)hot.sampled,
+                            (unsigned long long)hot.obtains,
+                            hot.stage_ns*scale,hot.obtain_ns*scale,
+                            double(hot.stage_ns-hot.obtain_ns)*scale);
+            }
+            const auto calls=hot.calls;
+            hot={};
+            hot.calls=calls;
+            hot.last_wall=now;
+        }
     }
 }
 

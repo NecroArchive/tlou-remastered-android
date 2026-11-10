@@ -42,6 +42,7 @@
 #include "video_core/renderer_vulkan/tlou_physics_readback.h"
 #include "video_core/renderer_vulkan/tlou_auto_readback.h"
 #include "video_core/renderer_vulkan/ring_binding_cursor.h"
+#include "video_core/renderer_vulkan/tlou_ring_stage_lookup.h"
 #include "video_core/renderer_vulkan/tlou_adpf.h"
 #include "video_core/renderer_vulkan/tlou_readback_hot_stats.h"
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
@@ -5813,8 +5814,9 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         const char* env=std::getenv("TLOU_RING_BINDING_CURSOR");
         return !(env && env[0]=='0');
     }();
-    const RingStage* ring_stage =
-        cursor_enabled && num_ring_stages ? FindRingStage(stage) : nullptr;
+    // The old fallback re-scanned all packet stages for EVERY descriptor
+    // when the sorted cursor did not apply; resolve the stage only once.
+    const RingStage* ring_stage = num_ring_stages ? FindRingStage(stage) : nullptr;
     // A single resource is faster with the old lookup. Use the cursor only
     // where it wins measured CPU time: two or more sorted ring descriptors.
 #if defined(__aarch64__)
@@ -5822,14 +5824,14 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
 #else
     constexpr u32 MinCursorBuffers = 8; // 4-buffer x86-64 microcase regressed
 #endif
-    const bool sorted_fast = ring_stage && ring_stage->count >= 2 &&
+    const bool sorted_fast = cursor_enabled && ring_stage && ring_stage->count >= 2 &&
                              stage.buffers.size() >= MinCursorBuffers;
     Detail::RingBindingCursor<RingBinding> ring_cursor(
         sorted_fast ? ring_stage->bindings : nullptr, sorted_fast ? ring_stage->count : 0);
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {
         const auto& desc = stage.buffers[buffer_index];
         const RingBinding* ring = sorted_fast ? ring_cursor.Take(buffer_index) :
-            (num_ring_stages ? FindRingBinding(stage, buffer_index) : nullptr);
+            Detail::FindPacketRingBinding(ring_stage, buffer_index);
         if (!desc.IsSpecial() && !desc.is_written &&
             (stage.pgm_hash == 0x1c957b01 || stage.pgm_hash == 0x809864d3)) {
             if (ring) {

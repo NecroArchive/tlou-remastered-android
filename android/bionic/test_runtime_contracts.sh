@@ -246,6 +246,15 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_hot_bindings.cpp -o "$test_dir/tlou-hot-bindings"
 "$test_dir/tlou-hot-bindings"
 
+# Stage B: resolve the packet's shader stage once and perform exactly the
+# original first-match lookup inside it. Prove parity for null/missing stages
+# and repeated/duplicate resource bindings before allowing an APK.
+g++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_ring_stage_lookup.cpp \
+  -o "$test_dir/tlou-ring-stage"
+"$test_dir/tlou-ring-stage"
+
 # TLOU Stage-A GPU buffer snapshots revisit dozens of guest VMAs.
 # Require correct generation/bounds invalidation and an observed native host
 # CPU reduction in the reusable-page microcase before building an APK.

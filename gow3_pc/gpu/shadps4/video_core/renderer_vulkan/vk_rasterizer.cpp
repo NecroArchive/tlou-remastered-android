@@ -5783,9 +5783,13 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         u64 calls=0,sampled=0,obtains=0,stage_ns=0,obtain_ns=0,last_wall=0;
         u64 sharp_ns=0,clamp_ns=0,writer_ns=0,invalidate_ns=0,hazard_ns=0;
         u64 ring_buffers=0,special_buffers=0,guest_buffers=0;
+        u64 light_samples=0,light_stage_ns=0;
     };
     static thread_local BindCpuStats hot{};
-    const bool sample_bind = CpuPhaseSamplingEnabled() && ((++hot.calls & 8191u) == 0u);
+    const bool enabled_bind_profiling = CpuPhaseSamplingEnabled();
+    const bool sample_bind = enabled_bind_profiling && ((++hot.calls & 8191u) == 0u);
+    const bool sample_light = enabled_bind_profiling && ((hot.calls & 8191u) == 4096u);
+    const u64 light_start = sample_light ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
     const u64 stage_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
     const u64 alignment = instance.StorageMinAlignment();
     const bool compute_stage = stage.hw_stage == Shader::HwStage::Compute;
@@ -6481,14 +6485,24 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         set_write.pBufferInfo = &buffer_infos.back();
         ++binding.buffer;
     }
+    if (sample_light) {
+        ++hot.light_samples;
+        hot.light_stage_ns += Detail::ThreadCpuSampleClock::CpuNs() - light_start;
+    }
     if (sample_bind) {
         ++hot.sampled;
         hot.stage_ns += Detail::ThreadCpuSampleClock::CpuNs() - stage_start;
     }
-    if (CpuPhaseSamplingEnabled() && ((hot.calls & 32767u) == 0u)) {
+    if (enabled_bind_profiling && ((hot.calls & 32767u) == 0u)) {
         const u64 now = Detail::ThreadCpuSampleClock::WallNs();
         if (!hot.last_wall) hot.last_wall = now;
         else if (now - hot.last_wall >= 5000000000ull) {
+            if (hot.light_samples) {
+                std::printf("TLOU buffers baseline (5 s): light-stages=%llu "
+                            "CPU=%.3fus (two clock calls only; no inner probes)\n",
+                            (unsigned long long)hot.light_samples,
+                            double(hot.light_stage_ns) / (1000.0 * hot.light_samples));
+            }
             if (hot.sampled) {
                 const double scale = 1.0 / (1000.0 * double(hot.sampled));
                 const double attributed = double(hot.obtain_ns)+double(hot.sharp_ns)+

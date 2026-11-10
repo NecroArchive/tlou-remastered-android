@@ -27,6 +27,7 @@
 #include "video_core/amdgpu/pm4_cmds.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
+#include "video_core/buffer_cache/tlou_stream_copy_context.h"
 #include "video_core/buffer_cache/memory_tracker.h"
 #include "video_core/buffer_cache/mapped_readback_plan.h"
 #include "video_core/buffer_cache/tlou_hot_srt_readback.h"
@@ -5743,9 +5744,13 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         // either on every binding when there is no legal reuse candidate.
         // Keep the submission tick for the existing 5-second stream stats
         // only when those stats are enabled.
-        const u64 key = reuse ? device_addr ^ (u64(size) << 44) : 0;
-        const u64 tick = (reuse || Gow3Stats::enabled) ? scheduler.CurrentTick() : 0;
-        const u64 epoch = reuse ? scheduler.GuestWriteEpoch() : 0;
+        const auto stream_ctx = Detail::MakeStreamCopyContext(
+            reuse, Gow3Stats::enabled, device_addr, size,
+            [this] { return scheduler.CurrentTick(); },
+            [this] { return scheduler.GuestWriteEpoch(); });
+        const u64 key = stream_ctx.key;
+        const u64 tick = stream_ctx.tick;
+        const u64 epoch = stream_ctx.epoch;
         if (reuse) {
             if (const auto it = stream_copies.find(key);
                 it != stream_copies.end() && it->second.tick == tick && it->second.epoch == epoch &&

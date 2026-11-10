@@ -246,6 +246,14 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_hot_bindings.cpp -o "$test_dir/tlou-hot-bindings"
 "$test_dir/tlou-hot-bindings"
 
+# TLOU Stage-A GPU buffer snapshots revisit dozens of guest VMAs.
+# Require correct generation/bounds invalidation and an observed native host
+# CPU reduction in the reusable-page microcase before building an APK.
+cc -std=c11 -D_POSIX_C_SOURCE=200809L -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/src gow3_pc/tests/test_tlou_region_hot_cache.c \
+  -o "$test_dir/tlou-region-hot"
+"$test_dir/tlou-region-hot"
+
 # The busiest GPU command-thread path: index pending write ranges while
 # preserving the original cyclic-first candidate and fence ordering.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \

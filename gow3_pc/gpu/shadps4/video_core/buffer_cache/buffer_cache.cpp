@@ -28,6 +28,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/buffer_cache/tlou_stream_copy_context.h"
+#include "video_core/buffer_cache/tlou_clean_buffer_upload.h"
 #include "video_core/buffer_cache/memory_tracker.h"
 #include "video_core/buffer_cache/mapped_readback_plan.h"
 #include "video_core/buffer_cache/tlou_hot_srt_readback.h"
@@ -6426,6 +6427,18 @@ void BufferCache::ReclaimArenaMemory() {
 
 bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size,
                                     bool is_written, bool is_texel_buffer) {
+    // The old ForEachUploadRange performs this exact lock-free dirty-bit
+    // predicate, then constructs an empty upload list and invokes its empty
+    // callback. Bypass the entire upload walk only for CLEAN READ-ONLY
+    // non-texel ranges. Written ranges must mark GPU-dirty pages and texel
+    // ranges must still synchronize from images. The existing safety toggle
+    // disables both this precheck and its original counterpart.
+    if (Detail::CanSkipCleanBufferUpload(
+            is_written, is_texel_buffer,
+            !Gow3Toggle::Disabled(Gow3Toggle::LockFreeUploadCheck),
+            [&] { return memory_tracker->IsRegionCpuModified(device_addr, size); })) {
+        return false;
+    }
     boost::container::small_vector<vk::BufferCopy, 4> copies;
     size_t total_size_bytes{};
     const Buffer* src_buffer{};

@@ -255,6 +255,15 @@ g++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror \
   -o "$test_dir/tlou-ring-stage"
 "$test_dir/tlou-ring-stage"
 
+# A read-only clean arena buffer can bypass the empty upload walk, but
+# writable buffers, texel-image aliases and the legacy correctness toggle
+# must still execute full synchronization and mark GPU-written pages.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_clean_buffer_upload.cpp \
+  -o "$test_dir/tlou-clean-upload"
+"$test_dir/tlou-clean-upload"
+
 # TLOU Stage-A GPU buffer snapshots revisit dozens of guest VMAs.
 # Require correct generation/bounds invalidation and an observed native host
 # CPU reduction in the reusable-page microcase before building an APK.

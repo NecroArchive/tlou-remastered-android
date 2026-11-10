@@ -207,6 +207,13 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_dirty_packet_write.cpp -o "$test_dir/tlou-packet-direct"
 "$test_dir/tlou-packet-direct"
 
+# Fully resident arena lookup must match the original gap scanner even for
+# adjacent non-mergeable backing allocations and arbitrary sparse holes.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_resident_full_hit.cpp -o "$test_dir/tlou-resident-hit"
+"$test_dir/tlou-resident-hit"
+
 # Stream ObtainBuffer: verify that the default non-reuse path does NOT fetch
 # the guest-write epoch, while reuse-enabled tick/epoch/hash remain exact.
 g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \

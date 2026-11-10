@@ -163,6 +163,9 @@ final class PortSettings {
         // policy; do not keep the speculative normal-priority scanner or
         // per-5-second hit instrumentation running in gameplay.
         env.put("GOW3_PREP_WORKERS","0");
+        // Real NDK ADPF hint session belongs to the separate Bionic game PID,
+        // not the Java launcher. OFF by default for reproducible A/B tests.
+        env.put("GOW3_ADPF", p.getBoolean("adpf",false) ? "1" : "0");
         env.remove("TLOU_PREP_NORMAL_PRIORITY");
         env.remove("TLOU_PREP_HIT_STATS");
         env.put("GOW3_DEFERRED_READBACK","0");
@@ -210,6 +213,7 @@ final class PortSettings {
         result.append("; fps-unlock=").append(prefs(context).getBoolean("fps_unlock",false)?"120":"off");
         result.append("; effective-vsync=").append(env.getOrDefault("GOW3_VSYNC","?"));
         result.append("; virtual-vblank-hz=").append(env.getOrDefault("GOW3_VBLANK_HZ","?"));
+        result.append("; adpf-native=").append(env.getOrDefault("GOW3_ADPF","0"));
         result.append("; guest-job-worker-wake=patched-sleep");
         return result.toString();
     }

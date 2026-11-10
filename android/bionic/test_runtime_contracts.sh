@@ -216,6 +216,14 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_compute_cached_hit_gate.cpp -o "$test_dir/tlou-compute-hit"
 "$test_dir/tlou-compute-hit"
 
+# Shader descriptor flat-view hoisting + readback-only recording-thread stats
+# are protected by a fresh-per-stage data equivalence check and 5M readback
+# decisions. Native Vulkan compilation validates the real BufferResource ABI.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_hot_bindings.cpp -o "$test_dir/tlou-hot-bindings"
+"$test_dir/tlou-hot-bindings"
+
 # The busiest GPU command-thread path: index pending write ranges while
 # preserving the original cyclic-first candidate and fence ordering.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \

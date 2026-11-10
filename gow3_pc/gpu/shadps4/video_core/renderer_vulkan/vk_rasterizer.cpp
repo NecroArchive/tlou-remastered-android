@@ -42,6 +42,8 @@
 #include "video_core/renderer_vulkan/tlou_physics_readback.h"
 #include "video_core/renderer_vulkan/tlou_auto_readback.h"
 #include "video_core/renderer_vulkan/ring_binding_cursor.h"
+#include "video_core/renderer_vulkan/tlou_adpf.h"
+#include "video_core/renderer_vulkan/tlou_readback_hot_stats.h"
 #include "video_core/renderer_vulkan/tlou_srt_batch_plan.h"
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
 #include "video_core/renderer_vulkan/tlou_pending_granule_filter.h"
@@ -1880,6 +1882,11 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
     }
     const u64 alignment = std::max<u64>(instance.StorageMinAlignment(),
                                         instance.UniformMinAlignment());
+    static const bool hoist_flat = [] {
+        const char* env = std::getenv("TLOU_HOIST_SHARP_FLAT");
+        return !(env && env[0] == '0' && env[1] == '\0');
+    }();
+    const u32* flat_data = hoist_flat ? stage.FlatUserData().data() : nullptr;
     // gow3 diagnostics (GOW3_RING_STATS=1): guest copies per 5 s, their sizes, and how many
     // repeat a range already copied since the last flush.
     static const bool ring_stats = [] {
@@ -1975,7 +1982,8 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         }
         const u64 sharp_ns = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
         const auto vsharp = prepared_stage ? prepared_stage->buffer_sharps[index]
-                                           : desc.GetSharp(stage);
+                                           : (hoist_flat ? desc.GetSharp(stage, flat_data)
+                                                         : desc.GetSharp(stage));
         if (sample) {
             hot.sharp_ns += Detail::ThreadCpuSampleClock::CpuNs() - sharp_ns;
             ++hot.binds;
@@ -2043,6 +2051,18 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
 void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_prepared,
                           bool is_indexed, u32 index_offset, const AmdGpu::ComputeProgram* cs,
                           const IndirectDraw* indirect, const void* pending) {
+#ifdef __ANDROID__
+    // NDK Performance Hint session belongs to the actual native GPU command
+    // thread in the Bionic child process, NOT to the Java launcher.
+    static const bool adpf_enabled = [] {
+        const char* flag = std::getenv("GOW3_ADPF");
+        return flag && flag[0] == '1' && flag[1] == '\0';
+    }();
+    if (adpf_enabled) {
+        static thread_local Detail::TlouAdpfCommandHint adpf;
+        adpf.NotePostDraw(Gow3Stats::gpu_frames.load(std::memory_order_relaxed));
+    }
+#endif
     // This is the saturated command thread's most expensive sampled phase:
     // 4-5us per dispatched compute packet in TLOU gameplay. Attribute the
     // cost to register delta, constant-ring capture, packet encoding and
@@ -5749,8 +5769,24 @@ static void FixAimFocusCentre(Core::MemoryManager* memory, VideoCore::BufferCach
 void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* prepared,
                              Shader::Backend::Bindings& binding,
                              Shader::PushData& push_data, u32& write_index) {
+    // Track which fraction of the expensive dispatch-record "buffers" phase
+    // is actually spent in BufferCache::ObtainBuffer, before another broad
+    // and unsafe buffering optimization. One stage in 8192 is sampled,
+    // with no clock reads on unsampled binds.
+    struct BindCpuStats {
+        u64 calls=0,sampled=0,obtains=0,stage_ns=0,obtain_ns=0,last_wall=0;
+    };
+    static thread_local BindCpuStats hot{};
+    const bool sample_bind = CpuPhaseSamplingEnabled() && ((++hot.calls & 8191u) == 0u);
+    const u64 stage_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
     const u64 alignment = instance.StorageMinAlignment();
     const bool compute_stage = stage.hw_stage == Shader::HwStage::Compute;
+    // Hoist a stable per-stage user-data view only, never a V# value.
+    static const bool hoist_flat = [] {
+        const char* env = std::getenv("TLOU_HOIST_SHARP_FLAT");
+        return !(env && env[0] == '0' && env[1] == '\0');
+    }();
+    const u32* flat_data = hoist_flat ? stage.FlatUserData().data() : nullptr;
     ClothTrace(stage.pgm_hash, ~0u, 0, 0, false, compute_stage);
     // Precompute one packet-stage match rather than searching ring_stages
     // again for every buffer. O(1) for a single ring binding and O(N) across
@@ -5783,7 +5819,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 CheckClothInputs(memory, buffer_cache, stage.pgm_hash, buffer_index, ring->address,
                                  ring->size, true);
             } else {
-                const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+                const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : (hoist_flat ? desc.GetSharp(stage, flat_data) : desc.GetSharp(stage));
                 CheckClothInputs(memory, buffer_cache, stage.pgm_hash, buffer_index, vsharp.base_address,
                                  vsharp.GetSize(), false);
             }
@@ -5800,7 +5836,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 return std::pair<VAddr, VAddr>{lo, hi};
             }();
             if (writers_range.second > writers_range.first) {
-                const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+                const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : (hoist_flat ? desc.GetSharp(stage, flat_data) : desc.GetSharp(stage));
                 const VAddr address = vsharp.base_address;
                 const u64 size = vsharp.GetSize();
                 if (address < writers_range.second && address + size > writers_range.first) {
@@ -5830,7 +5866,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     address = ring->address;
                     size = ring->size;
                 } else {
-                    const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+                    const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : (hoist_flat ? desc.GetSharp(stage, flat_data) : desc.GetSharp(stage));
                     address = vsharp.base_address;
                     size = vsharp.GetSize();
                     sharp_text = fmt::format(" (format {}/{}, stride {}, records {}, swizzle {}{}{}{})",
@@ -5924,7 +5960,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             }
         } else {
             const auto vsharp =
-                prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+                prepared ? prepared->buffer_sharps[buffer_index] : (hoist_flat ? desc.GetSharp(stage, flat_data) : desc.GetSharp(stage));
             if (vsharp.GetSize() == 864 && gbuffer_draw &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 camera_motion->OnConstants(reinterpret_cast<const float*>(vsharp.base_address));
@@ -6076,8 +6112,13 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                             ? u64(vsharp.num_records - 1) * vsharp.stride + desc.access_extent
                             : 0;
                 }
+                const u64 obtain_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
                 const auto [buffer, offset] = buffer_cache.ObtainBuffer(
                     vsharp.base_address, size, desc.is_written, desc.is_formatted);
+                if (sample_bind) {
+                    ++hot.obtains;
+                    hot.obtain_ns += Detail::ThreadCpuSampleClock::CpuNs() - obtain_start;
+                }
                 // gow3 26 Oct 2026 diagnostics (GOW3_BONE_TRACE=1): The Last of Us's skinning
                 // (cs 45df1f62) bone bindings, checked after the GPU has run them, and the
                 // physics shader's (106beafd) writes of joint slots.
@@ -6181,18 +6222,19 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                             compute_stage, desc.is_written, exact_result,
                             vsharp.stride, vsharp.num_records, size, queued);
                     if (compute_stage && desc.is_written) {
-                        static std::atomic<u32> accepted{0};
-                        static std::atomic<s64> last_report{0};
-                        static std::atomic<u32> report_probes{0};
-                        if (automatic_result) accepted.fetch_add(1, std::memory_order_relaxed);
-                        if ((report_probes.fetch_add(1, std::memory_order_relaxed) & 511u) == 0u) {
+                        // These counters are diagnostic, not GPU synchronization.
+                        // They run exclusively on this recording thread. Remove
+                        // global atomic RMWs from every written buffer binding.
+                        static thread_local Detail::TlouReadbackHotStats stats{};
+                        static thread_local s64 last_report = 0;
+                        if (stats.Note(automatic_result)) {
                             const s64 now = std::chrono::duration_cast<std::chrono::seconds>(
                                 std::chrono::steady_clock::now().time_since_epoch()).count();
-                            if (s64 last = last_report.load(std::memory_order_relaxed);
-                                now - last >= 5 && last_report.compare_exchange_strong(last, now)) {
-                                std::printf("TLOU automatic small compute readbacks (5 s): %u "
+                            if (now - last_report >= 5) {
+                                last_report = now;
+                                std::printf("TLOU automatic small compute readbacks (5 s): %llu "
                                             "accepted; mode=full\n",
-                                            accepted.exchange(0, std::memory_order_relaxed));
+                                            (unsigned long long)stats.TakeAccepted());
                                 std::fflush(stdout);
                             }
                         }
@@ -6412,6 +6454,29 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         set_write.descriptorType = vk::DescriptorType::eStorageBuffer;
         set_write.pBufferInfo = &buffer_infos.back();
         ++binding.buffer;
+    }
+    if (sample_bind) {
+        ++hot.sampled;
+        hot.stage_ns += Detail::ThreadCpuSampleClock::CpuNs() - stage_start;
+    }
+    if (CpuPhaseSamplingEnabled() && ((hot.calls & 32767u) == 0u)) {
+        const u64 now = Detail::ThreadCpuSampleClock::WallNs();
+        if (!hot.last_wall) hot.last_wall = now;
+        else if (now - hot.last_wall >= 5000000000ull) {
+            if (hot.sampled) {
+                const double scale = 1.0 / (1000.0 * double(hot.sampled));
+                std::printf("TLOU buffers hot (5 s): sampled-stages=%llu sampled-obtains=%llu "
+                            "stage=%.3fus ObtainBuffer=%.3fus other=%.3fus\n",
+                            (unsigned long long)hot.sampled,
+                            (unsigned long long)hot.obtains,
+                            hot.stage_ns*scale,hot.obtain_ns*scale,
+                            double(hot.stage_ns-hot.obtain_ns)*scale);
+            }
+            const auto calls=hot.calls;
+            hot={};
+            hot.calls=calls;
+            hot.last_wall=now;
+        }
     }
 }
 

@@ -2,7 +2,7 @@ name: TLOU Bionic Full Native and APK
 
 on:
   push:
-    branches: [android-bionic-stage1, tlou-ui-approval-log32-20261105]
+    branches: [android-bionic-stage1, tlou-ui-approval-log32-20261105, perf/tlou-v011-resident-memo-apk-20261110]
     paths:
       - 'android/**'
       - 'android-launcher/**'

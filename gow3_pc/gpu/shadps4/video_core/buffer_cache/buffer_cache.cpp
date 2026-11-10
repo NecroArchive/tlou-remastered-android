@@ -6094,7 +6094,14 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     // interval set's Contains() verifies EVERY block, including a range
     // crossing multiple adjacent backing allocations. Any hole falls
     // through to the original gap/bind path unchanged.
+    // Most resource descriptors reuse the exact same fully resident range.
+    // A positive cached result avoids repeated IntervalSet tree traversal.
+    // Removal invalidates all cached hits; misses always use Contains/ForEachGap.
+    if (resident_hit_cache.Hit(first_block, last_block)) {
+        return;
+    }
     if (resident_ranges.Contains(first_block, last_block + 1)) {
+        resident_hit_cache.Remember(first_block, last_block);
         return;
     }
     u32 resident_blocks{};
@@ -6205,6 +6212,8 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
 
     staging.Flush();
     runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
+    // All sparse blocks covering the queried range are now resident.
+    resident_hit_cache.Remember(first_block, last_block);
 }
 
 void BufferCache::TrimPendingUnbinds(const Buffer* arena, u64 first_block, u64 end_block) {
@@ -6258,6 +6267,8 @@ u64 BufferCache::ReleaseArenaBlocks(u64 first_block, u64 end_block) {
         part.offset = backing.offset + ((a - backing.start) << block_shift);
         return part;
     });
+    // Invalidate BEFORE any future read may assume a released block resident.
+    resident_hit_cache.Invalidate();
     u64 blocks = 0;
     for (const auto& piece : pieces) {
         blocks += piece.end - piece.start;

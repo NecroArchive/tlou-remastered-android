@@ -30,6 +30,7 @@
 #include "video_core/buffer_cache/fault_manager.h"
 #include "video_core/buffer_cache/range_set.h"
 #include "video_core/buffer_cache/gpu_range_cache_index.h"
+#include "video_core/buffer_cache/tlou_resident_hit_cache.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
 namespace AmdGpu {
@@ -1007,6 +1008,8 @@ private:
     };
     std::vector<FreeRun> free_runs, quarantined_runs;
     u64 resident_in_use_blocks = 0;
+    // Positive-only exact resident interval memo, invalidated on sparse unbind.
+    Detail::ResidentHitCache resident_hit_cache{};
     bool has_pending_unbinds = false;
     void TouchArenaWindows(u64 first_block, u64 last_block) {
         const u16 epoch = reclaim_epoch;

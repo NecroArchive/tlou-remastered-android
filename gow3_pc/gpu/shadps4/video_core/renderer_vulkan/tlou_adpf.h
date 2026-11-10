@@ -126,7 +126,8 @@ public:
             frames.ResetDiagnostics();
             last_report_wall = now;
         }
-    }};
+    }
+};
 }  // namespace Vulkan::Detail
 #else
 #include <cstdint>

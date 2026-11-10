@@ -255,6 +255,13 @@ g++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror \
   -o "$test_dir/tlou-ring-stage"
 "$test_dir/tlou-ring-stage"
 
+# Buffer residency is memoized only on confirmed complete hits; 2M mixed
+# queries/evictions must never reuse a missing or evicted sparse block.
+g++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4/video_core/buffer_cache \
+  gow3_pc/tests/test_tlou_resident_hit_cache.cpp -o "$test_dir/tlou-resident-memo"
+"$test_dir/tlou-resident-memo"
+
 # A read-only clean arena buffer can bypass the empty upload walk, but
 # writable buffers, texel-image aliases and the legacy correctness toggle
 # must still execute full synchronization and mark GPU-written pages.

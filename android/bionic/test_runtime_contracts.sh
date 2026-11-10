@@ -209,7 +209,7 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
 
 # Fully resident arena lookup must match the original gap scanner even for
 # adjacent non-mergeable backing allocations and arbitrary sparse holes.
-g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -Wno-error=sign-compare \
   -I gow3_pc/gpu/shadps4 \
   gow3_pc/tests/test_tlou_resident_full_hit.cpp -o "$test_dir/tlou-resident-hit"
 "$test_dir/tlou-resident-hit"

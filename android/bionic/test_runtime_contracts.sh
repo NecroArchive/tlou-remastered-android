@@ -309,6 +309,14 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
   -o "$test_dir/tlou-graphics-cached-hit"
 "$test_dir/tlou-graphics-cached-hit"
 
+# TLOU PC v0.1.7: large scalar compute copies run as ordered Vulkan
+# buffer transfers ONLY for exact non-overlapping safe ranges.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_large_scalar_copy.cpp \
+  -o "$test_dir/tlou-large-scalar-copy"
+"$test_dir/tlou-large-scalar-copy"
+
 # Stage-A pending write pruning: compare every resulting range under
 # 180k interleaved merge/commit/retirement events, then require measured
 # reduction of needless vector walks on x86/ARM host CPU. Never defer a

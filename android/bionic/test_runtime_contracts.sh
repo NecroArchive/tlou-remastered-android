@@ -207,6 +207,13 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_dirty_packet_write.cpp -o "$test_dir/tlou-packet-direct"
 "$test_dir/tlou-packet-direct"
 
+# Stream ObtainBuffer: verify that the default non-reuse path does NOT fetch
+# the guest-write epoch, while reuse-enabled tick/epoch/hash remain exact.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_stream_copy_context.cpp -o "$test_dir/tlou-stream-context"
+"$test_dir/tlou-stream-context"
+
 # TLOU heavy gameplay calls GetComputePipeline 400k+ times per five seconds.
 # Keep shader variant/guest snapshot selection per dispatch; service pending
 # builds immediately and cached-hit maintenance at least every 64 lookups.

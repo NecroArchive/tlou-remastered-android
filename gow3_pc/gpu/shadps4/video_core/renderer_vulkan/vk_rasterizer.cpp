@@ -2060,7 +2060,13 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     }();
     if (adpf_enabled) {
         static thread_local Detail::TlouAdpfCommandHint adpf;
-        adpf.NotePostDraw(Gow3Stats::gpu_frames.load(std::memory_order_relaxed));
+        // In this port, Gow3Stats::gpu_frames only advances when camera
+        // motion/upscaling or the GPU profiler is enabled. TLOU at native
+        // unified rendering with those modes off never advances it, so the
+        // ADPF session got no frame-work samples. VideoOut instead increments
+        // this atomic for EVERY guest flip at the command stream's actual
+        // frame boundary. Preserve the native TID and per-512-call sampling.
+        adpf.NotePostDraw(AmdGpu::g_gow3_flips.load(std::memory_order_relaxed));
     }
 #endif
     // This is the saturated command thread's most expensive sampled phase:
@@ -5775,12 +5781,19 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
     // with no clock reads on unsampled binds.
     struct BindCpuStats {
         u64 calls=0,sampled=0,obtains=0,stage_ns=0,obtain_ns=0,last_wall=0;
+        u64 sharp_ns=0,clamp_ns=0,writer_ns=0,invalidate_ns=0,hazard_ns=0;
+        u64 ring_buffers=0,special_buffers=0,guest_buffers=0;
     };
     static thread_local BindCpuStats hot{};
     const bool sample_bind = CpuPhaseSamplingEnabled() && ((++hot.calls & 8191u) == 0u);
     const u64 stage_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
     const u64 alignment = instance.StorageMinAlignment();
     const bool compute_stage = stage.hw_stage == Shader::HwStage::Compute;
+    // All are immutable for the duration of this one binding stage. Avoid
+    // re-reading their global/static toggles for each guest descriptor.
+    const bool capture_active = FrameCapture::Active();
+    const bool bone_trace = VideoCore::BufferCache::BoneTraceEnabled();
+    const bool traced_stage = TracedShader(stage.pgm_hash);
     // Hoist a stable per-stage user-data view only, never a V# value.
     static const bool hoist_flat = [] {
         const char* env = std::getenv("TLOU_HOIST_SHARP_FLAT");
@@ -5856,7 +5869,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
             }
         }
-        if (TracedShader(stage.pgm_hash) && !desc.IsSpecial()) {
+        if (traced_stage && !desc.IsSpecial()) {
             static std::atomic<int> traced{0};
             if (traced.fetch_add(1) < 40) {
                 VAddr address = 0;
@@ -5891,8 +5904,9 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             }
         }
         if (ring) {
+            if (sample_bind) ++hot.ring_buffers;
             // Copied by the GPU command thread into the constant ring (read-only).
-            if (FrameCapture::Active() && memory->IsValidGpuMapping(ring->address, 0)) {
+            if (capture_active && memory->IsValidGpuMapping(ring->address, 0)) {
                 FrameCapture::Buffer(stage.pgm_hash, buffer_index, ring->address,
                                      reinterpret_cast<const void*>(ring->address), ring->size);
             }
@@ -5905,6 +5919,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             }
             buffer_infos.emplace_back(constant_ring->Handle(), ring->offset, ring->size);
         } else if (desc.IsSpecial()) {
+            if (sample_bind) ++hot.special_buffers;
             if (desc.buffer_type == Shader::BufferType::GdsBuffer) {
                 const auto* gds_buf = buffer_cache.GetGdsBuffer();
                 buffer_infos.emplace_back(gds_buf->Handle(), 0, gds_buf->SizeBytes());
@@ -5912,7 +5927,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             } else if (desc.buffer_type == Shader::BufferType::Flatbuf) {
                 auto& vk_buffer = buffer_cache.GetStreamBuffer();
                 const u32 ubo_size = stage.FlatUserData().size() * sizeof(u32);
-                if (FrameCapture::Active()) {
+                if (capture_active) {
                     FrameCapture::Buffer(stage.pgm_hash, binding.buffer, 0,
                                          stage.FlatUserData().data(), ubo_size);
                 }
@@ -5959,14 +5974,17 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 UNREACHABLE_MSG("Unexpected buffer type {}", u32(desc.buffer_type));
             }
         } else {
+            if (sample_bind) ++hot.guest_buffers;
+            const u64 sharp_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
             const auto vsharp =
                 prepared ? prepared->buffer_sharps[buffer_index] : (hoist_flat ? desc.GetSharp(stage, flat_data) : desc.GetSharp(stage));
+            if (sample_bind) hot.sharp_ns += Detail::ThreadCpuSampleClock::CpuNs() - sharp_start;
             if (vsharp.GetSize() == 864 && gbuffer_draw &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 camera_motion->OnConstants(reinterpret_cast<const float*>(vsharp.base_address));
             }
             // Object motion research: the vertex shader buffers of G-buffer draws.
-            if (FrameCapture::Active() && gbuffer_draw && stage.sw_stage == Shader::SwStage::Vertex &&
+            if (capture_active && gbuffer_draw && stage.sw_stage == Shader::SwStage::Vertex &&
                 vsharp.base_address != 0 && memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 const auto* f = reinterpret_cast<const float*>(vsharp.base_address);
                 char note[192];
@@ -5977,7 +5995,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                               u32(vsharp.GetStride()), f[0], f[1], f[2], f[3]);
                 FrameCapture::Note(note);
             }
-            if (FrameCapture::Active() && vsharp.base_address != 0 && vsharp.GetSize() != 0 &&
+            if (capture_active && vsharp.base_address != 0 && vsharp.GetSize() != 0 &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 FrameCapture::Buffer(stage.pgm_hash, binding.buffer, vsharp.base_address,
                                      reinterpret_cast<const void*>(vsharp.base_address),
@@ -5991,8 +6009,10 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             // memory. A V# reaching past mapped memory, other than an unbounded raw buffer
             // (num_records ~0), or spanning 1 GiB is bound as null. Normal play has none.
             const bool unbound = vsharp.base_address == 0 || vsharp.GetSize() == 0;
+            const u64 clamp_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
             const u64 mapped_size =
                 unbound ? 0 : memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize());
+            if (sample_bind) hot.clamp_ns += Detail::ThreadCpuSampleClock::CpuNs() - clamp_start;
             // gow3 16 Oct: the treasure effect's float slots can also make a V# that lands in mapped
             // memory: after 90 minutes one with an unaligned base, a stride of ~15 KB and ~1e9
             // records was bound, the GPU hung (OBS's own device was removed with DEVICE_HUNG at the
@@ -6122,12 +6142,12 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 // gow3 26 Oct 2026 diagnostics (GOW3_BONE_TRACE=1): The Last of Us's skinning
                 // (cs 45df1f62) bone bindings, checked after the GPU has run them, and the
                 // physics shader's (106beafd) writes of joint slots.
-                if (VideoCore::BufferCache::BoneTraceEnabled() && stage.pgm_hash == 0x45df1f62 &&
+                if (bone_trace && stage.pgm_hash == 0x45df1f62 &&
                     desc.is_written && size >= 64_KB && size <= 256_KB && size % 52 == 0) {
                     skin_outputs.push_back({vsharp.base_address, size, stage.pgm_hash, binding.buffer,
                                             true, buffer, offset});
                 }
-                if (VideoCore::BufferCache::BoneTraceEnabled() && size >= 1_KB && size <= 16_KB) {
+                if (bone_trace && size >= 1_KB && size <= 16_KB) {
                     if (stage.pgm_hash == 0x45df1f62 && !desc.is_written &&
                         (!VideoCore::BufferCache::BoneTraceLight() || binding.buffer == 6 ||
                          binding.buffer == 7)) {
@@ -6140,7 +6160,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
                 // The physics shader's bindings (what it reads, written ones too: the joint
                 // slots it updates in place), up to 64 KiB.
-                if (VideoCore::BufferCache::BoneTraceEnabled() &&
+                if (bone_trace &&
                     !VideoCore::BufferCache::BoneTraceLight() && stage.pgm_hash == 0x106beafd &&
                     size <= 64_KB) {
                     bone_peeks.push_back({vsharp.base_address, size, stage.pgm_hash, binding.buffer,
@@ -6277,9 +6297,11 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
 #endif
                     Gow3WatchRange::Note("storage", stage.pgm_hash, binding.buffer,
                                          vsharp.base_address, size);
+                    const u64 writer_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
                     VideoCore::NoteGpuWriter(vsharp.base_address, size, stage.pgm_hash);
                     VideoCore::NoteRecentGpuWrite(vsharp.base_address, size,
                                                   (u64(stage.pgm_hash) << 8) | (binding.buffer & 0xff));
+                    if (sample_bind) hot.writer_ns += Detail::ThreadCpuSampleClock::CpuNs() - writer_start;
                     if (VideoCore::BufferCache::ShareUnfinishedWrites() &&
                         (TlouResultShader(stage.pgm_hash) || physics_shape_fallback || automatic_result)) {
                         buffer_cache.NoteResultPages(vsharp.base_address, size);
@@ -6391,12 +6413,16 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                         }
                     }
                     // Raw storage-buffer writes can also make an aliased cached image stale.
+                    const u64 invalidate_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
                     texture_cache.InvalidateMemoryFromGPU(vsharp.base_address, size);
+                    if (sample_bind) hot.invalidate_ns += Detail::ThreadCpuSampleClock::CpuNs() - invalidate_start;
                 }
                 {
+                    const u64 hazard_start = sample_bind ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
                     const bool hazard = runtime.IsBufferAccessed(buffer, bound_buffers.back().offset,
                                                                  bound_buffers.back().size,
                                                                  desc.is_written);
+                    if (sample_bind) hot.hazard_ns += Detail::ThreadCpuSampleClock::CpuNs() - hazard_start;
                     needs_barrier |= hazard;
                     if (reads_new_cloth && !desc.is_written) {
                         NoteClothRead(stage.pgm_hash, buffer_index, vsharp.base_address, size,
@@ -6465,12 +6491,24 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         else if (now - hot.last_wall >= 5000000000ull) {
             if (hot.sampled) {
                 const double scale = 1.0 / (1000.0 * double(hot.sampled));
+                const double attributed = double(hot.obtain_ns)+double(hot.sharp_ns)+
+                    double(hot.clamp_ns)+double(hot.writer_ns)+double(hot.invalidate_ns)+
+                    double(hot.hazard_ns);
                 std::printf("TLOU buffers hot (5 s): sampled-stages=%llu sampled-obtains=%llu "
-                            "stage=%.3fus ObtainBuffer=%.3fus other=%.3fus\n",
+                            "ring=%llu special=%llu guest=%llu "
+                            "stage=%.3fus ObtainBuffer=%.3fus other=%.3fus "
+                            "sharp=%.3fus clamp=%.3fus writer=%.3fus invalidate=%.3fus "
+                            "hazard=%.3fus remaining=%.3fus\n",
                             (unsigned long long)hot.sampled,
                             (unsigned long long)hot.obtains,
+                            (unsigned long long)hot.ring_buffers,
+                            (unsigned long long)hot.special_buffers,
+                            (unsigned long long)hot.guest_buffers,
                             hot.stage_ns*scale,hot.obtain_ns*scale,
-                            double(hot.stage_ns-hot.obtain_ns)*scale);
+                            double(hot.stage_ns-hot.obtain_ns)*scale,
+                            hot.sharp_ns*scale,hot.clamp_ns*scale,
+                            hot.writer_ns*scale,hot.invalidate_ns*scale,
+                            hot.hazard_ns*scale,(double(hot.stage_ns)-attributed)*scale);
             }
             const auto calls=hot.calls;
             hot={};

@@ -1,0 +1,28 @@
+name: TLOU existing memory walk regression ARM64 and x86
+on:
+  push:
+    branches: [fix/tlou-vma-reference-test-20261110]
+    paths: [gow3_pc/**, .github/workflows/tlou-memory-walk-fix.yml]
+permissions:
+  contents: read
+jobs:
+  memory-walk:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile actual runtime implementation and frozen reference tests
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            gow3_pc/tests/test_memory_walk_cost.c -o /tmp/tlou-memory-walk
+          /tmp/tlou-memory-walk --correctness-only
+          /tmp/tlou-memory-walk --two-span-gate
+      - name: Address and UB sanitizer regressions
+        run: |
+          cc -std=c11 -O1 -g -UNDEBUG -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -pthread \
+            gow3_pc/tests/test_memory_walk_cost.c -o /tmp/tlou-memory-walk-san
+          /tmp/tlou-memory-walk-san --correctness-only

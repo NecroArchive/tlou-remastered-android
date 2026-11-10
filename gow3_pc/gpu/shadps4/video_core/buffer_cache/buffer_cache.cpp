@@ -5654,6 +5654,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         u64 calls=0,samples=0,total=0,readbacks=0,static_probe=0,
             resident=0,synchronize=0,writes=0;
         u64 clean_hits=0,stream_hits=0,arena_hits=0,stream_deferred=0;
+        u64 light_samples=0,light_total_ns=0;
         u64 last_wall=0;
     };
     static thread_local ObtainHot hot{};
@@ -5661,7 +5662,14 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         const char* env=std::getenv("TLOU_CPU_PHASE_SAMPLES");
         return env && env[0]=='1';
     }();
+    // Two disjoint sampling cohorts: deep probes resolve WHERE CPU time
+    // goes, but their extra CPU-clock reads pollute the measured total.
+    // Light probes read the CPU clock only at entry/exit, providing an
+    // independent real-world baseline (comparable to the earlier logs).
     const bool sample_obtain = profiling && ((++hot.calls & 8191u) == 0u);
+    const bool sample_light = profiling && ((hot.calls & 8191u) == 4096u);
+    const u64 light_start_ns = sample_light ?
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
     const u64 start_ns = sample_obtain ? Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
     texture_cache.ResolveReadbacks(device_addr, size, true, ReadbackSource::BufferObtain);
     const u64 after_readbacks_ns = sample_obtain ?
@@ -5679,6 +5687,10 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     const u64 after_static_probe_ns = sample_obtain ?
         Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
     const auto finish = [&](std::pair<const Buffer*, u64> result, unsigned kind) {
+        if (sample_light) {
+            ++hot.light_samples;
+            hot.light_total_ns += Vulkan::Detail::ThreadCpuSampleClock::CpuNs() - light_start_ns;
+        }
         if (sample_obtain) {
             ++hot.samples;
             hot.total += Vulkan::Detail::ThreadCpuSampleClock::CpuNs() - start_ns;
@@ -5692,6 +5704,13 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             const u64 now = Vulkan::Detail::ThreadCpuSampleClock::WallNs();
             if (!hot.last_wall) hot.last_wall = now;
             else if (now - hot.last_wall >= 5000000000ull) {
+                if (hot.light_samples) {
+                    std::printf("TLOU ObtainBuffer baseline (5 s): light-samples=%llu "
+                                "CPU=%.3fus (two clock calls only; deep probe has "
+                                "injected CPU-clock overhead)\n",
+                                (unsigned long long)hot.light_samples,
+                                double(hot.light_total_ns) / (1000.0 * hot.light_samples));
+                }
                 if (hot.samples) {
                     const double scale = 1.0 / (1000.0 * double(hot.samples));
                     const double assigned = double(hot.readbacks) + double(hot.static_probe) +

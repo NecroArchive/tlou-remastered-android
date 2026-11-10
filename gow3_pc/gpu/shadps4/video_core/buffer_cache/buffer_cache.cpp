@@ -5857,7 +5857,10 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     EnsureResident(arena, first_block, last_block);
     if (sample_obtain) hot.resident +=
         Vulkan::Detail::ThreadCpuSampleClock::CpuNs() - resident_start;
-    const u64 uploaded_before = Gow3Stats::buffer_upload_bytes.load(std::memory_order_relaxed);
+    // Only the detailed buffer-statistics path consumes this counter.
+    // Do not perform a global atomic load on every resident arena binding.
+    const u64 uploaded_before = stats
+        ? Gow3Stats::buffer_upload_bytes.load(std::memory_order_relaxed) : 0;
     const u64 sync_start = sample_obtain ?
         Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
     SynchronizeMemory(arena, device_addr, size, is_written, is_texel_buffer);
@@ -6066,6 +6069,14 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
 }
 
 void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_block) {
+    // Most TLOU bindings revisit fully resident arena blocks. A full hit
+    // requires no gap-list construction, allocation, or sparse bind. The
+    // interval set's Contains() verifies EVERY block, including a range
+    // crossing multiple adjacent backing allocations. Any hole falls
+    // through to the original gap/bind path unchanged.
+    if (resident_ranges.Contains(first_block, last_block + 1)) {
+        return;
+    }
     u32 resident_blocks{};
     IntervalList bind_ranges;
     resident_ranges.ForEachGap(first_block, last_block + 1, [&](u64 start, u64 end) {

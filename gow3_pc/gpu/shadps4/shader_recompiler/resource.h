@@ -158,9 +158,14 @@ struct BufferResource {
         return buffer_type != BufferType::Guest;
     }
 
-    constexpr AmdGpu::Buffer GetSharp(const auto& info) const noexcept {
+    // The frame's flat user-data pointer does not change during one
+    // CollectRingBindings / BindBuffers stage. Reuse it for all descriptors
+    // instead of repeatedly resolving Info::Snapshot() for every V#.
+    // Each descriptor is still fetched afresh: never reuse its guest data
+    // between dispatches or before a GPU readback.
+    constexpr AmdGpu::Buffer GetSharp(const auto& info, const u32* flat_data) const noexcept {
         AmdGpu::Buffer buffer;
-        if (!sharp_fetch.Fetch(info.FlatUserData().data(), &buffer)) {
+        if (!sharp_fetch.Fetch(flat_data, &buffer)) {
             return AmdGpu::Buffer::Null();
         }
         if (post_op == SharpFetchPostOp::BitwiseOrDw1WithImm) {
@@ -172,6 +177,9 @@ struct BufferResource {
             return AmdGpu::Buffer::Null();
         }
         return buffer;
+    }
+    constexpr AmdGpu::Buffer GetSharp(const auto& info) const noexcept {
+        return GetSharp(info, info.FlatUserData().data());
     }
 };
 using BufferResourceList = boost::container::static_vector<BufferResource, NUM_BUFFERS>;

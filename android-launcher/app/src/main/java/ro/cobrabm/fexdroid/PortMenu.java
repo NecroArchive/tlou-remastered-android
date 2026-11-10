@@ -235,6 +235,10 @@ final class PortMenu {
                 heading("AJUSTES");
                 language();
                 toggle("gpu_turbo","Adreno Turbo (sem root)",false);
+                toggle("adpf","ADPF — ajuste dinâmico de desempenho",false);
+                note("Usa dicas de desempenho na thread nativa de comandos. "
+                     +"Compatível com Android 13+ quando suportado pelo aparelho. "
+                     +"Reinicie o jogo para aplicar; não desativa os limites térmicos.");
                 note("Usa KGSL sem root; respeita limites térmicos. Pode ser ativado ou desativado durante o jogo.");
                 toggle("launch_direct","Entrar direto no jogo",false);
                 break;

@@ -1880,6 +1880,11 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
     }
     const u64 alignment = std::max<u64>(instance.StorageMinAlignment(),
                                         instance.UniformMinAlignment());
+    static const bool hoist_flat = [] {
+        const char* env = std::getenv("TLOU_HOIST_SHARP_FLAT");
+        return !(env && env[0] == '0' && env[1] == '\0');
+    }();
+    const u32* flat_data = hoist_flat ? stage.FlatUserData().data() : nullptr;
     // gow3 diagnostics (GOW3_RING_STATS=1): guest copies per 5 s, their sizes, and how many
     // repeat a range already copied since the last flush.
     static const bool ring_stats = [] {
@@ -1975,7 +1980,8 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         }
         const u64 sharp_ns = sample ? Detail::ThreadCpuSampleClock::CpuNs() : 0;
         const auto vsharp = prepared_stage ? prepared_stage->buffer_sharps[index]
-                                           : desc.GetSharp(stage);
+                                           : (hoist_flat ? desc.GetSharp(stage, flat_data)
+                                                         : desc.GetSharp(stage));
         if (sample) {
             hot.sharp_ns += Detail::ThreadCpuSampleClock::CpuNs() - sharp_ns;
             ++hot.binds;
@@ -5751,6 +5757,12 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                              Shader::PushData& push_data, u32& write_index) {
     const u64 alignment = instance.StorageMinAlignment();
     const bool compute_stage = stage.hw_stage == Shader::HwStage::Compute;
+    // Hoist a stable per-stage user-data view only, never a V# value.
+    static const bool hoist_flat = [] {
+        const char* env = std::getenv("TLOU_HOIST_SHARP_FLAT");
+        return !(env && env[0] == '0' && env[1] == '\0');
+    }();
+    const u32* flat_data = hoist_flat ? stage.FlatUserData().data() : nullptr;
     ClothTrace(stage.pgm_hash, ~0u, 0, 0, false, compute_stage);
     // Precompute one packet-stage match rather than searching ring_stages
     // again for every buffer. O(1) for a single ring binding and O(N) across
@@ -5783,7 +5795,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 CheckClothInputs(memory, buffer_cache, stage.pgm_hash, buffer_index, ring->address,
                                  ring->size, true);
             } else {
-                const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+                const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : (hoist_flat ? desc.GetSharp(stage, flat_data) : desc.GetSharp(stage));
                 CheckClothInputs(memory, buffer_cache, stage.pgm_hash, buffer_index, vsharp.base_address,
                                  vsharp.GetSize(), false);
             }
@@ -5800,7 +5812,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 return std::pair<VAddr, VAddr>{lo, hi};
             }();
             if (writers_range.second > writers_range.first) {
-                const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+                const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : (hoist_flat ? desc.GetSharp(stage, flat_data) : desc.GetSharp(stage));
                 const VAddr address = vsharp.base_address;
                 const u64 size = vsharp.GetSize();
                 if (address < writers_range.second && address + size > writers_range.first) {
@@ -5830,7 +5842,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     address = ring->address;
                     size = ring->size;
                 } else {
-                    const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+                    const auto vsharp = prepared ? prepared->buffer_sharps[buffer_index] : (hoist_flat ? desc.GetSharp(stage, flat_data) : desc.GetSharp(stage));
                     address = vsharp.base_address;
                     size = vsharp.GetSize();
                     sharp_text = fmt::format(" (format {}/{}, stride {}, records {}, swizzle {}{}{}{})",
@@ -5924,7 +5936,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             }
         } else {
             const auto vsharp =
-                prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+                prepared ? prepared->buffer_sharps[buffer_index] : (hoist_flat ? desc.GetSharp(stage, flat_data) : desc.GetSharp(stage));
             if (vsharp.GetSize() == 864 && gbuffer_draw &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 camera_motion->OnConstants(reinterpret_cast<const float*>(vsharp.base_address));

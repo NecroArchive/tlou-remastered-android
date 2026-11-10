@@ -51,19 +51,24 @@ int main() {
         const auto* now=Vulkan::Detail::FindPacketRingBinding(st,slot);
         assert(old==now);
     }
-    // Reproduce a hot stage with many descriptors but no ring snapshots
-    // (Stage B still has pending buffers for the other shader stages).
-    constexpr unsigned N=1800000;
+    // Vary shader and ring-stage availability between submissions, while
+    // keeping 32 consecutive descriptors for each submission as in the game.
+    std::array<unsigned,8192> lookup_shaders{};
+    for(auto& id:lookup_shaders)id=gen()%8;
+    constexpr unsigned Packets=60000;
+    constexpr unsigned N=Packets*32;
     auto timing=[&](bool fast){
         const auto start=std::chrono::steady_clock::now();
         std::uint64_t sum=0;
-        const void* missing=&shader_info[2];
-        const auto* selected=fast?SelectStage(stages,6,missing):nullptr;
-        for(unsigned i=0;i<N;++i){
-            const auto* entry=fast
-                ? Vulkan::Detail::FindPacketRingBinding(selected,i&31u)
-                : Previous(stages,6,missing,i&31u);
-            if(entry)sum+=entry->data;
+        for(unsigned packet=0;packet<Packets;++packet) {
+            const void* shader=&shader_info[lookup_shaders[packet%lookup_shaders.size()]];
+            const auto* selected=fast?SelectStage(stages,6,shader):nullptr;
+            for(unsigned slot=0;slot<32;++slot) {
+                const auto* entry=fast
+                    ? Vulkan::Detail::FindPacketRingBinding(selected,slot)
+                    : Previous(stages,6,shader,slot);
+                if(entry)sum+=entry->data;
+            }
         }
         observed=observed+sum;
         return std::chrono::duration<double,std::nano>(
@@ -76,7 +81,7 @@ int main() {
     }
     std::sort(old.begin(),old.end());std::sort(now.begin(),now.end());
     std::printf("TLOU ring stage fallback: 800k randomized exact lookups PASS; "
-                "missing-stage old=%.2fns fast=%.2fns ratio=%.3f\n",
+                "mixed-stage old=%.2fns fast=%.2fns ratio=%.3f\n",
                 old[2],now[2],now[2]/old[2]);
     assert(now[2]<old[2]);
 }

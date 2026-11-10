@@ -1,0 +1,29 @@
+name: TLOU VMA hot-cache native ARM64 x86 proof
+on:
+  push:
+    branches: [perf/tlou-native-vma-hot-cache-20261110]
+    paths: [gow3_pc/**, .github/workflows/tlou-vma-hot-validation.yml]
+permissions:
+  contents: read
+jobs:
+  vma-hot-cache:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Production predicate equivalence and native benchmark
+        run: |
+          cc -std=c11 -D_POSIX_C_SOURCE=200809L -O3 -UNDEBUG \
+            -Wall -Wextra -Werror -I gow3_pc/src \
+            gow3_pc/tests/test_tlou_region_hot_cache.c -o /tmp/tlou-vma
+          /tmp/tlou-vma
+      - name: Address + UB sanitizers (exact map and remap)
+        run: |
+          cc -std=c11 -D_POSIX_C_SOURCE=200809L -O1 -UNDEBUG -g \
+            -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -I gow3_pc/src \
+            gow3_pc/tests/test_tlou_region_hot_cache.c -o /tmp/tlou-vma-san
+          /tmp/tlou-vma-san

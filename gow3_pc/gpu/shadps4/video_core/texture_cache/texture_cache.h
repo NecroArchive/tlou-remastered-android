@@ -345,6 +345,12 @@ public:
         return {};
     }
 
+    /// PC v0.1.7: find a depth image aliased to a stencil-plane address.
+    /// Required to exclude stencil copies from the ordered buffer transfer.
+    [[nodiscard]] ImageId FindStencilPlaneDepth(VAddr address);
+    /// Returns the stencil's separate 8-bit integer texture, if present.
+    [[nodiscard]] ImageId FindStencilTexture(VAddr address);
+
     enum class MetaType {
         CMask,
         FMask,

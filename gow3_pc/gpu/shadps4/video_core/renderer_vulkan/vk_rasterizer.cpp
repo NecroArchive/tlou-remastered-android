@@ -2004,7 +2004,17 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
                     const char* env = std::getenv("GOW3_TLOU_PACKET_FLATBUF");
                     return !(env && env[0] == '0');
                 }();
-                if (!packet_flatbuf || LateConstantsEnabled()) {
+                // Offloading every tiny Flatbuf caused 3-4x higher sampled
+                // Stage-B BindBuffers CPU in TLOU log 23 while Stage-A did
+                // not become less saturated. Keep small, frequent flattened
+                // buffers in the constant ring; only offload >=4 KiB payloads
+                // whose memcpy cost can outweigh another StreamBuffer Map /
+                // Commit on the recording thread. Both paths retain exact
+                // per-packet flattened bytes. No new user setting.
+                constexpr u64 MinFlatbufOffloadBytes = 4 * 1024;
+                const u64 flat_bytes = u64(stage.flattened_ud_buf.size()) * sizeof(u32);
+                if (!packet_flatbuf || LateConstantsEnabled() ||
+                    flat_bytes < MinFlatbufOffloadBytes) {
 #endif
                     copy(index, stage.flattened_ud_buf.data(), 0,
                          stage.flattened_ud_buf.size() * sizeof(u32));
@@ -5861,6 +5871,11 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                              stage.buffers.size() >= MinCursorBuffers;
     Detail::RingBindingCursor<RingBinding> ring_cursor(
         sorted_fast ? ring_stage->bindings : nullptr, sorted_fast ? ring_stage->count : 0);
+    // One flattened user-data blob can be referenced by multiple Flatbuf
+    // bindings of the SAME shader stage. The packet snapshot is immutable
+    // throughout this call: reuse its upload offset instead of repeated
+    // Map/memcpy/Commit operations on Stage B. Keep late-diagnostic behavior.
+    std::optional<u64> stage_flatbuf_offset;
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {
         const auto& desc = stage.buffers[buffer_index];
         const RingBinding* ring = sorted_fast ? ring_cursor.Take(buffer_index) :
@@ -5970,9 +5985,14 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     FrameCapture::Buffer(stage.pgm_hash, binding.buffer, 0,
                                          stage.FlatUserData().data(), ubo_size);
                 }
+                const bool late_flat = LateConstantsEnabled();
                 const u64 offset =
-                    vk_buffer.Copy(stage.FlatUserData().data(), ubo_size, alignment);
-                if (LateConstantsEnabled()) {
+                    stage_flatbuf_offset ? *stage_flatbuf_offset
+                                         : vk_buffer.Copy(stage.FlatUserData().data(), ubo_size, alignment);
+                if (!stage_flatbuf_offset && !late_flat) {
+                    stage_flatbuf_offset = offset;
+                }
+                if (late_flat) {
                     NoteLateFlatCopy(vk_buffer, offset, stage, ubo_size, 0);
                 }
                 buffer_infos.emplace_back(vk_buffer.Handle(), offset, ubo_size);

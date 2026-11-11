@@ -324,6 +324,15 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
   -o "$test_dir/tlou-large-scalar-copy"
 "$test_dir/tlou-large-scalar-copy"
 
+# Actual Android stage-A/stage-B synchronization: ensure that a waiting
+# producer cannot miss completed packet notifications (40k fences + 2k
+# capacity probes). CPU is parked only after the bounded spin budget.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_draw_pipe_progress_wait.cpp \
+  -o "$test_dir/tlou-pipe-wait"
+"$test_dir/tlou-pipe-wait"
+
 # Stage-A pending write pruning: compare every resulting range under
 # 180k interleaved merge/commit/retirement events, then require measured
 # reduction of needless vector walks on x86/ARM host CPU. Never defer a

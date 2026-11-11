@@ -1727,13 +1727,10 @@ void Rasterizer::WaitPendingWrites(const std::vector<PendingWrite>& writes, VAdd
             until = std::max(until, write.position);
         }
     }
-    for (u32 spins = 0; !draw_pipe->Reached(until); ++spins) {
-        if (spins < 4096) {
-            COMMON_CPU_RELAX();
-        } else {
-            std::this_thread::yield();
-        }
-    }
+    // Stage B records writes in packet order. Wait for this precise
+    // dependency using the same bounded spin + notified sleep as Drain().
+    // A/B fallback GOW3_TLOU_PIPE_PARK=0 preserves the old busy wait.
+    draw_pipe->WaitUntil(until);
 }
 
 bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
@@ -2487,6 +2484,17 @@ void Rasterizer::PrintPipeStats() {
                         pending_writes.size());
             pending_prune_skips = pending_prune_scans = pending_prune_erased = 0;
             pending_index_small_prunes = 0;
+            // Sync contention is distinct from command-packet CPU work:
+            // report actual producer waits / long parking once per 5 sec.
+            const auto sync = draw_pipe->TakeSyncStats();
+            std::printf("TLOU pipe sync (5 s): drain-waits=%llu capacity-waits=%llu "
+                        "dependency-waits=%llu parks=%llu parked=%.3fms "
+                        "(wall time, waits overlap other thread work)\n",
+                        (unsigned long long)sync.drain_waits,
+                        (unsigned long long)sync.capacity_waits,
+                        (unsigned long long)sync.dependency_waits,
+                        (unsigned long long)sync.parks,
+                        double(sync.parked_ns) / 1e6);
         }
     }
     static const bool stats = std::getenv("GOW3_FRAME_STATS") != nullptr;

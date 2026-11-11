@@ -309,6 +309,13 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
   -o "$test_dir/tlou-graphics-cached-hit"
 "$test_dir/tlou-graphics-cached-hit"
 
+# Android Stage A should not duplicate a packet-owned Flatbuf snapshot in the
+# constant ring; the recording thread consumes the exact original packet bytes.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  gow3_pc/tests/test_tlou_flatbuf_packet_snapshot.cpp \
+  -o "$test_dir/tlou-flatbuf-packet"
+"$test_dir/tlou-flatbuf-packet"
+
 # TLOU PC v0.1.7: large scalar compute copies run as ordered Vulkan
 # buffer transfers ONLY for exact non-overlapping safe ranges.
 g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \

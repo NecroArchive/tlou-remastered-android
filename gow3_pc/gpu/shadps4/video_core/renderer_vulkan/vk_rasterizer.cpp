@@ -1755,9 +1755,23 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
         } else {
             ++pending_prune_scans;
             const size_t before_erase = pending_writes.size();
-            std::erase_if(pending_writes, [&](const PendingWrite& write) {
-                return write.position <= completed;
-            });
+            if (pending_prune_gate.AllRetired(completed)) {
+                // All packets in the current write set have completed.
+                // Fast reset keeps the EXACT same state as the regular erase
+                // and index/filter rebuild, but does no per-write scanning.
+                pending_writes.clear();
+                pending_prune_erased += before_erase;
+                pending_prune_gate.Rebuild(pending_writes);
+                pending_write_index.Rebuild(pending_writes);
+                ++pending_index_small_prunes;
+                pending_min = ~VAddr{0};
+                pending_max = 0;
+                pending_hint = 0;
+                pending_filter.fill(0);
+            } else {
+                std::erase_if(pending_writes, [&](const PendingWrite& write) {
+                    return write.position <= completed;
+                });
             // Rebuild exactly when erase shifted vector indices.
             if (before_erase != pending_writes.size()) {
                 pending_prune_erased += before_erase - pending_writes.size();
@@ -1775,6 +1789,7 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
                     FilterPendingRange(write.begin, write.end);
                 }
             }
+            } // partial retirement
         }
     }
     const VAddr end = address + size;
@@ -1976,8 +1991,26 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         if (desc.IsSpecial()) {
             if (desc.buffer_type == Shader::BufferType::Flatbuf &&
                 !stage.flattened_ud_buf.empty()) {
-                copy(index, stage.flattened_ud_buf.data(), 0,
-                     stage.flattened_ud_buf.size() * sizeof(u32));
+#ifdef __ANDROID__
+                // The packet ALREADY copies all flattened user data on Stage A,
+                // and RunDrawPacket installs its immutable per-draw snapshot on
+                // Stage B. Writing the same Flatbuf into the constant ring
+                // DUPLICATED that copy on the saturated command thread.
+                // Let BindBuffers' existing Flatbuf branch upload the packet
+                // snapshot on the recording thread, which has spare CPU time.
+                // Keep old early capture for late-constant diagnostics.
+                // GOW3_TLOU_PACKET_FLATBUF=0 restores the prior path.
+                static const bool packet_flatbuf = [] {
+                    const char* env = std::getenv("GOW3_TLOU_PACKET_FLATBUF");
+                    return !(env && env[0] == '0');
+                }();
+                if (!packet_flatbuf || LateConstantsEnabled()) {
+#endif
+                    copy(index, stage.flattened_ud_buf.data(), 0,
+                         stage.flattened_ud_buf.size() * sizeof(u32));
+#ifdef __ANDROID__
+                }
+#endif
             }
             continue;
         }

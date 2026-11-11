@@ -21,6 +21,21 @@ class PendingPruneGate {
 public:
     void Note(std::uint64_t position) noexcept {
         oldest_ = std::min(oldest_, position);
+        // An uncommitted packet is recorded as UINT64_MAX. Stage A never
+        // prunes while such indices exist, and Commit() calls Note() again
+        // with their actual packet end. Ignore only that temporary sentinel.
+        if (position != std::numeric_limits<std::uint64_t>::max()) {
+            newest_ = std::max(newest_, position);
+            have_committed_ = true;
+        }
+    }
+
+    // The 30k+ guest-ring prune passes every five seconds often retire the
+    // ENTIRE short write set. An upper bound on completion positions lets us
+    // clear it in O(1), instead of repeated erase/move/index/filter rebuilds.
+    // Called only when there are no uncommitted indices left.
+    [[nodiscard]] bool AllRetired(std::uint64_t completed) const noexcept {
+        return have_committed_ && newest_ <= completed;
     }
 
     [[nodiscard]] bool MayRetire(std::uint64_t completed) const noexcept {
@@ -30,15 +45,20 @@ public:
     template <class Write>
     void Rebuild(const std::vector<Write>& writes) noexcept {
         oldest_ = std::numeric_limits<std::uint64_t>::max();
+        newest_ = 0;
+        have_committed_ = false;
         for (const auto& write : writes) {
             Note(write.position);
         }
     }
 
     [[nodiscard]] std::uint64_t Oldest() const noexcept { return oldest_; }
+    [[nodiscard]] std::uint64_t Newest() const noexcept { return newest_; }
 
 private:
     std::uint64_t oldest_ = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t newest_ = 0;
+    bool have_committed_ = false;
 };
 
 } // namespace Vulkan::Detail

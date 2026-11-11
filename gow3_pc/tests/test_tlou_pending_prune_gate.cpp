@@ -58,6 +58,12 @@ struct State {
         if (optimized && !gate.MayRetire(completed)) { ++skips; return; }
         ++scans;
         const std::size_t before = writes.size();
+        if (optimized && gate.AllRetired(completed)) {
+            writes.clear();
+            erased += before;
+            gate.Rebuild(writes);
+            return;
+        }
         std::erase_if(writes, [completed](const Write& w) {
             return w.position <= completed;
         });
@@ -99,6 +105,13 @@ void Correctness() {
             next.Prune(completed, true);
             assert(legacy.writes == next.writes);
             assert(legacy.uncommitted_indices == next.uncommitted_indices);
+            if (next.uncommitted_indices.empty() && !next.writes.empty()) {
+                // The newest bound may be stale/higher after merges, but it
+                // must NEVER be less than a pending real packet position.
+                for (const auto& w : next.writes) {
+                    assert(w.position <= next.gate.Newest());
+                }
+            }
             if ((i & 511) == 0 && !next.writes.empty()) {
                 const auto oldest = std::min_element(next.writes.begin(), next.writes.end(),
                    [](const Write& a, const Write& b) { return a.position < b.position; });
@@ -119,6 +132,19 @@ void Correctness() {
     assert(legacy.writes == next.writes);
     assert(next.writes.empty());
     assert(next.skips > 0 && next.scans > 0);
+    // Sentinel -> committed packet end and then a full retirement must
+    // allow O(1) clearing; stale maximums must reset for the next batch.
+    State fast_clear;
+    fast_clear.Add(0x1000, 64, Uncommitted);
+    assert(!fast_clear.gate.AllRetired(0));
+    fast_clear.Commit(300);
+    assert(!fast_clear.gate.AllRetired(299));
+    assert(fast_clear.gate.AllRetired(300));
+    fast_clear.Prune(300, true);
+    assert(fast_clear.writes.empty());
+    assert(!fast_clear.gate.AllRetired(300));
+    fast_clear.Add(0x2000, 64, 400);
+    assert(!fast_clear.gate.AllRetired(300));
     std::printf("TLOU pending prune parity: 180000 interleaved events, "
                 "merge/commit/retirement, skipped=%llu, scanned=%llu, erased=%llu passed\n",
                 static_cast<unsigned long long>(next.skips),

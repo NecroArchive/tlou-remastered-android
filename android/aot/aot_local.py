@@ -222,7 +222,8 @@ def main(argv=None):
                    "--boot", str(staged), "--game-dir", str(game), "--so", str(so),
                    "--stats", str(aot / "compile.txt"), "--jobs", str(args.jobs),
                    "--shards", str(args.shards), "--target", "aarch64",
-                   "-O1", "--no-nice", "--progress", "--resume"]
+                   "--host", "armv8.2", "--tso", "-O1", "--no-nice",
+                   "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]
         report = {"version": version, "original_game": str(original_game),
@@ -230,7 +231,9 @@ def main(argv=None):
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),
                   "verified_executable_bytes": verified_code_bytes,
                   "input_boot": check_boot(boot), "translation_command": command,
-                  "runtime_integrated": False, "status": "staged"}
+                  "runtime_integrated": False, "status": "staged",
+                  "guest_memory_model": "conservative_TSO",
+                  "x87_mode_warning": "bb-recomp uses reduced precision x87, while TLOU FEX defaults to full; do not execute without compatibility validation"}
         (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\n")
         if args.dry_run:
             print("Input verified; BBPROBE5 adapter staged. AOT NOT YET COMPILED.")

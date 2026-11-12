@@ -139,6 +139,7 @@ static void correctness(void) {
         }
     }
     free(a); free(b);
+    assert(tlou_clamp_copy_hits>0); // the actual new fast path executed, not just fallback
     puts("Memory walks: 50000 reference comparisons passed (gaps, reservations, aliases, zero size, cache and generation changes)");
 }
 static volatile uint64_t result_sink;
@@ -392,6 +393,41 @@ static void benchmark_two_span(int strict_gate) {
         }
     }
 }
+// A/B the full production Stage-A sequence, not a cached pointer alone.
+static __attribute__((noinline)) double bench_clamp_copy_hot(int reuse) {
+    unsigned char result[256];
+    uint64_t checksum=0;
+    const uintptr_t addr=vmas[1].start+64;
+    const uint64_t size=128;
+    cold_cache();
+    tlou_clamp_copy.size=0;
+    tlou_clamp_copy_enabled=reuse;
+    assert(runtime_memory_clamp(addr,size)==size);
+    const uint64_t start=now_ns();
+    for (unsigned i=0;i<300000;++i) {
+        assert(runtime_memory_clamp(addr,size)==size);
+        runtime_memory_copy_backing(addr,result,size);
+        checksum+=result[i & 127u];
+    }
+    result_sink=checksum;
+    tlou_clamp_copy_enabled=1;
+    return (double)(now_ns()-start)/300000;
+}
+static void benchmark_clamp_copy_hot(void) {
+    // Ensure a real, backed mapping after correctness() changes VMA kinds.
+    write_lock();
+    vmas[1].kind=KIND_DIRECT; vmas[1].phys=PAGE;
+    write_unlock();
+    double old[9],next[9];
+    for(unsigned i=0;i<9;++i) {
+        if(i&1) {next[i]=bench_clamp_copy_hot(1);old[i]=bench_clamp_copy_hot(0);}
+        else {old[i]=bench_clamp_copy_hot(0);next[i]=bench_clamp_copy_hot(1);}
+    }
+    qsort(old,9,sizeof(double),compare_double);
+    qsort(next,9,sizeof(double),compare_double);
+    printf("TLOU one-VMA clamp+copy: baseline=%.2fns reuse=%.2fns ratio=%.3f (host, not FPS)\n",
+           old[4],next[4],next[4]/old[4]);
+}
 static void count_work(void) {
 #ifdef TEST_VMA_LOOKUP_COUNTS
     unsigned char out[4*16384];
@@ -419,6 +455,7 @@ int main(int argc,char **argv) {
     correctness_two_span();
     const int two_span_gate=argc==2 && strcmp(argv[1],"--two-span-gate")==0;
     if(two_span_gate) benchmark_two_span(1);
+    if(argc<2 || strcmp(argv[1],"--correctness-only")) benchmark_clamp_copy_hot();
     if(argc<2 || (strcmp(argv[1],"--correctness-only") && !two_span_gate)) {
         benchmark_two_span(0);
         benchmark();

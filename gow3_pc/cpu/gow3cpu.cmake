@@ -5,6 +5,9 @@ target_include_directories(gow3cpu PRIVATE "${GOW3CPU_DIR}/../src" "${CMAKE_SOUR
 target_link_libraries(gow3cpu PRIVATE FEXCore Common JemallocLibs fmt::fmt)
 target_link_options(gow3cpu PRIVATE -Wl,--no-undefined)
 target_compile_options(gow3cpu PRIVATE ${FEX_TUNE_COMPILE_FLAGS})
+if(TLOU_AOT_ABI_CHECK)
+  target_compile_definitions(gow3cpu PRIVATE TLOU_AOT_BRIDGE_CHECK=1)
+endif()
 set_target_properties(gow3cpu PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
   C_VISIBILITY_PRESET hidden

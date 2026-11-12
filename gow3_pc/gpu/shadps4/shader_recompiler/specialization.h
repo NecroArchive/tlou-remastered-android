@@ -164,6 +164,61 @@ struct StageSpecialization {
         }
     }
 
+
+    // A directly comparable specialization for compute programs with buffers
+    // only. The original constructor creates/fills several small_vectors and
+    // the caller searches the permutation list on EVERY dispatch, even for a
+    // module whose buffer formats and strides did not change. Re-read the
+    // CURRENT per-dispatch SRT values, but compare their relevant specialization
+    // fields directly to the last compiled module. It is a MISS for all
+    // images/samplers/FMAsks/fetch/tessellation cases; those retain the full path.
+    //
+    // This intentionally mirrors operator==(cached, fresh), including its
+    // use of FRESH resource-validity bits (not cached bitset) and its special
+    // no-bindings start comparison. Never cache guest pointers or SRT bytes.
+    [[nodiscard]] bool MatchesCurrentBufferOnlyCompute(
+        const Info& current, const RuntimeInfo& current_runtime,
+        const Backend::Bindings& current_start) const {
+        if (!Valid() || current.sw_stage != SwStage::Compute ||
+            current.has_fetch_shader || !current.images.empty() ||
+            !current.samplers.empty() || !current.fmasks.empty() ||
+            current.buffers.size() != buffers.size() || !images.empty() ||
+            !samplers.empty() || !fmasks.empty() || fetch_shader_data ||
+            !vs_attribs.empty() || runtime_info != current_runtime) {
+            return false;
+        }
+        bool current_has_binding = false;
+        for (u32 i = 0; i < current.buffers.size(); ++i) {
+            const auto& desc = current.buffers[i];
+            const auto sharp = desc.GetSharp(current);
+            if (!sharp) {
+                continue; // exactly as ForEachSharp's empty specialization
+            }
+            current_has_binding = true;
+            BufferSpecialization fresh{};
+            fresh.stride = sharp.GetStride();
+            fresh.is_formatted = desc.is_formatted;
+            fresh.swizzle_enable = sharp.swizzle_enable;
+            if (fresh.is_formatted) {
+                fresh.data_format = static_cast<u32>(sharp.GetDataFmt());
+                fresh.num_format = static_cast<u32>(sharp.GetNumberFmt());
+                fresh.dst_select = sharp.DstSelect();
+                fresh.num_conversion = sharp.GetNumberConversion();
+            }
+            if (fresh.swizzle_enable) {
+                fresh.index_stride = sharp.index_stride;
+                fresh.element_size = sharp.element_size;
+            }
+            if (buffers[i] != fresh) {
+                return false;
+            }
+        }
+        // The original cached == freshly-built specialization ignores start
+        // only when BOTH bitsets are empty. A changed buffer binding layout
+        // must still trigger the complete Shader::StageSpecialization path.
+        return (!current_has_binding && bitset.none()) || start == current_start;
+    }
+
     void ForEachSharp(auto& spec_list, auto& desc_list, auto&& func) {
         for (const auto& desc : desc_list) {
             auto& spec = spec_list.emplace_back();

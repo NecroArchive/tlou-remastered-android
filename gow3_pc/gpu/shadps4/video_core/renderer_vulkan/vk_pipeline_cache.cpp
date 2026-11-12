@@ -2211,6 +2211,72 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
             memo_stats.started = now;
         }
     }
+    // Exact, allocation-free fast check for compute shaders that use ONLY
+    // storage buffers. Unlike the zero-hit full-flatbuf memo, changed guest
+    // addresses alone do not invalidate a shader permutation; the properties
+    // that DO affect the Vulkan module are checked directly on every dispatch.
+    // If any property differs, take the untouched full specialization path.
+    // Experimental fallback GOW3_TLOU_BUFFER_SPEC_FAST=0.
+    static const bool compute_buffer_fast = [] {
+#ifdef __ANDROID__
+        const char* env = std::getenv("GOW3_TLOU_BUFFER_SPEC_FAST");
+        return !(env && env[0] == '0' && env[1] == '\0');
+#else
+        return false;
+#endif
+    }();
+    if (hw_stage == HwStage::Compute && compute_buffer_fast && !compute_memo_enabled) {
+        struct FastStats {
+            u64 calls=0, eligible=0, hits=0;
+            std::chrono::steady_clock::time_point last{};
+        };
+        static thread_local FastStats counts{};
+        ++counts.calls;
+        if (program->last_used < program->modules.size()) {
+            const size_t idx = program->last_used;
+            const auto& cached = program->modules[idx].spec;
+            const bool eligible = !info.has_fetch_shader && info.images.empty() &&
+                                  info.fmasks.empty() && info.samplers.empty();
+            if (eligible) ++counts.eligible;
+            if (eligible && cached.MatchesCurrentBufferOnlyCompute(info, runtime_info, binding)) {
+                // A/B verification: reconstruct the exact old specialization
+                // on demand; a mismatch falls through, never using a bad module.
+                static const bool verify = [] {
+                    const char* v = std::getenv("GOW3_TLOU_BUFFER_SPEC_VERIFY");
+                    return v && v[0] == '1';
+                }();
+                bool equal = true;
+                if (verify) {
+                    const auto fresh = Shader::StageSpecialization(info, runtime_info, profile, binding);
+                    equal = cached == fresh;
+                    if (!equal) std::fprintf(stderr,
+                        "TLOU buffer-only compute direct match FAILED: shader %#llx\n",
+                        static_cast<unsigned long long>(params.hash));
+                }
+                if (equal) {
+                    ++counts.hits;
+                    info.AddBindings(binding);
+                    const u64 hash = TlouComputeSplit::PermutationKey(
+                        params.hash, HashCombine(params.hash, idx));
+                    return std::make_tuple(&program->info, program->modules[idx].module,
+                        AssignFetch(fetch, cached.fetch_shader_data), hash);
+                }
+            }
+        }
+        if ((counts.calls & 65535u) == 0u) {
+            const auto now=std::chrono::steady_clock::now();
+            if (counts.last == std::chrono::steady_clock::time_point{}) {
+                counts.last=now;
+            } else if (now-counts.last >= std::chrono::seconds(5)) {
+                std::printf("TLOU compute buffer-only fast (5 s): calls=%llu eligible=%llu hits=%llu\n",
+                    (unsigned long long)counts.calls,
+                    (unsigned long long)counts.eligible,
+                    (unsigned long long)counts.hits);
+                counts={};
+                counts.last=now;
+            }
+        }
+    }
     if (compute_memo_enabled && hw_stage == HwStage::Compute &&
         program->compute_perm_memo.Matches(info.ProgramBase(), info.FlatUserData(),
                                           runtime_info, program->modules.size())) {

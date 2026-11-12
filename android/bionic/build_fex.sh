@@ -35,6 +35,7 @@ cmake -S "$fex" -B "$output/fex" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_FEX_INCLUDE="$root/gow3_pc/cpu/fex_project.cmake" \
   -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DBUILD_FEXCONFIG=OFF -DBUILD_STEAM_SUPPORT=OFF \
   -DBUILD_FEX_LINUX_TESTS=OFF -DENABLE_ZYDIS=OFF -DTUNE_ARCH=armv8.2-a -DTUNE_CPU=generic \
+  -DTLOU_AOT_ABI_CHECK="${TLOU_AOT_ABI_CHECK:-OFF}" \
   -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
 cmake --build "$output/fex" --target gow3cpu --parallel "${TLOU_JOBS:-2}"
 mkdir -p "$output/lib"

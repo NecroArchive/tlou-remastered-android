@@ -1717,6 +1717,18 @@ bool Rasterizer::PendingFilterHit(VAddr begin, VAddr end) const {
     return false;
 }
 
+bool Rasterizer::NeedsComputeIndirectBufferDrain(VAddr address, u64 size) {
+    if (!draw_pipe || !OnStageA() || !size || address + size < address) {
+        return true; // uncertain range => keep the original barrier
+    }
+    if (draw_pipe->Idle() || (pending_writes.empty() && pending_copy_writes.empty())) {
+        return false;
+    }
+    // The lists are Stage A-owned and include queued graphics/compute output
+    // buffers, RunInOrder DMA/WRITE_DATA and copy-shader destinations.
+    return PendingWriteOverlaps(address, size) || PendingCopyWriteOverlaps(address, size);
+}
+
 bool Rasterizer::PendingCopyWriteOverlaps(VAddr address, u64 size) {
     if (pending_copy_writes.empty() || address >= copy_max || address + size <= copy_min) {
         return false;

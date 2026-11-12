@@ -1,0 +1,46 @@
+name: TLOU compute-drain CPU proof (no APK)
+on:
+  push:
+    branches: ['perf/tlou-compute-drain-proof-20261111']
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_compute_drain_policy.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.h'
+      - 'gow3_pc/tests/test_tlou_compute_drain_policy.cpp'
+      - '.github/workflows/tlou-compute-drain-proof.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proof:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run real compute pre-drain policy
+        run: |
+          set -euo pipefail
+          mkdir -p out/compute-proof
+          g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+            -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_compute_drain_policy.cpp \
+            -o out/compute-proof/proof
+          out/compute-proof/proof | tee out/compute-proof/result.txt
+          out/compute-proof/proof | tee out/compute-proof/repeat.txt
+      - name: Undefined behavior sanitizer
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -UNDEBUG -Wall -Wextra -Werror \
+            -fsanitize=undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_compute_drain_policy.cpp \
+            -o out/compute-proof/ubsan
+          out/compute-proof/ubsan
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compute-proof-${{ matrix.runner }}
+          path: out/compute-proof/*.txt

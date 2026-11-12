@@ -40,6 +40,7 @@
 #include "video_core/amdgpu/pm4_packet_checksum.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/tlou_compute_drain_policy.h"
 #include "video_core/renderer_vulkan/vk_runtime.h" // gow3: GOW3_READBACK_WAKE (scheduler)
 
 namespace AmdGpu {
@@ -2740,10 +2741,70 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             (FewerDrains() &&
              (opcode == PM4ItOpcode::IndirectBuffer || opcode == PM4ItOpcode::WaitRegMem)) ||
             (opcode == PM4ItOpcode::IndirectBuffer && SkipIbDrain());
-        if (rasterizer && opcode != PM4ItOpcode::Nop && opcode != PM4ItOpcode::SetShReg &&
+        const bool would_drain =
+            rasterizer && opcode != PM4ItOpcode::Nop && opcode != PM4ItOpcode::SetShReg &&
             opcode != PM4ItOpcode::SetQueueReg && opcode != PM4ItOpcode::DispatchDirect &&
             opcode != PM4ItOpcode::DispatchIndirect && opcode != PM4ItOpcode::ReleaseMem &&
-            !pipelined_wait) {
+            !pipelined_wait;
+        bool skip_pre_drain = false;
+#ifdef __ANDROID__
+        static const bool safe_nested_compute = [] {
+            const char* value = std::getenv("TLOU_SAFE_COMPUTE_IB");
+            return !(value && value[0] == '0' && value[1] == 0);
+        }();
+        const auto drain_kind = Vulkan::Detail::ClassifyComputePreDrain(opcode);
+        bool ib_pending_write = true;
+        if (would_drain && safe_nested_compute &&
+            drain_kind == Vulkan::Detail::ComputePreDrain::NestedBuffer) {
+            const auto* ib = reinterpret_cast<const PM4CmdIndirectBuffer*>(header);
+            const VAddr start = reinterpret_cast<VAddr>(ib->Address<const u32>());
+            const u64 bytes = u64(ib->ib_size) * sizeof(u32);
+            ib_pending_write = rasterizer->NeedsComputeIndirectBufferDrain(start, bytes);
+        }
+        if (would_drain) {
+            skip_pre_drain = Vulkan::Detail::CanSkipComputePreDrain(
+                drain_kind, ib_pending_write, safe_nested_compute);
+        }
+        // One counter per candidate, no per-command clock or lock.
+        // Report real guest opcode outcomes separately from synthetic tests.
+        struct DrainCounts {
+            u64 commands=0, baseline=0, nested_skips=0, ib_hazard_kept=0;
+            u64 no_op_skips=0, inner_drains=0, still_drained=0;
+            std::chrono::steady_clock::time_point last{};
+        };
+        static thread_local DrainCounts counts{};
+        if (would_drain) {
+            ++counts.baseline;
+            if (!skip_pre_drain) ++counts.still_drained;
+            else if (drain_kind == Vulkan::Detail::ComputePreDrain::NestedBuffer)
+                ++counts.nested_skips;
+            else if (drain_kind == Vulkan::Detail::ComputePreDrain::NoEffect)
+                ++counts.no_op_skips;
+            else ++counts.inner_drains;
+            if (drain_kind == Vulkan::Detail::ComputePreDrain::NestedBuffer &&
+                safe_nested_compute && ib_pending_write) ++counts.ib_hazard_kept;
+        }
+        if ((++counts.commands & 32767ull) == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            if (counts.last == std::chrono::steady_clock::time_point{}) {
+                counts.last = now;
+            } else if (now - counts.last >= std::chrono::seconds(5)) {
+                std::printf("TLOU compute predrain (5 s): legacy=%llu "
+                            "ib-skipped=%llu ib-hazard-kept=%llu "
+                            "pure-skipped=%llu duplicate-inner=%llu "
+                            "still-drained=%llu (counts, not FPS)\n",
+                            (unsigned long long)counts.baseline,
+                            (unsigned long long)counts.nested_skips,
+                            (unsigned long long)counts.ib_hazard_kept,
+                            (unsigned long long)counts.no_op_skips,
+                            (unsigned long long)counts.inner_drains,
+                            (unsigned long long)counts.still_drained);
+                counts = {};
+                counts.last = now;
+            }
+        }
+#endif
+        if (would_drain && !skip_pre_drain) {
             rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonCompute);
             // GOW3_FRAME_STATS: which compute packets drain, per 5 s.
             static const bool stats = std::getenv("GOW3_FRAME_STATS") != nullptr;

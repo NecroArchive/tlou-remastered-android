@@ -127,6 +127,9 @@ public:
     /// `line`/`function`: the caller, for the statistics of where stage A waits.
     void DrainDrawPipe(u32 reason = DrawPipe::ReasonRasterizer, u32 line = __builtin_LINE(),
                        const char* function = __builtin_FUNCTION());
+    // Stage-A-only check: a nested compute command buffer must still drain
+    // if a queued Stage-B guest write can change its PM4 packet bytes.
+    bool NeedsComputeIndirectBufferDrain(VAddr address, u64 size);
     /// Runs `task(rasterizer, copy of data)` in order with the draws: on the draw recording
     /// thread while the draw pipeline is in use (PipelinedTasks), else here after a drain.
     using OrderedTask = void (*)(Rasterizer& rasterizer, const u8* data);

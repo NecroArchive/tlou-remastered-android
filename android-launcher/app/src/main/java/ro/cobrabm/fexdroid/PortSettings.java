@@ -99,6 +99,8 @@ final class PortSettings {
         // Disable per-packet ARM64 clock barriers and shared stats atomics in normal gameplay.
         // CPU thread-load diagnostics use pthread clocks; full pipe stats remain opt-in.
         env.put("TLOU_DRAW_COUNTER_TRIM","1");
+        // TLOU ZIP 30/31: exact memo saw 0 hits across >200k compute lookups/5s.
+        // Retain the old stable default: avoid descriptor comparisons and memo bookkeeping.
         env.put("GOW3_TLOU_COMPUTE_MEMO","0");
         env.put("GOW3_TLOU_HOST_COPY_BATCH","0");
         env.put("TLOU_SRT_HOT_READBACKS","1");
@@ -169,11 +171,6 @@ final class PortSettings {
         // Do not enable automatically: command, draw and recorder threads could contend on two prime cores.
         env.put("TLOU_FAST_RENDER_CORES",p.getBoolean("fast_render_cores",false)?"1":"0");
         env.put("GOW3_ADPF", p.getBoolean("adpf",false) ? "1" : "0");
-        // Exact-key compute specialization memo: retain per-dispatch SRT walks,
-        // invalidate on any flattened descriptor/runtime/base change. Unlike a
-        // shader-skip it never drops draws or computes; a native A/B env fallback
-        // remains available for regression diagnosis.
-        env.put("GOW3_TLOU_COMPUTE_MEMO","1");
         env.remove("TLOU_PREP_NORMAL_PRIORITY");
         env.remove("TLOU_PREP_HIT_STATS");
         env.put("GOW3_DEFERRED_READBACK","0");

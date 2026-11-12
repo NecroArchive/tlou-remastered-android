@@ -56,29 +56,53 @@ inline std::vector<std::uint32_t> Compile(std::span<const std::uint32_t> program
         if (op == OpPushImm || op == OpPushDyn || op == OpCopyImm || op == OpCopyDyn) {
             const bool push = op == OpPushImm || op == OpPushDyn;
             const bool dynamic = op == OpPushDyn || op == OpCopyDyn;
+            U32 static_offset = 0;
             if (dynamic) {
                 if (!count) return {};
-                // w3 holds the current top. Move it to w4 before popping;
-                // restore the preceding top from its spill slot, if any.
-                emit(0x2a0303e4u); // mov w4, w3
+                emit(0x2a0303e4u); // mov w4, w3, before popping the expression top
                 --count;
                 if (count) load(3, count - 1);
                 emit(0x0b040084u); emit(0x0b040084u); // offset << 2, 32-bit wrap
             } else {
-                imm(4, next() << 2);
+                static_offset = next(); // persisted SRT offsets are in DWORDS
+                // ARM64 unsigned immediate loads encode a scaled 12-bit
+                // address directly. In the common SRT table-copy case this
+                // eliminates BOTH immediate construction and register-offset
+                // addressing, without changing the 32-bit wrap fallback.
+                const bool fits_ptr = push && !(static_offset & 1u) &&
+                                      static_offset / 2 < 4096; // 64-bit x2 load
+                const bool fits_word = !push && static_offset < 4096; // 32-bit w6 load
+                if (!zero && !(fits_ptr || fits_word)) imm(4, static_offset << 2);
             }
             if (push) {
                 if (depth == MaxDepth) return {};
                 emit(0xf90003e2u | (depth++ << 10));
-                emit(zero ? 0xd2800002u : 0xf8646842u);
-                if (!zero) emit(0xd340bc42u); // mask guest pointer to 48 bits
+                if (zero) {
+                    emit(0xd2800002u); // mov x2,#0
+                } else {
+                    if (!dynamic && !(static_offset & 1u) && static_offset / 2 < 4096) {
+                        emit(0xf9400042u | ((static_offset / 2) << 10)); // ldr x2,[x2,#imm]
+                    } else {
+                        emit(0xf8646842u); // ldr x2,[x2,w4,uxtw]
+                    }
+                    emit(0xd340bc42u); // mask guest pointer to 48 bits
+                }
             } else {
-                // Copy into w6, not w3: guest-memory writes must not clobber
-                // a pending arithmetic expression held in the top register.
-                emit(zero ? 0x52800006u : 0xb8646846u);
-                const U32 offset = next();
-                if (offset > 262143) return {};
-                imm(5, offset * 4); emit(0xb8256826u);
+                // w6 is caller-saved and never destroys w3's arithmetic top.
+                if (zero) {
+                    emit(0x52800006u); // mov w6,#0
+                } else if (!dynamic && static_offset < 4096) {
+                    emit(0xb9400046u | (static_offset << 10)); // ldr w6,[x2,#imm]
+                } else {
+                    emit(0xb8646846u); // ldr w6,[x2,w4,uxtw]
+                }
+                const U32 output = next();
+                if (output > 262143) return {};
+                if (output < 4096) {
+                    emit(0xb9000026u | (output << 10)); // str w6,[x1,#imm]
+                } else {
+                    imm(5, output * 4); emit(0xb8256826u);
+                }
             }
         } else if (op == OpPop) {
             if (!depth) return {};
@@ -92,7 +116,15 @@ inline std::vector<std::uint32_t> Compile(std::span<const std::uint32_t> program
             if (op == OpImm) imm(3, value);
             else {
                 if (value > 262143 || (op==OpUserData && value>=16)) return {};
-                imm(5, value * 4); emit(op == OpUserData ? 0xb8656803u : 0xb8656823u);
+                if (value < 4096) {
+                    // SRT user-data and flat-data operands are static offsets
+                    // in nearly every draw: emit one LDR instead of MOV+LDR.
+                    emit((op == OpUserData ? 0xb9400003u : 0xb9400023u) |
+                         (value << 10)); // ldr w3,[x0/x1,#4*value]
+                } else {
+                    imm(5, value * 4);
+                    emit(op == OpUserData ? 0xb8656803u : 0xb8656823u);
+                }
             }
             ++count;
         } else if (op == OpNot) {

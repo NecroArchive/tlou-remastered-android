@@ -8,6 +8,9 @@ on:
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.h'
       - 'gow3_pc/tests/test_tlou_compute_drain_policy.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_draw_pipe.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_adaptive_pipe_drain.h'
+      - 'gow3_pc/tests/test_tlou_adaptive_pipe_drain.cpp'
       - '.github/workflows/tlou-compute-drain-proof.yml'
   workflow_dispatch:
 permissions:
@@ -31,6 +34,13 @@ jobs:
             -o out/compute-proof/proof
           out/compute-proof/proof | tee out/compute-proof/result.txt
           out/compute-proof/proof | tee out/compute-proof/repeat.txt
+      - name: Adaptive draw-pipe handoff stress (short and long waits)
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread \
+            -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_adaptive_pipe_drain.cpp \
+            -o out/compute-proof/adaptive
+          out/compute-proof/adaptive | tee out/compute-proof/adaptive.txt
       - name: Undefined behavior sanitizer
         run: |
           set -euo pipefail

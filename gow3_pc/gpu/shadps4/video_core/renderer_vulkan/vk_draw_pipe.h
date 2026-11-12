@@ -26,6 +26,7 @@
 #include "common/rdtsc.h"
 #include "video_core/renderer_vulkan/vk_draw_pipe_busy_sample.h"
 #include "video_core/renderer_vulkan/tlou_draw_pipe_progress_wait.h"
+#include "video_core/renderer_vulkan/tlou_adaptive_pipe_drain.h"
 
 #include "common/assert.h"
 #include "common/thread.h"
@@ -122,9 +123,17 @@ public:
         const u64 start = profile_drains ? Common::FencedRDTSC() : 0;
 #ifdef __ANDROID__
         if (ParkProducerEnabled()) {
-            Detail::WaitForPipeProgress(
-                consumed, producer_waiting, [target = head](u64 done) { return done >= target; },
-                [] { COMMON_CPU_RELAX(); }, sync_stats.parks, sync_stats.parked_ns);
+            const u64 target = head;
+            Detail::AdaptivePipeDrain(
+                [this, target] { return consumed.load(std::memory_order_acquire) >= target; },
+                [] { COMMON_CPU_RELAX(); }, [] { std::this_thread::yield(); },
+                [this, target] {
+                    Detail::WaitForPipeProgress(
+                        consumed, producer_waiting,
+                        [target](u64 done) { return done >= target; },
+                        [] { COMMON_CPU_RELAX(); },
+                        sync_stats.parks, sync_stats.parked_ns, 0);
+                });
         } else
 #endif
         {

@@ -16,8 +16,8 @@ using u32 = std::uint32_t;
 using u64 = std::uint64_t;
 static void Policy() {
     static_assert(ClassifyComputePreDrain(PM4ItOpcode::IndirectBuffer)==ComputePreDrain::NestedBuffer);
-    static_assert(ClassifyComputePreDrain(PM4ItOpcode::AcquireMem)==ComputePreDrain::NoEffect);
-    static_assert(ClassifyComputePreDrain(PM4ItOpcode::EventWrite)==ComputePreDrain::NoEffect);
+    static_assert(ClassifyComputePreDrain(PM4ItOpcode::AcquireMem)==ComputePreDrain::Required);
+    static_assert(ClassifyComputePreDrain(PM4ItOpcode::EventWrite)==ComputePreDrain::Required);
     static_assert(ClassifyComputePreDrain(PM4ItOpcode::WriteData)==ComputePreDrain::InnerDrain);
     for(auto opcode:{PM4ItOpcode::WaitRegMem,PM4ItOpcode::DmaData,
                      PM4ItOpcode::Rewind,PM4ItOpcode::MemSemaphore,
@@ -84,7 +84,9 @@ static void Cost() {
         }
         if(op==PM4ItOpcode::WaitRegMem||op==PM4ItOpcode::DmaData)assert(!skip);
     }
-    assert(remaining<baseline/2);
+    // Synthetic input is deliberately mixed. Only nested IBs without
+    // queued writes and duplicate WRITE_DATA pre-drains may be skipped.
+    assert(remaining<baseline*3/4);
     std::printf("synthetic compute predrains: %llu -> %llu (%.1f%% removed); "
                 "nested=%llu guarded=%llu (NOT FPS)\n",
          (unsigned long long)baseline,(unsigned long long)remaining,

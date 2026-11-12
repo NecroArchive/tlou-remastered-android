@@ -2769,7 +2769,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         // Report real guest opcode outcomes separately from synthetic tests.
         struct DrainCounts {
             u64 commands=0, baseline=0, nested_skips=0, ib_hazard_kept=0;
-            u64 no_op_skips=0, inner_drains=0, still_drained=0;
+            u64 inner_drains=0, still_drained=0;
             std::chrono::steady_clock::time_point last{};
         };
         static thread_local DrainCounts counts{};
@@ -2778,8 +2778,6 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             if (!skip_pre_drain) ++counts.still_drained;
             else if (drain_kind == Vulkan::Detail::ComputePreDrain::NestedBuffer)
                 ++counts.nested_skips;
-            else if (drain_kind == Vulkan::Detail::ComputePreDrain::NoEffect)
-                ++counts.no_op_skips;
             else ++counts.inner_drains;
             if (drain_kind == Vulkan::Detail::ComputePreDrain::NestedBuffer &&
                 safe_nested_compute && ib_pending_write) ++counts.ib_hazard_kept;
@@ -2791,12 +2789,11 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             } else if (now - counts.last >= std::chrono::seconds(5)) {
                 std::printf("TLOU compute predrain (5 s): legacy=%llu "
                             "ib-skipped=%llu ib-hazard-kept=%llu "
-                            "pure-skipped=%llu duplicate-inner=%llu "
+                            "duplicate-inner=%llu "
                             "still-drained=%llu (counts, not FPS)\n",
                             (unsigned long long)counts.baseline,
                             (unsigned long long)counts.nested_skips,
                             (unsigned long long)counts.ib_hazard_kept,
-                            (unsigned long long)counts.no_op_skips,
                             (unsigned long long)counts.inner_drains,
                             (unsigned long long)counts.still_drained);
                 counts = {};

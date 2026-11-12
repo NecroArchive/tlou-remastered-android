@@ -2139,6 +2139,13 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         // this atomic for EVERY guest flip at the command stream's actual
         // frame boundary. Preserve the native TID and per-512-call sampling.
         adpf.NotePostDraw(AmdGpu::g_gow3_flips.load(std::memory_order_relaxed));
+        // Add all cooperating native graphics threads to the SAME ADPF frame
+        // session, instead of boosting Stage A while Stage B/recorder lag.
+        // No new syscall for stable TID sets. Leave affinities untouched.
+        if ((draw_pipe->packets & 511u) == 0u) {
+            adpf.IncludeRenderingThreads(draw_pipe->StageBThreadId(),
+                                          scheduler.NativeRecorderTid());
+        }
     }
 #endif
     // This is the saturated command thread's most expensive sampled phase:

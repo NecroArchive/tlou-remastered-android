@@ -431,6 +431,9 @@ grep -Fq 'done->notify_all();' \
 
 # Verify zero draw-preparation workers in both game releases without changing
 # the frame scheduler or correctness barriers.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_adpf_thread_set.cpp -o "$test_dir/tlou-adpf-threads"
+"$test_dir/tlou-adpf-threads"
 python3 android/tests/test_tlou_111_preparation_regression.py
 
 # A real 01.00 startup failure was the missing retail-memory report. Movie

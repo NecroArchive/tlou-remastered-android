@@ -238,7 +238,7 @@ struct Info : InfoPersistent {
         while (mask) {
             const u32 index = std::countr_zero(mask);
             ASSERT(bnd.user_data < NUM_USER_DATA_REGS && index < NUM_USER_DATA_REGS);
-            mask &= ~(1U << index);
+            mask &= mask - 1; // clear the lowest bit without constructing a shifted mask
             push.ud_regs[bnd.user_data++] = ud[index];
         }
     }

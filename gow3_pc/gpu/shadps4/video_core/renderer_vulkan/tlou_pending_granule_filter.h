@@ -45,4 +45,26 @@ inline void MarkPendingGranules(std::array<std::uint64_t, Bits / 64>& filter,
     }
 }
 
+// The circular pending-write bloom filter can be queried 64 granules per
+// mask instead of one bit at a time. Exactly the same collision semantics.
+template<std::size_t Bits, unsigned GranuleBits>
+[[nodiscard]] inline bool AnyPendingGranules(
+    const std::array<std::uint64_t, Bits / 64>& filter,
+    std::uint64_t begin, std::uint64_t end) noexcept {
+    static_assert(Bits >= 64 && Bits % 64 == 0 && (Bits & (Bits-1)) == 0);
+    if (end <= begin) return false;
+    const auto first=begin>>GranuleBits, last=(end-1)>>GranuleBits;
+    if (last-first>=Bits) return true;
+    auto at=first, left=last-first+1;
+    while(left) {
+        const unsigned bit=static_cast<unsigned>(at & (Bits-1));
+        const unsigned shift=bit & 63;
+        const unsigned count=static_cast<unsigned>(std::min<std::uint64_t>(left,64-shift));
+        const std::uint64_t mask=(~std::uint64_t{0}>>(64-count))<<shift;
+        if(filter[bit>>6] & mask) return true;
+        left-=count;at+=count;
+    }
+    return false;
+}
+
 } // namespace Vulkan::Detail

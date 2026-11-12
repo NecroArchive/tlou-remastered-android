@@ -48,6 +48,28 @@ bool LegacyHit(const Filter& filter, u64 begin, u64 end) {
     return false;
 }
 
+void VerifyReads() {
+    std::mt19937_64 rng{0x5eedc0de};
+    Filter filter{};
+    for (unsigned i=0;i<1000000;++i) {
+        if (i%127==0) filter.fill(0);
+        if (i%7==0) {
+            const unsigned bit=rng()%4096;
+            filter[bit>>6] |= u64{1}<<(bit&63);
+        }
+        const u64 at=(rng()%262144ull)*65536+(rng()%65536);
+        const u64 size=i%31==0 ? 4097ull*65536 :
+                       i%17==0 ? 256ull*65536 :
+                       i%11==0 ? 9ull*65536 :
+                       i%7==0 ? 7ull*65536 : 1+rng()%131072;
+        const bool old=LegacyHit(filter,at,at+size);
+        const bool fast=Vulkan::Detail::AnyPendingGranules<4096,16>(
+            filter,at,at+size);
+        assert(old==fast);
+    }
+    puts("TLOU pending filter read parity: 1000000 queries including wrapping and sparse writes PASS");
+}
+
 void Verify() {
     std::mt19937_64 rng{0xbadcafe};
     Filter legacy{}, optimized{};
@@ -76,6 +98,7 @@ void Verify() {
         }
     }
     assert(legacy == optimized);
+    VerifyReads();
     puts("TLOU pending-granule equivalence: 250000 randomized writes and overlapping reads passed");
 }
 

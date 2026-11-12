@@ -128,9 +128,8 @@ public:
                 [this, target] { return consumed.load(std::memory_order_acquire) >= target; },
                 [] { COMMON_CPU_RELAX(); }, [] { std::this_thread::yield(); },
                 [this, target] {
-                    Detail::WaitForPipeProgress(
-                        consumed, producer_waiting,
-                        [target](u64 done) { return done >= target; },
+                    Detail::WaitForPipeTargetProgress(
+                        consumed, target_signal, target,
                         [] { COMMON_CPU_RELAX(); },
                         sync_stats.parks, sync_stats.parked_ns, 0);
                 });
@@ -156,8 +155,8 @@ public:
         ++sync_stats.dependency_waits;
 #ifdef __ANDROID__
         if (ParkProducerEnabled()) {
-            Detail::WaitForPipeProgress(
-                consumed, producer_waiting, [target](u64 done) { return done >= target; },
+            Detail::WaitForPipeTargetProgress(
+                consumed, target_signal, target,
                 [] { COMMON_CPU_RELAX(); }, sync_stats.parks, sync_stats.parked_ns);
             return;
         }
@@ -174,10 +173,16 @@ public:
         u64 dependency_waits = 0;
         u64 parks = 0;
         u64 parked_ns = 0;
+        u64 notifications = 0;
     };
     // Stage A is the sole writer and reader of these per-window counters.
     [[nodiscard]] SyncStats TakeSyncStats() {
-        const auto values = sync_stats;
+        auto values = sync_stats;
+#ifdef __ANDROID__
+        const u64 epoch = target_signal.epoch.load(std::memory_order_relaxed);
+        values.notifications = epoch - last_reported_notification_epoch;
+        last_reported_notification_epoch = epoch;
+#endif
         sync_stats = {};
         return values;
     }
@@ -234,9 +239,10 @@ private:
         ++sync_stats.capacity_waits;
 #ifdef __ANDROID__
         if (ParkProducerEnabled()) {
-            Detail::WaitForPipeProgress(
-                consumed, producer_waiting,
-                [until = at + size](u64 done) { return until - done <= Capacity; },
+            // Capacity only needs Stage B to consume the overwritten prefix.
+            const u64 target = at + size - Capacity;
+            Detail::WaitForPipeTargetProgress(
+                consumed, target_signal, target,
                 [] { COMMON_CPU_RELAX(); }, sync_stats.parks, sync_stats.parked_ns);
             return;
         }
@@ -302,7 +308,7 @@ private:
             if (header->size == 0) {
                 at += Capacity - at % Capacity;
 #ifdef __ANDROID__
-                if (ParkProducerEnabled()) Detail::PublishPipeProgress(consumed, producer_waiting, at);
+                if (ParkProducerEnabled()) Detail::PublishPipeTargetProgress(consumed, target_signal, at);
                 else consumed.store(at, std::memory_order_release);
 #else
                 consumed.store(at, std::memory_order_release);
@@ -329,7 +335,7 @@ private:
             Detail::EndDrawPipeBusySample(sample_busy, start, busy_cycles);
             at += header->size;
 #ifdef __ANDROID__
-            if (ParkProducerEnabled()) Detail::PublishPipeProgress(consumed, producer_waiting, at);
+            if (ParkProducerEnabled()) Detail::PublishPipeTargetProgress(consumed, target_signal, at);
             else consumed.store(at, std::memory_order_release);
 #else
             consumed.store(at, std::memory_order_release);
@@ -346,7 +352,8 @@ private:
     alignas(64) std::atomic<u64> published{0};
     alignas(64) std::atomic<u64> consumed{0};
     // Sequenced with PublishPipeProgress on Stage B, so no missed wakeups.
-    std::atomic<bool> producer_waiting{false};
+    Detail::PipeTargetSignal target_signal{};
+    u64 last_reported_notification_epoch = 0; // Stage A only
     SyncStats sync_stats{};
     alignas(64) std::atomic<u32> wake{0};
     std::atomic<bool> sleeping{false};

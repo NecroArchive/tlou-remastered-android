@@ -2533,12 +2533,13 @@ void Rasterizer::PrintPipeStats() {
             pipe_drain_sites.fill({});
 #endif
             std::printf("TLOU pipe sync (5 s): drain-waits=%llu capacity-waits=%llu "
-                        "dependency-waits=%llu parks=%llu parked=%.3fms "
+                        "dependency-waits=%llu parks=%llu notifications=%llu parked=%.3fms "
                         "(wall time, waits overlap other thread work)\n",
                         (unsigned long long)sync.drain_waits,
                         (unsigned long long)sync.capacity_waits,
                         (unsigned long long)sync.dependency_waits,
                         (unsigned long long)sync.parks,
+                        (unsigned long long)sync.notifications,
                         double(sync.parked_ns) / 1e6);
         }
     }

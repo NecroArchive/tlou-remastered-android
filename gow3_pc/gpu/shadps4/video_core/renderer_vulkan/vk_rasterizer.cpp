@@ -2516,7 +2516,7 @@ void Rasterizer::PrintPipeStats() {
                                        by_site[i].line, by_site[i].waits);
             }
             if (!sources.empty()) {
-                std::printf("TLOU pipe drain sites (5 s):%s\\n", sources.c_str());
+                std::printf("TLOU pipe drain sites (5 s):%s\n", sources.c_str());
             }
             pipe_drain_sites.fill({});
 #endif

@@ -2,6 +2,7 @@
 #include "video_core/renderer_vulkan/tlou_debug_marker_gate.h"
 #include <cassert>
 #include <cstdio>
+#include <initializer_list>
 
 int main() {
     using Vulkan::Detail::MarkerNeedsRecording;

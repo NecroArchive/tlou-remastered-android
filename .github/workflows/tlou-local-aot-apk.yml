@@ -50,9 +50,16 @@ jobs:
           set -euo pipefail
           apk=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
           test -s "$apk"
-          cd out/aot-source-apk
-          sha256sum -c TheLastOfUsRemastered-Android-v0.1.1-arm64.apk.sha256
-          cd ../..
+          python3 - "$apk" <<'PY'
+          import hashlib,sys
+          from pathlib import Path
+          path=Path(sys.argv[1])
+          expected=Path(str(path)+'.sha256').read_text().split()[0].lower()
+          with path.open('rb') as f:
+              digest=hashlib.file_digest(f,'sha256').hexdigest()
+          assert digest==expected, f'Native APK SHA mismatch: {digest} != {expected}'
+          print('Pinned native APK digest matched')
+          PY
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
           bash android/bionic/stage_aot_compiler.sh
           python3 android/bionic/repackage_local_aot.py "$apk"

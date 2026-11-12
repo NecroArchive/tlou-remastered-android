@@ -105,6 +105,7 @@ final class HudTelemetry {
     void sample(int pid,long nowNanos) {
         if(resetPending.getAndSet(false) || sampledPid!=pid){previousTicks=-1;previousAt=0;sampledPid=pid;}
         sampleGpu();
+        if(pid>0)sampleHotThreads(pid,nowNanos);
         if(pid<=0){cpuPercent=Double.NaN;memoryGiB=Double.NaN;return;}
         try {
             long ticks=processTicks(pid);
@@ -123,6 +124,117 @@ final class HudTelemetry {
             }
         }catch(Exception e){memoryGiB=Double.NaN;}
     }
+
+    // The game's FEX threads are not covered by the native "CPU critical"
+    // report (which only measures command, draw and Vulkan recorder threads).
+    // Sample the child PID's own /proc task counters off the UI thread; unlike
+    // a per-process HUD percentage this identifies the actual saturated TID.
+    private static final class HotThread {
+        long lastTicks, windowTicks;
+        double peakPercent;
+        int lastCore, observations;
+        String name;
+    }
+    private final java.util.HashMap<Integer,HotThread> hotThreads=new java.util.HashMap<>();
+    private int hotPid=-1;
+    private long hotAt, hotReportAt;
+    private int hotSamples;
+
+    private static String readOneLine(String path) {
+        try(BufferedReader r=new BufferedReader(new FileReader(path))) {
+            return r.readLine();
+        }catch(Exception ignored){return null;}
+    }
+    private static String coreClock(int core) {
+        final String base="/sys/devices/system/cpu/cpu"+core+"/cpufreq/";
+        String cur=readOneLine(base+"scaling_cur_freq");
+        String max=readOneLine(base+"scaling_max_freq");
+        String physical=readOneLine(base+"cpuinfo_max_freq");
+        if(cur==null && max==null)return "n/a";
+        try {
+            String a=cur==null?"?":String.format(Locale.US,"%.2f",Long.parseLong(cur.trim())/1e6);
+            String b=max==null?"?":String.format(Locale.US,"%.2f",Long.parseLong(max.trim())/1e6);
+            String c=physical==null?"?":String.format(Locale.US,"%.2f",Long.parseLong(physical.trim())/1e6);
+            return a+"/"+b+"/"+c+"GHz(current/policy/hardware)";
+        }catch(Exception ignored){return "n/a";}
+    }
+    private void sampleHotThreads(int pid,long now) {
+        if(pid!=hotPid || hotAt==0 || now<=hotAt) {
+            hotThreads.clear();hotPid=pid;hotAt=now;hotReportAt=now;hotSamples=0;
+            return;
+        }
+        long elapsed=now-hotAt;
+        File[] threads=new File("/proc/"+pid+"/task").listFiles();
+        if(threads==null)return;
+        for(File thread:threads) {
+            final int tid;
+            try{tid=Integer.parseInt(thread.getName());}
+            catch(NumberFormatException ignored){continue;}
+            String stat=readOneLine(new File(thread,"stat").getPath());
+            if(stat==null)continue;
+            int nameEnd=stat.lastIndexOf(')');
+            int nameStart=stat.indexOf('(');
+            if(nameStart<0 || nameEnd<=nameStart || nameEnd+2>=stat.length())continue;
+            String[] fields=stat.substring(nameEnd+2).trim().split("\\s+");
+            // /proc/PID/task/TID/stat field 3 is fields[0];
+            // utime=14, stime=15, processor=39, indexed from field 3.
+            if(fields.length<37)continue;
+            try {
+                long ticks=Long.parseLong(fields[11])+Long.parseLong(fields[12]);
+                int core=Integer.parseInt(fields[36]);
+                HotThread info=hotThreads.get(tid);
+                if(info==null) {
+                    info=new HotThread();info.lastTicks=ticks;
+                    hotThreads.put(tid,info);
+                } else if(ticks>=info.lastTicks) {
+                    long delta=ticks-info.lastTicks;
+                    info.windowTicks+=delta;
+                    double percent=delta*100.0*1e9/(ticksPerSecond*(double)elapsed);
+                    info.peakPercent=Math.max(info.peakPercent,percent);
+                    info.lastTicks=ticks;
+                } else {
+                    // TID reuse / counter reset must not create a bogus peak.
+                    info.windowTicks=0;info.peakPercent=0;info.lastTicks=ticks;
+                }
+                info.lastCore=core;
+                info.name=stat.substring(nameStart+1,nameEnd);
+                ++info.observations;
+            }catch(NumberFormatException ignored){}
+        }
+        hotAt=now;
+        ++hotSamples;
+        if(now-hotReportAt<5_000_000_000L)return;
+        final double windowNs=now-hotReportAt;
+        java.util.ArrayList<java.util.Map.Entry<Integer,HotThread>> ranked=
+            new java.util.ArrayList<>(hotThreads.entrySet());
+        ranked.sort((a,b)->Long.compare(b.getValue().windowTicks,a.getValue().windowTicks));
+        StringBuilder line=new StringBuilder("TLOU hot threads (5 s): pid=").append(pid)
+            .append(" cpu6=").append(coreClock(6))
+            .append(" cpu7=").append(coreClock(7))
+            .append(" sampled=").append(hotSamples);
+        int shown=0;
+        for(java.util.Map.Entry<Integer,HotThread> item:ranked) {
+            HotThread info=item.getValue();
+            if(info.windowTicks==0 || shown++==6)break;
+            double average=info.windowTicks*100.0*1e9/(ticksPerSecond*windowNs);
+            line.append(String.format(Locale.US,
+                " | tid=%d name=%s avg=%.1f%% peak1s=%.1f%% last-core=%d",
+                item.getKey(),info.name,average,info.peakPercent,info.lastCore));
+        }
+        RunLog.write(context,line.toString());
+        // Keep lastTicks for correct deltas across windows; discard stale
+        // threads after reporting, so extinct short-lived tasks cannot grow
+        // this map indefinitely.
+        java.util.HashSet<Integer> alive=new java.util.HashSet<>();
+        for(File thread:threads) {
+            try{alive.add(Integer.parseInt(thread.getName()));}
+            catch(NumberFormatException ignored){}
+        }
+        hotThreads.keySet().retainAll(alive);
+        for(HotThread t:hotThreads.values()){t.windowTicks=0;t.peakPercent=0;t.observations=0;}
+        hotReportAt=now;hotSamples=0;
+    }
+
     private void cpuSource(String state,String message){
         if(!state.equals(cpuSourceState)){cpuSourceState=state;RunLog.write(context,message);}
     }

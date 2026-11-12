@@ -288,6 +288,10 @@ public final class MainActivity extends Activity {
             toggleSetting(cpu,"fast_render_cores","Priorizar núcleos rápidos (experimental)",false);
             cpu.addView(text("Não força o clock. Limita as threads críticas aos núcleos mais rápidos; reinicie o jogo para aplicar. Pode aumentar a disputa entre threads.",12,MUTED));
             toggleSetting(cpu,"adpf","ADPF — ajuste dinâmico de desempenho",false);
+            add(cpu,"Compilar CPU ARM64 no aparelho (AOT experimental)",false,
+                ()->withAccess(this::buildSelectedAot));
+            cpu.addView(text("Gera uma biblioteca ARM64 local, com cache e retomada. "
+                +"Ainda não substitui o FEX durante o jogo; não altera seus saves.",12,MUTED));
             LinearLayout app=card(root,"IDIOMA E INTERFACE");
             languageChoice(app);
             app.addView(text("O idioma do jogo é escolhido no próprio The Last of Us.",12,MUTED));
@@ -493,6 +497,24 @@ public final class MainActivity extends Activity {
             if(launch)runOnUiThread(()->{if(!isDestroyed()){try { RunLog.write(this,"Preparação verificada. Abrindo GameActivity: "+prepared); Intent i=new Intent(this,GameActivity.class);i.putExtra("prepared_path",prepared.getAbsolutePath());startActivity(i); } catch(Throwable error) { RunLog.failure(this,"Falha ao abrir GameActivity",error);alert("Inicialização",error.toString()); }}});
         });
     }
+    private void buildSelectedAot() {
+        if(busy)return;
+        if(prefs.getString("game_path","").isEmpty()) {
+            alert("Selecione o jogo","Instale um PKG ou escolha a pasta do jogo.");
+            return;
+        }
+        task("Preparando compilação ARM64 local…",()->{
+            File base=GameInstallState.base(selected());
+            File updateFolder=updateForGame(base);
+            File prepared=tools.prepare(base,updateFolder,this::update);
+            update("Compilando código do jogo para ARM64 no aparelho…");
+            File result=tools.buildExperimentalAot(prepared,this::update);
+            RunLog.write(this,"AOT gerado (ainda não usado pelo runtime): "+result);
+            update("Biblioteca ARM64 gerada. O jogo continua usando FEX até "
+                +"validarmos o backend AOT.");
+        });
+    }
+
     private void manualPath() {
         EditText input=new EditText(this); input.setSingleLine(true); input.setText(prefs.getString("game_path",""));input.setHint("/storage/emulated/0/Jogos/CUSA00552");
         TlouDialogs.show(this,new AlertDialog.Builder(this).setTitle(TlouLanguage.t(this,"Pasta do jogo")).setView(input).setNegativeButton(TlouLanguage.t(this,"Cancelar"),null).setPositiveButton(TlouLanguage.t(this,"Selecionar"),(d,w)->withAccess(()->chooseGame(new File(input.getText().toString().trim())))));

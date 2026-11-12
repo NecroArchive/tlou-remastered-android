@@ -1,0 +1,18 @@
+name: TLOU local AOT adapter unit checks
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "android/aot/**"
+      - ".github/workflows/tlou-aot-bridge-check.yml"
+
+jobs:
+  offline-bridge-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Python syntax
+        run: python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py
+      - name: Validate synthetic boot images (no game files)
+        run: python3 android/aot/test_aot_local.py -v

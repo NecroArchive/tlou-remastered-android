@@ -71,6 +71,59 @@ def check_boot(path: Path) -> dict:
                 "modules": mc, "bindings": nb}
 
 
+def verify_eboot_image(eboot: Path, boot: Path) -> int:
+    """Check EVERY executable guest byte against the linked image.
+
+    TLOU's linker copies the original x86-64 text as-is, except for the
+    documented FS->GS 9-byte rewrite. This detects an update/base mismatch
+    before LLVM translates an incompatible executable, without checking
+    unrelated gigabytes of assets.
+    """
+    info = check_boot(boot)
+    image_start = boot.stat().st_size - info["size"]
+    header = eboot.read_bytes()
+    if len(header) < 64 or header[:4] != b"O\x15=\x1d":
+        raise ValueError("Expected plaintext PS4 SELF")
+    count = struct.unpack_from("<H", header, 24)[0]
+    base = 32 + count * 32
+    phoff = struct.unpack_from("<Q", header, base + 32)[0]
+    phsize, phnum = struct.unpack_from("<HH", header, base + 54)
+    if phsize != 56 or not 0 < phnum < 256:
+        raise ValueError("Invalid ELF program headers")
+    patches = (b"\x64\x48\x8b\x04\x25\x00\x00\x00\x00",
+               b"\x65\x48\x8b\x04\x25\x00\x00\x00\x00")
+    checked = 0
+    with boot.open("rb") as linked:
+        for index in range(phnum):
+            p = struct.unpack_from("<II6Q", header, base + phoff + 56 * index)
+            kind, flags, _, vaddr, _, filesz, _, _ = p
+            if kind != 1 or not flags & 1 or filesz == 0:
+                continue
+            if vaddr > info["size"] or filesz > info["size"] - vaddr:
+                raise ValueError("Executable segment outside linked image")
+            source_segment = None
+            for i in range(count):
+                f, pos, n, mem = struct.unpack_from("<4Q", header, 32 + i * 32)
+                if f & 0x800 and (f >> 20) & 4095 == index:
+                    if f & 10 or n != filesz or mem != filesz:
+                        raise ValueError("Unsupported compressed/executable SELF segment")
+                    if pos > len(header) or n > len(header) - pos:
+                        raise ValueError("Truncated SELF executable segment")
+                    source_segment = header[pos:pos+n]
+                    break
+            if source_segment is None:
+                raise ValueError("Executable SELF segment missing")
+            linked.seek(image_start + vaddr)
+            actual = linked.read(filesz)
+            expected = source_segment.replace(*patches)
+            if actual != expected:
+                raise ValueError("boot-linked image contains a different eboot (1.00/1.11 mismatch)")
+            checked += filesz
+    if checked == 0:
+        raise ValueError("No executable bytes verified")
+    return checked
+
+
 def effective_game_folder(base_game: Path, boot: Path | None) -> Path:
     """Use the selected update's merged view, never the original base eboot.
 
@@ -160,6 +213,7 @@ def main(argv=None):
         out.mkdir(parents=True, exist_ok=True)
         boot = (boot_input if boot_input else
                 prepare(Path(__file__).resolve().parents[2], game, out / "tlou-prepared"))
+        verified_code_bytes = verify_eboot_image(game / "eboot.bin", boot)
         staged = stage_boot(boot, out / "bb-prepared")
         aot = out / "aot"
         aot.mkdir(exist_ok=True)
@@ -174,6 +228,7 @@ def main(argv=None):
         report = {"version": version, "original_game": str(original_game),
                   "effective_game": str(game), "eboot_sha256": sha256(game / "eboot.bin"),
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),
+                  "verified_executable_bytes": verified_code_bytes,
                   "input_boot": check_boot(boot), "translation_command": command,
                   "runtime_integrated": False, "status": "staged"}
         (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\n")

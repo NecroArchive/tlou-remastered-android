@@ -1062,13 +1062,12 @@ static void tlou_report_clamp_reuse(void) {
     time_t now=time(NULL);
     if(!last){last=now;return;}
     if(now-last<5)return;
-    if(const char *bad = getenv("TLOU_CPU_PHASE_SAMPLES")) {
-        if(bad[0]=='1') {
+    const char *samples=getenv("TLOU_CPU_PHASE_SAMPLES");
+    if(samples && samples[0]=='1') {
             printf("TLOU clamp-copy reuse (5 s): hits=%" PRIu64
                    " (validated one-VMA, no skipped guest bytes)\n",
                    tlou_clamp_copy_hits);
             fflush(stdout);
-        }
     }
     tlou_clamp_copy_hits=0;
     last=now;

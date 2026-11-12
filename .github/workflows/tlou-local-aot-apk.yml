@@ -1,0 +1,94 @@
+name: TLOU Experimental Local AOT APK
+
+on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - 'android/aot/**'
+      - 'android/bionic/repackage_local_aot.py'
+      - 'android/bionic/stage_aot_compiler.sh'
+      - 'android-launcher/**'
+      - '.github/workflows/tlou-local-aot-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - name: Check local ARM64 AOT preparation
+        run: |
+          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/bionic/repackage_local_aot.py
+          python3 android/aot/test_aot_local.py -v
+      - name: Retrieve successful native ARM64 APK
+        uses: actions/download-artifact@v4
+        with:
+          name: TheLastOfUsRemastered-Android-v0.1.1-arm64
+          path: out/aot-source-apk
+          run-id: '43315820944'
+          github-token: ${{ github.token }}
+      - name: Stage exact native game runtime with pinned ARM64 compiler
+        run: |
+          set -euo pipefail
+          apk=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+          test -s "$apk"
+          cd out/aot-source-apk
+          sha256sum -c TheLastOfUsRemastered-Android-v0.1.1-arm64.apk.sha256
+          cd ../..
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
+          bash android/bionic/stage_aot_compiler.sh
+          python3 android/bionic/repackage_local_aot.py "$apk"
+      - name: Build standalone signed debug APK for local AOT compiler testing
+        run: gradle -p android-launcher :app:assembleDebug :app:testDebugUnitTest --no-daemon --max-workers=2
+      - name: Verify signed APK, distinct app ID and original CPU/GPU binaries
+        run: |
+          set -euo pipefail
+          sdk="$ANDROID_HOME/build-tools/35.0.0"
+          apk=android-launcher/app/build/outputs/apk/debug/app-debug.apk
+          original=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+          "$sdk/apksigner" verify --verbose "$apk"
+          "$sdk/aapt" dump badging "$apk" | grep "package: name='com.daedalus.tlou.remastered.aot'"
+          python3 android/bionic/check_tools_apk.py "$apk"
+          python3 - "$original" "$apk" <<'PY'
+          import sys,zipfile,hashlib,io
+          with zipfile.ZipFile(sys.argv[1]) as a, zipfile.ZipFile(sys.argv[2]) as b:
+              preserved=[n for n in a.namelist() if n.startswith(('lib/arm64-v8a/','assets/runtime/','assets/drivers/')) and not n.endswith('/')]
+              assert preserved
+              for n in preserved:
+                  assert hashlib.sha256(a.read(n)).digest()==hashlib.sha256(b.read(n)).digest(),n
+              with zipfile.ZipFile(io.BytesIO(b.read('assets/tools.zip'))) as tools:
+                  for n in ['bin/libbbrecomp.so','source/android/aot/aot_local.py','aot/upstream.sha256']:
+                      assert tools.getinfo(n).file_size>0
+              print('Verified',len(preserved),'unchanged native/runtime/driver payload files and AOT compiler')
+          PY
+      - name: Publish installable experimental APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-v011-Local-ARM64-AOT-Experimental-APK
+          path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Upload diagnostics when compilation fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-Local-AOT-APK-Errors
+          path: android-launcher/app/build/reports/**
+          if-no-files-found: ignore

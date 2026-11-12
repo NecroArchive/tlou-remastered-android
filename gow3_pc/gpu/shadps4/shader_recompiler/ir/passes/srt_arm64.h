@@ -16,8 +16,12 @@ enum SrtOp : std::uint32_t {
 constexpr std::uint32_t OpZeroed = 0x80000000u, SrtMagic = 0x42545253u;
 constexpr std::uint32_t MaxDepth = 64, MaxValues = 32;
 
-// x0=user data, x1=flattened data, x2=current pointer; x3-x5 are scratch.
-// Only caller-saved registers are used. Stack layout: 64 pointers then 32 values.
+// x0=user data, x1=flattened data, x2=current pointer.
+// Keep the expression stack's top in w3, not in the spill array: SRT
+// walkers run on every draw/dispatch; previously each binary op spilled
+// its result, and every following op loaded it again. w4/w5 are arithmetic
+// scratch and w6 is the temporary guest-copy value. All are caller-saved.
+// Stack layout is unchanged for compatibility: 64 pointers, 32 values.
 inline std::vector<std::uint32_t> Compile(std::span<const std::uint32_t> program) {
     using U32 = std::uint32_t;
     constexpr U32 Frame = MaxDepth * 8 + MaxValues * 4;
@@ -54,8 +58,12 @@ inline std::vector<std::uint32_t> Compile(std::span<const std::uint32_t> program
             const bool dynamic = op == OpPushDyn || op == OpCopyDyn;
             if (dynamic) {
                 if (!count) return {};
-                load(4, --count);
-                emit(0x0b040084u); emit(0x0b040084u); // 32-bit offset << 2, including wrap
+                // w3 holds the current top. Move it to w4 before popping;
+                // restore the preceding top from its spill slot, if any.
+                emit(0x2a0303e4u); // mov w4, w3
+                --count;
+                if (count) load(3, count - 1);
+                emit(0x0b040084u); emit(0x0b040084u); // offset << 2, 32-bit wrap
             } else {
                 imm(4, next() << 2);
             }
@@ -65,10 +73,12 @@ inline std::vector<std::uint32_t> Compile(std::span<const std::uint32_t> program
                 emit(zero ? 0xd2800002u : 0xf8646842u);
                 if (!zero) emit(0xd340bc42u); // mask guest pointer to 48 bits
             } else {
-                emit(zero ? 0x52800003u : 0xb8646843u);
+                // Copy into w6, not w3: guest-memory writes must not clobber
+                // a pending arithmetic expression held in the top register.
+                emit(zero ? 0x52800006u : 0xb8646846u);
                 const U32 offset = next();
                 if (offset > 262143) return {};
-                imm(5, offset * 4); emit(0xb8256823u);
+                imm(5, offset * 4); emit(0xb8256826u);
             }
         } else if (op == OpPop) {
             if (!depth) return {};
@@ -76,23 +86,31 @@ inline std::vector<std::uint32_t> Compile(std::span<const std::uint32_t> program
         } else if (op == OpImm || op == OpFlat || op == OpUserData) {
             if (count == MaxValues) return {};
             const U32 value = next();
+            // Only older values spill. The last result stays in w3 until
+            // it is consumed, instead of a store+load on every operation.
+            if (count) store(3, count - 1);
             if (op == OpImm) imm(3, value);
             else {
                 if (value > 262143 || (op==OpUserData && value>=16)) return {};
                 imm(5, value * 4); emit(op == OpUserData ? 0xb8656803u : 0xb8656823u);
             }
-            store(3, count++);
+            ++count;
         } else if (op == OpNot) {
             if (!count) return {};
-            load(3, count - 1); emit(0x2a2303e3u); store(3, count - 1);
+            emit(0x2a2303e3u); // mvn w3,w3; no stack traffic
         } else if (op == OpBitFieldUExtract) {
             if (count < 3) return {};
-            load(5, --count); load(4, --count); load(3, count - 1);
+            // w3=bits, two preceding operands remain in the stack array.
+            emit(0x2a0303e5u); // mov w5,w3
+            --count;
+            load(4, --count); load(3, count - 1);
             emit(0x1ac42463u); imm(4, 1); emit(0x1ac52084u);
-            emit(0x51000484u); emit(0x0a040063u); store(3, count - 1);
+            emit(0x51000484u); emit(0x0a040063u);
         } else {
             if (count < 2) return {};
-            load(4, --count); load(3, count - 1);
+            // w3=right operand, w4 receives it; load only the left.
+            emit(0x2a0303e4u); // mov w4,w3
+            load(3, --count - 1);
             switch (op) {
             case OpAdd: emit(0x0b040063u); break;
             case OpSub: emit(0x4b040063u); break;
@@ -106,7 +124,6 @@ inline std::vector<std::uint32_t> Compile(std::span<const std::uint32_t> program
             case OpUMax: emit(0x6b04007fu); emit(0x1a848063u); break;
             default: return {};
             }
-            store(3, count - 1);
         }
     }
     return {};

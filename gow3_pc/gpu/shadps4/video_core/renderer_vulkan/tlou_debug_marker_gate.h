@@ -10,3 +10,5 @@ namespace Vulkan::Detail {
                                                     bool host_enabled) noexcept {
     return from_guest ? guest_enabled : host_enabled;
 }
+
+} // namespace Vulkan::Detail

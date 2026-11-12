@@ -1,0 +1,33 @@
+name: TLOU local ARM64 compiler payload checks
+
+on:
+  push:
+    paths:
+      - "android/aot/**"
+      - "android/bionic/stage_aot_compiler.sh"
+      - "android/bionic/stage_tools.py"
+      - ".github/workflows/tlou-aot-payload-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-on-device-compiler:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and synthetic boot image validation
+        run: |
+          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py
+          python3 android/aot/test_aot_local.py -v
+      - name: Download and verify pinned upstream Android AArch64 compiler (no game)
+        run: bash android/bionic/stage_aot_compiler.sh
+      - name: Verify required compiler/linker files and ABI
+        run: |
+          test -s out/android-bionic/aot-compiler/bin/libbbrecomp.so
+          test -d out/android-bionic/aot-compiler/bundle
+          readelf -h out/android-bionic/aot-compiler/bin/libbbrecomp.so | grep -E 'Machine:.*AArch64'
+          grep -q '^e0598aebe5b148419d06484e2f02aa19a2a2743915cfdd87a45da814f34d0681$' out/android-bionic/aot-compiler/upstream.sha256
+          find out/android-bionic/aot-compiler/bundle -type f | head -30

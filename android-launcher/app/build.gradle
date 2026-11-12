@@ -15,6 +15,12 @@ android {
     }
     buildTypes {
         release { minifyEnabled false }
+        // Experimental debug builds use a separate package/signing identity;
+        // never replace the user's stable signed installation or its saves.
+        debug {
+            applicationIdSuffix '.aot'
+            versionNameSuffix '-AOT-experimental'
+        }
     }
     // This is an experimental sideload-only native research build, not a
     // Google Play submission. Keep targetSdk 28 until native executable

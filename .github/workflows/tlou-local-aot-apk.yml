@@ -63,6 +63,8 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
           bash android/bionic/stage_aot_compiler.sh
           python3 android/bionic/repackage_local_aot.py "$apk"
+      - name: Generate save-selection fixtures for existing Android tests
+        run: python3 gow3_pc/tests/test_android_save_choice.py
       - name: Build standalone signed debug APK for local AOT compiler testing
         run: gradle -p android-launcher :app:assembleDebug :app:testDebugUnitTest --no-daemon --max-workers=2
       - name: Verify signed APK, distinct app ID and original CPU/GPU binaries

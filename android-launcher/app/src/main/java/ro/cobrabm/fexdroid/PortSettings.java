@@ -165,6 +165,9 @@ final class PortSettings {
         env.put("GOW3_PREP_WORKERS","0");
         // Real NDK ADPF hint session belongs to the separate Bionic game PID,
         // not the Java launcher. OFF by default for reproducible A/B tests.
+        // Optional, always OFF by default. Changes thread affinity, never the CPU frequency ceiling.
+        // Do not enable automatically: command, draw and recorder threads could contend on two prime cores.
+        env.put("TLOU_FAST_RENDER_CORES",p.getBoolean("fast_render_cores",false)?"1":"0");
         env.put("GOW3_ADPF", p.getBoolean("adpf",false) ? "1" : "0");
         env.remove("TLOU_PREP_NORMAL_PRIORITY");
         env.remove("TLOU_PREP_HIT_STATS");
@@ -214,6 +217,7 @@ final class PortSettings {
         result.append("; effective-vsync=").append(env.getOrDefault("GOW3_VSYNC","?"));
         result.append("; virtual-vblank-hz=").append(env.getOrDefault("GOW3_VBLANK_HZ","?"));
         result.append("; adpf-native=").append(env.getOrDefault("GOW3_ADPF","0"));
+        result.append("; fast-render-cores=").append(env.getOrDefault("TLOU_FAST_RENDER_CORES","0"));
         result.append("; guest-job-worker-wake=patched-sleep");
         return result.toString();
     }

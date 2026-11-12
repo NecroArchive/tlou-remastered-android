@@ -284,6 +284,10 @@ public final class MainActivity extends Activity {
             add(drivers,"Importar driver ZIP ou SO",false,()->pickFile(PICK_DRIVER));
             toggleSetting(drivers,"gpu_turbo","Adreno Turbo (sem root)",false);
             drivers.addView(text("Política KGSL de máximo desempenho; a proteção térmica continua ativa. Pode não funcionar em todos os dispositivos.",12,MUTED));
+            LinearLayout cpu=card(root,"CPU E DESEMPENHO");
+            toggleSetting(cpu,"fast_render_cores","Priorizar núcleos rápidos (experimental)",false);
+            cpu.addView(text("Não força o clock. Limita as threads críticas aos núcleos mais rápidos; reinicie o jogo para aplicar. Pode aumentar a disputa entre threads.",12,MUTED));
+            toggleSetting(cpu,"adpf","ADPF — ajuste dinâmico de desempenho",false);
             LinearLayout app=card(root,"IDIOMA E INTERFACE");
             languageChoice(app);
             app.addView(text("O idioma do jogo é escolhido no próprio The Last of Us.",12,MUTED));

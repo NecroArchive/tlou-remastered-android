@@ -236,6 +236,8 @@ final class PortMenu {
                 language();
                 toggle("gpu_turbo","Adreno Turbo (sem root)",false);
                 toggle("adpf","ADPF — ajuste dinâmico de desempenho",false);
+                toggle("fast_render_cores","Priorizar núcleos rápidos (experimental)",false);
+                note("Não força o clock. Limita as threads críticas aos núcleos mais rápidos; reinicie o jogo para aplicar. Pode aumentar a disputa entre threads.");
                 note("Usa dicas de desempenho na thread nativa de comandos. "
                      +"Compatível com Android 13+ quando suportado pelo aparelho. "
                      +"Reinicie o jogo para aplicar; não desativa os limites térmicos.");

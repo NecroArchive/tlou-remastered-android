@@ -26,6 +26,10 @@ jobs:
           git -C .local-deps/FEX remote add origin https://github.com/FEX-Emu/FEX.git
           git -C .local-deps/FEX fetch -q --depth=1 origin fb925d6fc5cc8576bf0f9ae6978fc6d912485593
           git -C .local-deps/FEX checkout -q --detach FETCH_HEAD
+      - name: Install FEX public C++ header requirements
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libfmt-dev
       - name: Prove AOT v2 GuestState layout matches FEX CPUState
         run: |
           cat > /tmp/tlou-aot-state.cpp <<'CPP'

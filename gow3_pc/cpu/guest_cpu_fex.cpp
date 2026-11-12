@@ -39,6 +39,25 @@
 #include <ucontext.h>
 #include <unistd.h>
 
+#ifdef TLOU_AOT_BRIDGE_CHECK
+// AOT tool v1.3.0's GuestState layout (ABI v2). Fail at native build time
+// if the currently pinned FEXCore CPUState is incompatible; do not silently
+// reinterpret registers across AOT/FEX transitions.
+using TlouFexState = FEXCore::Core::CPUState;
+static_assert(sizeof(TlouFexState) == 1472);
+static_assert(alignof(TlouFexState) == 64);
+static_assert(offsetof(TlouFexState, rip) == 24);
+static_assert(offsetof(TlouFexState, gregs) == 32);
+static_assert(offsetof(TlouFexState, L1Pointer) == 160);
+static_assert(offsetof(TlouFexState, avx_high) == 192);
+static_assert(offsetof(TlouFexState, xmm) == 448);
+static_assert(offsetof(TlouFexState, mxcsr) == 972);
+static_assert(offsetof(TlouFexState, gs_cached) == 992);
+static_assert(offsetof(TlouFexState, flags) == 1008);
+static_assert(offsetof(TlouFexState, mm) == 1056);
+static_assert(offsetof(TlouFexState, FCW) == 1200);
+#endif
+
 extern char** environ;
 
 // cpu/host_call_arm64.S: calls `fn` with AAPCS64 arguments from `args`, stores x0, x1, v0, v1.
@@ -338,8 +357,15 @@ void guest_cpu_init(void* (*map)(size_t size, int prot)) {
     }();
     FEXCore::Config::Set(FEXCore::Config::CONFIG_DYNAMICL1CACHE,
                          dynamic_l1 ? "1" : "0");
-    std::printf("TLOU FEX cache: dynamic_l1=%d disk_cache=unchanged tso=unchanged\n",
-                int(dynamic_l1));
+    // The AOT compiler defaults to *different* TSO/x87 options. Log the
+    // actual FEX profile so a later hybrid runtime cannot guess.
+    std::printf("TLOU FEX cache: dynamic_l1=%d disk_cache=unchanged tso=%d "
+                "vector_tso=%d memcpy_tso=%d x87_reduced=%d\n",
+                int(dynamic_l1),
+                int(FEXCore::Config::Get_TSOENABLED()()),
+                int(FEXCore::Config::Get_VECTORTSOENABLED()()),
+                int(FEXCore::Config::Get_MEMCPYSETTSOENABLED()()),
+                int(FEXCore::Config::Get_X87REDUCEDPRECISION()()));
     const auto features = FEX::FetchHostFeatures();
     wide_xmm = features.SupportsAVX && features.SupportsSVE256;
     ctx = FEXCore::Context::Context::CreateNewContext(features).release();

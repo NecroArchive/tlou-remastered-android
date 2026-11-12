@@ -1,0 +1,66 @@
+name: TLOU FEX vs AOT guest state ABI check
+
+on:
+  push:
+    paths:
+      - "gow3_pc/cpu/guest_cpu_fex.cpp"
+      - "gow3_pc/cpu/gow3cpu.cmake"
+      - "android/bionic/build_fex.sh"
+      - ".github/workflows/tlou-aot-abi-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-fex-cpu-state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve exactly pinned TLOU FEX commit
+        run: |
+          set -euo pipefail
+          mkdir -p .local-deps/FEX
+          git -C .local-deps/FEX init -q
+          git -C .local-deps/FEX remote add origin https://github.com/FEX-Emu/FEX.git
+          git -C .local-deps/FEX fetch -q --depth=1 origin fb925d6fc5cc8576bf0f9ae6978fc6d912485593
+          git -C .local-deps/FEX checkout -q --detach FETCH_HEAD
+      - name: Prove AOT v2 GuestState layout matches FEX CPUState
+        run: |
+          cat > /tmp/tlou-aot-state.cpp <<'CPP'
+          #include <cstddef>
+          #include <FEXCore/Core/CoreState.h>
+          using S=FEXCore::Core::CPUState;
+          static_assert(sizeof(S)==1472);
+          static_assert(alignof(S)==64);
+          static_assert(offsetof(S,rip)==24);
+          static_assert(offsetof(S,gregs)==32);
+          static_assert(offsetof(S,L1Pointer)==160);
+          static_assert(offsetof(S,avx_high)==192);
+          static_assert(offsetof(S,xmm)==448);
+          static_assert(offsetof(S,mxcsr)==972);
+          static_assert(offsetof(S,gs_cached)==992);
+          static_assert(offsetof(S,flags)==1008);
+          static_assert(offsetof(S,mm)==1056);
+          static_assert(offsetof(S,FCW)==1200);
+          int main(){return 0;}
+          CPP
+          clang++ -std=c++20 -fsyntax-only \
+            -I .local-deps/FEX/FEXCore/include \
+            -I .local-deps/FEX/Source/ \
+            -I .local-deps/FEX/External/ \
+            /tmp/tlou-aot-state.cpp
+      - name: Verify original TLOU guest memory model is not silently changed
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          fex=Path('.local-deps/FEX/FEXCore/Source/Interface/Config/Config.json.in').read_text()
+          tool=Path('android/aot/aot_local.py').read_text()
+          assert '"TSOEnabled": {' in fex
+          assert '"Default": "true"' in fex.split('"TSOEnabled": {',1)[1].split('}',1)[0]
+          assert '"X87ReducedPrecision": {' in fex
+          assert '"Default": "false"' in fex.split('"X87ReducedPrecision": {',1)[1].split('}',1)[0]
+          assert '"--tso"' in tool
+          print('TLOU TSO preserved conservatively; x87 full precision requires AOT backend compatibility guard')
+          PY

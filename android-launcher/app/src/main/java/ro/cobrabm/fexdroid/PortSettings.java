@@ -102,6 +102,9 @@ final class PortSettings {
         // TLOU ZIP 30/31: exact memo saw 0 hits across >200k compute lookups/5s.
         // Retain the old stable default: avoid descriptor comparisons and memo bookkeeping.
         env.put("GOW3_TLOU_COMPUTE_MEMO","0");
+        // Targeted compute memory waits only. Existing deferred fence
+        // and guest predicate checks still execute.
+        env.put("TLOU_COMPUTE_WAIT_DEFER","1");
         env.put("GOW3_TLOU_HOST_COPY_BATCH","0");
         env.put("TLOU_SRT_HOT_READBACKS","1");
         env.put("TLOU_SRT_DEP_BATCH","0");
@@ -221,6 +224,7 @@ final class PortSettings {
         result.append("; adpf-native=").append(env.getOrDefault("GOW3_ADPF","0"));
         result.append("; fast-render-cores=").append(env.getOrDefault("TLOU_FAST_RENDER_CORES","0"));
         result.append("; compute-exact-memo=").append(env.getOrDefault("GOW3_TLOU_COMPUTE_MEMO","0"));
+        result.append("; compute-wait-defer=").append(env.getOrDefault("TLOU_COMPUTE_WAIT_DEFER","0"));
         result.append("; guest-job-worker-wake=patched-sleep");
         return result.toString();
     }

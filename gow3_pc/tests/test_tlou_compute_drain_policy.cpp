@@ -12,9 +12,20 @@ using AmdGpu::PM4ItOpcode;
 using Vulkan::Detail::ClassifyComputePreDrain;
 using Vulkan::Detail::ComputePreDrain;
 using Vulkan::Detail::CanSkipComputePreDrain;
+using Vulkan::Detail::CanDeferComputeMemoryWait;
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
 static void Policy() {
+    // Only compute WAIT_REG_MEM on guest memory can use the deferred
+    // predicate/pending-fence path; all other PM4 barriers retain pre-drain.
+    static_assert(CanDeferComputeMemoryWait(PM4ItOpcode::WaitRegMem,true,true));
+    static_assert(!CanDeferComputeMemoryWait(PM4ItOpcode::WaitRegMem,false,true));
+    static_assert(!CanDeferComputeMemoryWait(PM4ItOpcode::WaitRegMem,true,false));
+    static_assert(!CanDeferComputeMemoryWait(PM4ItOpcode::AcquireMem,true,true));
+    static_assert(!CanDeferComputeMemoryWait(PM4ItOpcode::WriteData,true,true));
+    static_assert(!CanDeferComputeMemoryWait(PM4ItOpcode::EventWrite,true,true));
+    static_assert(!CanDeferComputeMemoryWait(PM4ItOpcode::DmaData,true,true));
+    static_assert(!CanDeferComputeMemoryWait(PM4ItOpcode::IndirectBuffer,true,true));
     static_assert(ClassifyComputePreDrain(PM4ItOpcode::IndirectBuffer)==ComputePreDrain::NestedBuffer);
     static_assert(ClassifyComputePreDrain(PM4ItOpcode::AcquireMem)==ComputePreDrain::Required);
     static_assert(ClassifyComputePreDrain(PM4ItOpcode::EventWrite)==ComputePreDrain::Required);

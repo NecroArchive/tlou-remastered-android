@@ -2737,10 +2737,32 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         // queue): compute drains were up to 35% of the command thread on a Ryzen
         // laptop. Off by default (see the graphics WaitRegMem).
         // 21 Oct 2026 (GOW3_SKIP_IB_DRAIN=1): nested buffers alone.
+        // TLOU Android: avoid a full Stage-A/Stage-B drain BEFORE every compute
+        // WAIT_REG_MEM on guest memory. The existing FewerDrains wait loop
+        // checks pending fence values, lands deferred readbacks, and yields
+        // other queues until the exact predicate is met. This is NOT a generic
+        // draw-barrier skip: register waits and other PM4 opcodes stay unchanged.
+        // TLOU_COMPUTE_WAIT_DEFER=0 restores the pre-drain for A/B debugging.
+        static const bool targeted_compute_wait_enabled = [] {
+#ifdef __ANDROID__
+            const char* env = std::getenv("TLOU_COMPUTE_WAIT_DEFER");
+            return !(env && env[0] == '0' && env[1] == '\0');
+#else
+            return false;
+#endif
+        }();
+        const bool targeted_compute_wait =
+            Vulkan::Detail::CanDeferComputeMemoryWait(
+                opcode,
+                opcode == PM4ItOpcode::WaitRegMem &&
+                    reinterpret_cast<const PM4CmdWaitRegMem*>(header)->mem_space.Value() ==
+                        PM4CmdWaitRegMem::MemSpace::Memory,
+                targeted_compute_wait_enabled);
         const bool pipelined_wait =
             (FewerDrains() &&
              (opcode == PM4ItOpcode::IndirectBuffer || opcode == PM4ItOpcode::WaitRegMem)) ||
-            (opcode == PM4ItOpcode::IndirectBuffer && SkipIbDrain());
+            (opcode == PM4ItOpcode::IndirectBuffer && SkipIbDrain()) ||
+            targeted_compute_wait;
         const bool would_drain =
             rasterizer && opcode != PM4ItOpcode::Nop && opcode != PM4ItOpcode::SetShReg &&
             opcode != PM4ItOpcode::SetQueueReg && opcode != PM4ItOpcode::DispatchDirect &&
@@ -2769,10 +2791,11 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         // Report real guest opcode outcomes separately from synthetic tests.
         struct DrainCounts {
             u64 commands=0, baseline=0, nested_skips=0, ib_hazard_kept=0;
-            u64 inner_drains=0, still_drained=0;
+            u64 inner_drains=0, still_drained=0, memory_waits_deferred=0;
             std::chrono::steady_clock::time_point last{};
         };
         static thread_local DrainCounts counts{};
+        if (targeted_compute_wait) ++counts.memory_waits_deferred;
         if (would_drain) {
             ++counts.baseline;
             if (!skip_pre_drain) ++counts.still_drained;
@@ -2790,12 +2813,13 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                 std::printf("TLOU compute predrain (5 s): legacy=%llu "
                             "ib-skipped=%llu ib-hazard-kept=%llu "
                             "duplicate-inner=%llu "
-                            "still-drained=%llu (counts, not FPS)\n",
+                            "still-drained=%llu memory-waits-deferred=%llu (counts, not FPS)\n",
                             (unsigned long long)counts.baseline,
                             (unsigned long long)counts.nested_skips,
                             (unsigned long long)counts.ib_hazard_kept,
                             (unsigned long long)counts.inner_drains,
-                            (unsigned long long)counts.still_drained);
+                            (unsigned long long)counts.still_drained,
+                            (unsigned long long)counts.memory_waits_deferred);
                 counts = {};
                 counts.last = now;
             }
@@ -3009,7 +3033,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         case PM4ItOpcode::WaitRegMem: {
             const auto* wait_reg_mem = reinterpret_cast<const PM4CmdWaitRegMem*>(header);
             ASSERT(wait_reg_mem->engine.Value() == PM4CmdWaitRegMem::Engine::Me);
-            if (FewerDrains()) {
+            if (FewerDrains() || targeted_compute_wait) {
                 // Not drained up front: as on the graphics queue, a fence handed to the draw
                 // recording thread counts as written, and an unmet wait lets it catch up first.
                 if (u32 value; wait_reg_mem->mem_space.Value() ==

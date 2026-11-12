@@ -24,6 +24,39 @@ Without --boot the script invokes the repo's gow3_pc/scripts/prepare.py and link
 
 The app does not yet ship or start libbbrecomp.so; it needs to be provisioned locally or bundled and invoked from the Android launcher in a later change. Do not reuse Bloodborne game-specific patch catalogs.
 
+## Integrated experimental app path
+
+The experimental APK build can include the official, SHA-256-pinned Android
+`bb-recomp` 1.3.0 binary with `TLOU_EXPERIMENTAL_LOCAL_AOT=1` during
+`android/bionic/package_apk.sh`. `android/bionic/stage_tools.py` places the
+compiler, LLVM bundle and this frontend in `assets/tools.zip`.
+The **Settings → CPU and performance → Compile ARM64 on this device** action
+prepares the selected base + update, uses its merged `tlou-view` and emits
+`files/tlou-aot-work/aot/libtlouaot.so`. The original game is not changed.
+The app currently **does not execute this library**.
+
+## Verified compatibility facts
+
+- The executable text is compared byte-for-byte against the prepared image
+  (accounting for the linker's documented FS→GS rewrite). A mixed 1.00/1.11
+  source is refused before translation.
+- The pinned FEX CPUState layout matches the AOT v2 GuestState offsets: see
+  workflow `tlou-aot-abi-check.yml`.
+- The pinned TLOU FEX defaults to **TSO enabled**, unlike Bloodborne's AOT
+  compiler default. The builder uses conservative `--tso` and a portable
+  `--host armv8.2`. The bundled compiler's TSO option enables additional
+  vector/memcpy barriers compared with the exact TLOU default; this can
+  impact performance and is not yet a 1:1 translation profile.
+- TLOU FEX defaults to full-precision x87, but bb-recomp v1.3.0 always
+  lowers reduced-precision x87. Until x87 functions are handled with a
+  semantically correct backend or FEX fallback, the generated code must
+  **not** replace the production guest CPU.
+- Runtime fibers, native callback state restoration, dirty unit invalidation,
+  special hooks and patch variants are still to be integrated.
+
+CI source checks validate the compiler bundle and the AOT/GuestState
+preconditions; they do **not** validate full TLOU execution or an FPS gain.
+
 ## What remains
 
 1. Verify the real G3PROBE5 image payload is accepted by the bb-recomp scanner and the user's specific game image generates a complete libtlouaot.so, its metadata, and a function coverage report.

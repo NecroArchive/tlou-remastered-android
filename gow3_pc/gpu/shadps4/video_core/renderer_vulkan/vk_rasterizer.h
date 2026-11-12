@@ -739,6 +739,16 @@ private:
     /// Submissions (prepared draws) kept alive until stage B reaches the position.
     std::deque<std::pair<u64, std::shared_ptr<const void>>> pipe_keepalive;
     std::unique_ptr<DrawPipe> draw_pipe;
+#ifdef __ANDROID__
+    // Stage A only. Count EXACT call sites which actually blocked for Stage B,
+    // not every no-op DrainDrawPipe invocation. Sorted/read every five seconds.
+    struct PipeDrainSite {
+        const char* function = nullptr;
+        u32 line = 0;
+        u64 waits = 0;
+    };
+    std::array<PipeDrainSite, 32> pipe_drain_sites{};
+#endif
 };
 
 } // namespace Vulkan

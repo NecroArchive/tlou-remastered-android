@@ -49,6 +49,7 @@
 #include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
 #include "video_core/renderer_vulkan/tlou_pending_granule_filter.h"
 #include "video_core/renderer_vulkan/tlou_dirty_packet_write.h"
+#include "video_core/renderer_vulkan/tlou_debug_marker_gate.h"
 #include "shader_recompiler/backend/spirv/tlou_split_compute.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_threads.h"
@@ -1467,7 +1468,25 @@ void Rasterizer::DrainDrawPipe(u32 reason, u32 line, const char* function) {
     }
     static const bool stats = std::getenv("GOW3_FRAME_STATS") != nullptr;
     if (!stats) {
+#ifdef __ANDROID__
+        const u64 before_waits = draw_pipe->drains;
+#endif
         draw_pipe->Drain(reason);
+#ifdef __ANDROID__
+        if (CpuPhaseSamplingEnabled() && draw_pipe->drains != before_waits) {
+            // Capture the actual serialization source with no clock reads,
+            // heap allocations, mutexes or strings on the hot path.
+            for (auto& site : pipe_drain_sites) {
+                if (site.function == nullptr ||
+                    (site.function == function && site.line == line)) {
+                    site.function = function;
+                    site.line = line;
+                    ++site.waits;
+                    break;
+                }
+            }
+        }
+#endif
         return;
     }
     const u64 before = draw_pipe->drain_cycles;
@@ -2487,6 +2506,20 @@ void Rasterizer::PrintPipeStats() {
             // Sync contention is distinct from command-packet CPU work:
             // report actual producer waits / long parking once per 5 sec.
             const auto sync = draw_pipe->TakeSyncStats();
+#ifdef __ANDROID__
+            auto by_site = pipe_drain_sites;
+            std::sort(by_site.begin(), by_site.end(),
+                      [](const auto& a, const auto& b) { return a.waits > b.waits; });
+            std::string sources;
+            for (u32 i = 0; i < 8 && i < by_site.size() && by_site[i].waits; ++i) {
+                sources += fmt::format(" {}:{}={}", by_site[i].function,
+                                       by_site[i].line, by_site[i].waits);
+            }
+            if (!sources.empty()) {
+                std::printf("TLOU pipe drain sites (5 s):%s\\n", sources.c_str());
+            }
+            pipe_drain_sites.fill({});
+#endif
             std::printf("TLOU pipe sync (5 s): drain-waits=%llu capacity-waits=%llu "
                         "dependency-waits=%llu parks=%llu parked=%.3fms "
                         "(wall time, waits overlap other thread work)\n",
@@ -8713,11 +8746,11 @@ void Rasterizer::UpdateColorBlendingState(const GraphicsPipeline* pipeline) cons
 }
 
 void Rasterizer::ScopeMarkerBegin(const std::string_view& str, bool from_guest) {
-    DrainDrawPipe();
-    if ((from_guest && !EmulatorSettings.IsVkGuestMarkersEnabled()) ||
-        (!from_guest && !EmulatorSettings.IsVkHostMarkersEnabled())) {
+    if (!Detail::MarkerNeedsRecording(from_guest, EmulatorSettings.IsVkGuestMarkersEnabled(),
+                                      EmulatorSettings.IsVkHostMarkersEnabled())) {
         return;
     }
+    DrainDrawPipe();
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.beginDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{
         .pLabelName = str.data(),
@@ -8725,21 +8758,21 @@ void Rasterizer::ScopeMarkerBegin(const std::string_view& str, bool from_guest) 
 }
 
 void Rasterizer::ScopeMarkerEnd(bool from_guest) {
-    DrainDrawPipe();
-    if ((from_guest && !EmulatorSettings.IsVkGuestMarkersEnabled()) ||
-        (!from_guest && !EmulatorSettings.IsVkHostMarkersEnabled())) {
+    if (!Detail::MarkerNeedsRecording(from_guest, EmulatorSettings.IsVkGuestMarkersEnabled(),
+                                      EmulatorSettings.IsVkHostMarkersEnabled())) {
         return;
     }
+    DrainDrawPipe();
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.endDebugUtilsLabelEXT();
 }
 
 void Rasterizer::ScopedMarkerInsert(const std::string_view& str, bool from_guest) {
-    DrainDrawPipe();
-    if ((from_guest && !EmulatorSettings.IsVkGuestMarkersEnabled()) ||
-        (!from_guest && !EmulatorSettings.IsVkHostMarkersEnabled())) {
+    if (!Detail::MarkerNeedsRecording(from_guest, EmulatorSettings.IsVkGuestMarkersEnabled(),
+                                      EmulatorSettings.IsVkHostMarkersEnabled())) {
         return;
     }
+    DrainDrawPipe();
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.insertDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{
         .pLabelName = str.data(),
@@ -8748,11 +8781,11 @@ void Rasterizer::ScopedMarkerInsert(const std::string_view& str, bool from_guest
 
 void Rasterizer::ScopedMarkerInsertColor(const std::string_view& str, const u32 color,
                                          bool from_guest) {
-    DrainDrawPipe();
-    if ((from_guest && !EmulatorSettings.IsVkGuestMarkersEnabled()) ||
-        (!from_guest && !EmulatorSettings.IsVkHostMarkersEnabled())) {
+    if (!Detail::MarkerNeedsRecording(from_guest, EmulatorSettings.IsVkGuestMarkersEnabled(),
+                                      EmulatorSettings.IsVkHostMarkersEnabled())) {
         return;
     }
+    DrainDrawPipe();
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.insertDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{
         .pLabelName = str.data(),

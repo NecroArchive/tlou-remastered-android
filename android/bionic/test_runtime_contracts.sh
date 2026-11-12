@@ -309,6 +309,14 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
   -o "$test_dir/tlou-graphics-cached-hit"
 "$test_dir/tlou-graphics-cached-hit"
 
+# Disabled Vulkan debug labels must NEVER drain the draw pipe. The
+# production marker path checks the gate before entering DrainDrawPipe.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_debug_marker_gate.cpp \
+  -o "$test_dir/tlou-marker-gate"
+"$test_dir/tlou-marker-gate"
+
 # Android Stage A should not duplicate a packet-owned Flatbuf snapshot in the
 # constant ring; the recording thread consumes the exact original packet bytes.
 g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \

@@ -35,14 +35,14 @@ def sha256(path: Path) -> str:
 def check_self(path: Path) -> None:
     with path.open("rb") as stream:
         first = stream.read(32)
-        if len(first) != 32 or first[:4] != b"O\\x15=\\x1d":
+        if len(first) != 32 or first[:4] != b"O\x15=\x1d":
             raise ValueError(f"Not a PS4 SELF: {path}")
         seg_count = struct.unpack_from("<H", first, 24)[0]
         if not 0 < seg_count < 256:
             raise ValueError(f"Invalid SELF section count: {path}")
         stream.seek(32 + seg_count * 32)
         elf = stream.read(64)
-        if elf[:7] != b"\\x7fELF\\x02\\x01\\x01" or len(elf) != 64:
+        if elf[:7] != b"\x7fELF\x02\x01\x01" or len(elf) != 64:
             raise ValueError(f"No plaintext ELF64 in {path}")
         if struct.unpack_from("<H", elf, 18)[0] != 62:
             raise ValueError(f"Not x86-64: {path}")
@@ -152,7 +152,7 @@ def main(argv=None):
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),
                   "input_boot": check_boot(boot), "translation_command": command,
                   "runtime_integrated": False, "status": "staged"}
-        (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\\n")
+        (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\n")
         if args.dry_run:
             print("Input verified; BBPROBE5 adapter staged. AOT NOT YET COMPILED.")
             print(" ".join(command))
@@ -169,13 +169,13 @@ def main(argv=None):
             meta = json.loads(metadata_file.read_text())
             with so.open("rb") as f:
                 elf = f.read(20)
-            if elf[:4] != b"\\x7fELF" or struct.unpack_from("<H", elf, 18)[0] != 183:
+            if elf[:4] != b"\x7fELF" or struct.unpack_from("<H", elf, 18)[0] != 183:
                 raise ValueError("Output is not AArch64")
             if meta.get("abi_version") != 2 or meta.get("so_sha256") != sha256(so):
                 raise ValueError("Unexpected AOT ABI or .so hash")
             report["status"] = "aarch64_generated_runtime_not_integrated"
             report["unit_count"] = meta.get("unit_count")
-        (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\\n")
+        (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\n")
         return code
     except (OSError, ValueError, subprocess.CalledProcessError) as e:
         print(f"TLOU local AOT: {e}", file=sys.stderr)

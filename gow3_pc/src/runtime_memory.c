@@ -1036,8 +1036,8 @@ static int try_copy_two_cached_backing(uintptr_t address, void *dest, uint64_t s
 static void cache_region(size_t i, uintptr_t request_address);
 // Stage-A constant ring calls ClampRangeSize then CopySparseMemory for the
 // SAME small, already-validated mapping. Reuse that one-VMA backing view for
-// the immediately following copy: validate the VMA generation again and
-// consume the entry once. It holds no guest data, only a backing pointer,
+// subsequent matching copies: validate the VMA generation again on EACH
+// copy. It holds no guest data, only a backing pointer,
 // and never survives a mapping generation change. Other callers retain the
 // exact old copy path (including sparse holes, aliases, two-span fallbacks).
 typedef struct {
@@ -1058,7 +1058,8 @@ static int tlou_clamp_copy_active(void) {
 static void tlou_report_clamp_reuse(void) {
     // No clock, stdout or locking on 65,535/65,536 successful reuse copies.
     static __thread time_t last=0;
-    if((tlou_clamp_copy_hits & 65535u)!=0u) return;
+    // Caller enters only once per 65,536 successful copies. The normal
+    // constant-ring path executes no reporting helper call.
     time_t now=time(NULL);
     if(!last){last=now;return;}
     if(now-last<5)return;
@@ -1147,10 +1148,14 @@ void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
        tlou_clamp_copy.generation==__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE) &&
        !(runtime_disabled_optimizations & 1)) {
         const unsigned char *source=tlou_clamp_copy.source;
-        tlou_clamp_copy.size=0;
+        // No need to invalidate the pointer after each read: the NEXT copy
+        // still checks the same address, requested range and VMA generation.
+        // It never caches guest bytes, so concurrent guest writes remain
+        // observable just as in the original cached_backing+memcpy path.
         memcpy(dest,source,size);
-        ++tlou_clamp_copy_hits;
-        tlou_report_clamp_reuse();
+        if ((++tlou_clamp_copy_hits & 65535u) == 0u) {
+            tlou_report_clamp_reuse();
+        }
         return;
     }
     { const void *fast=cached_backing(address,size);

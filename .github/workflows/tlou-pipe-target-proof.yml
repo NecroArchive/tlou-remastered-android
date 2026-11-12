@@ -1,0 +1,48 @@
+name: TLOU target-aware pipe wakeup proof (NO APK)
+on:
+  push:
+    branches: ['perf/tlou-targeted-pipe-wakeup-20261112']
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_draw_pipe_progress_wait.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_draw_pipe.h'
+      - 'gow3_pc/tests/test_tlou_pipe_target_wakeup.cpp'
+      - '.github/workflows/tlou-pipe-target-proof.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proof:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04,ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stress packet thresholds and compare production CPU cost
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/pipe-target
+          g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_pipe_target_wakeup.cpp \
+            -o out/pipe-target/benchmark
+          timeout 120 out/pipe-target/benchmark | tee out/pipe-target/result.txt
+          timeout 120 out/pipe-target/benchmark | tee out/pipe-target/repeat.txt
+      - name: Undefined behavior sanitizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -UNDEBUG -Wall -Wextra -Werror -pthread \
+            -fsanitize=undefined -fno-omit-frame-pointer \
+            -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_pipe_target_wakeup.cpp \
+            -o out/pipe-target/ubsan
+          timeout 120 out/pipe-target/ubsan --correctness-only
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tlou-pipe-target-${{ matrix.runner }}
+          path: out/pipe-target/*.txt

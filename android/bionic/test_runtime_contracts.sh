@@ -332,6 +332,13 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
   -o "$test_dir/tlou-large-scalar-copy"
 "$test_dir/tlou-large-scalar-copy"
 
+# Precise Stage B notifications: do not wake Stage A for unrelated packets.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_pipe_target_wakeup.cpp \
+  -o "$test_dir/tlou-pipe-target"
+"$test_dir/tlou-pipe-target" --correctness-only
+
 # Actual Android stage-A/stage-B synchronization: ensure that a waiting
 # producer cannot miss completed packet notifications (40k fences + 2k
 # capacity probes). CPU is parked only after the bounded spin budget.

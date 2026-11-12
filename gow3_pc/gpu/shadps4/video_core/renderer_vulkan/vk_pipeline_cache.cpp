@@ -2225,13 +2225,30 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         return false;
 #endif
     }();
-    if (hw_stage == HwStage::Compute && compute_buffer_fast && !compute_memo_enabled) {
+    static thread_local bool compute_buffer_fast_mismatch = false;
+    if (hw_stage == HwStage::Compute && compute_buffer_fast &&
+        !compute_memo_enabled && !compute_buffer_fast_mismatch) {
         struct FastStats {
             u64 calls=0, eligible=0, hits=0;
             std::chrono::steady_clock::time_point last{};
         };
         static thread_local FastStats counts{};
         ++counts.calls;
+        // Print before the early successful return! Otherwise a fast path
+        // that hits on every draw never reports any useful hit-rate data.
+        if ((counts.calls & 65535u) == 0u) {
+            const auto now = std::chrono::steady_clock::now();
+            if (counts.last == std::chrono::steady_clock::time_point{}) {
+                counts.last = now;
+            } else if (now-counts.last >= std::chrono::seconds(5)) {
+                std::printf("TLOU compute buffer-only fast (5 s): calls=%llu eligible=%llu hits=%llu\n",
+                    (unsigned long long)counts.calls,
+                    (unsigned long long)counts.eligible,
+                    (unsigned long long)counts.hits);
+                counts = {};
+                counts.last = now;
+            }
+        }
         if (program->last_used < program->modules.size()) {
             const size_t idx = program->last_used;
             const auto& cached = program->modules[idx].spec;
@@ -2246,12 +2263,20 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                     return v && v[0] == '1';
                 }();
                 bool equal = true;
-                if (verify) {
+                // Verify 1 in 16384 eligible hits in ordinary Android
+                // gameplay too: catches unusual descriptor/permutation
+                // combinations before a wrong cached module is selected.
+                // Full A/B equivalence can be forced with VERIFY=1.
+                if (verify || ((counts.hits & 16383u) == 0u)) {
                     const auto fresh = Shader::StageSpecialization(info, runtime_info, profile, binding);
                     equal = cached == fresh;
-                    if (!equal) std::fprintf(stderr,
-                        "TLOU buffer-only compute direct match FAILED: shader %#llx\n",
-                        static_cast<unsigned long long>(params.hash));
+                    if (!equal) {
+                        compute_buffer_fast_mismatch = true;
+                        std::fprintf(stderr,
+                            "TLOU buffer-only compute direct match FAILED: shader %#llx; "
+                            "disabling fast path until restart\n",
+                            static_cast<unsigned long long>(params.hash));
+                    }
                 }
                 if (equal) {
                     ++counts.hits;
@@ -2261,19 +2286,6 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                     return std::make_tuple(&program->info, program->modules[idx].module,
                         AssignFetch(fetch, cached.fetch_shader_data), hash);
                 }
-            }
-        }
-        if ((counts.calls & 65535u) == 0u) {
-            const auto now=std::chrono::steady_clock::now();
-            if (counts.last == std::chrono::steady_clock::time_point{}) {
-                counts.last=now;
-            } else if (now-counts.last >= std::chrono::seconds(5)) {
-                std::printf("TLOU compute buffer-only fast (5 s): calls=%llu eligible=%llu hits=%llu\n",
-                    (unsigned long long)counts.calls,
-                    (unsigned long long)counts.eligible,
-                    (unsigned long long)counts.hits);
-                counts={};
-                counts.last=now;
             }
         }
     }

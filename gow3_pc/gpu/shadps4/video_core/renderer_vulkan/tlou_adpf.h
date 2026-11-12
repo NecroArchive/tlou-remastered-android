@@ -104,7 +104,7 @@ public:
         if (rc != 0) thread_update_failed = true; // Preserve the prior valid session on error.
         else configured_threads = wanted;
         std::printf("TLOU ADPF thread group: command=%d draw=%u recorder=%u "
-                    "count=%zu rc=%d\\n",
+                    "count=%zu rc=%d\n",
                     command_tid, draw_tid, recorder_tid, wanted.size, rc);
     }
     void NotePostDraw(uint64_t current_frame) {

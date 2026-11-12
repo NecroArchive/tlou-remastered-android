@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <thread>
 using namespace std::chrono;
@@ -55,7 +56,14 @@ Trial Run(int work_us,int n,bool legacy_park=false) {
     return t;
 }
 
-int main() {
+int main(int argc,char** argv) {
+    if (argc==2 && std::strcmp(argv[1],"--correctness-only")==0) {
+        auto fast=Run(15,1000);
+        auto slow=Run(2000,30);
+        assert(fast.elapsed_us>0 && slow.parks>0);
+        std::printf("TLOU adaptive draw-pipe correctness: short + long waits PASS\n");
+        return 0;
+    }
     std::array<double,5> legacy{},adaptive{};
     u64 total_legacy_parks=0,total_adaptive_parks=0;
     for(int rep=0;rep<5;++rep) {

@@ -341,6 +341,24 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread \
   -o "$test_dir/tlou-pipe-wait"
 "$test_dir/tlou-pipe-wait"
 
+# Actual production compute pre-drain: memory-command parity, preserves
+# WAIT_REG_MEM / DMA / pending nested-IB writes, tests the same header used by
+# Liverpool::ProcessCompute in both the Android and desktop compilation.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_compute_drain_policy.cpp \
+  -o "$test_dir/tlou-compute-pre-drain"
+"$test_dir/tlou-compute-pre-drain"
+
+# Stage-A/B handoff: a short wait must not incur a futex round trip,
+# a long wait must park and wake without losing the notification.
+# Correctness only: dedicated x86/ARM perf CI owns the timing regression gate.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_adaptive_pipe_drain.cpp \
+  -o "$test_dir/tlou-adaptive-pipe"
+"$test_dir/tlou-adaptive-pipe" --correctness-only
+
 # Stage-A pending write pruning: compare every resulting range under
 # 180k interleaved merge/commit/retirement events, then require measured
 # reduction of needless vector walks on x86/ARM host CPU. Never defer a

@@ -44,6 +44,30 @@ class TestBridge(unittest.TestCase):
             self.assertEqual(mod.check_boot(new)["modules"], 2)
             self.assertEqual(json.loads((new.parent / "link.json").read_text())["modules"][0]["file"], "libc.prx")
 
+    def test_choose_prepared_update_eboot(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td) / "base"
+            base.mkdir()
+            (base / "eboot.bin").write_bytes(b"1.00")
+            prepared = Path(td) / "tlou-prepared"
+            (prepared / "tlou-view").mkdir(parents=True)
+            (prepared / "tlou-view/eboot.bin").write_bytes(b"1.11")
+            boot = prepared / "boot-linked.bin"
+            boot.write_bytes(b"placeholder")
+            selected = mod.effective_game_folder(base, boot)
+            self.assertEqual((selected / "eboot.bin").read_bytes(), b"1.11")
+            self.assertEqual((base / "eboot.bin").read_bytes(), b"1.00")
+
+    def test_fail_closed_without_prepared_view(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td) / "base"
+            base.mkdir()
+            prepared = Path(td) / "tlou-prepared"
+            prepared.mkdir()
+            (prepared / "device-ready.json").write_text("{}")
+            with self.assertRaisesRegex(ValueError, "no tlou-view"):
+                mod.effective_game_folder(base, prepared / "boot-linked.bin")
+
     def test_reject_bad_magic(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "bad.bin"

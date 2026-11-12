@@ -2189,6 +2189,28 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         const char* env = std::getenv("GOW3_TLOU_COMPUTE_MEMO");
         return env && env[0] == '1' && env[1] == '\0';
     }();
+    struct ComputeMemoStats {
+        u64 calls = 0, hits = 0, full = 0, saved = 0, rejected = 0;
+        std::chrono::steady_clock::time_point started{};
+    };
+    static thread_local ComputeMemoStats memo_stats{};
+    if (compute_memo_enabled && hw_stage == HwStage::Compute &&
+        (++memo_stats.calls & 65535u) == 0u) {
+        const auto now = std::chrono::steady_clock::now();
+        if (memo_stats.started == std::chrono::steady_clock::time_point{}) {
+            memo_stats.started = now;
+        } else if (now - memo_stats.started >= std::chrono::seconds(5)) {
+            std::printf("TLOU compute exact memo (5 s): calls=%llu hits=%llu "
+                        "full-specialization=%llu safe-saved=%llu unsafe=%llu\n",
+                        (unsigned long long)memo_stats.calls,
+                        (unsigned long long)memo_stats.hits,
+                        (unsigned long long)memo_stats.full,
+                        (unsigned long long)memo_stats.saved,
+                        (unsigned long long)memo_stats.rejected);
+            memo_stats = {};
+            memo_stats.started = now;
+        }
+    }
     if (compute_memo_enabled && hw_stage == HwStage::Compute &&
         program->compute_perm_memo.Matches(info.ProgramBase(), info.FlatUserData(),
                                           runtime_info, program->modules.size())) {
@@ -2207,6 +2229,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
             }
         }
         if (equivalent) {
+            if (compute_memo_enabled && hw_stage == HwStage::Compute) ++memo_stats.hits;
             program->last_used = idx;
             info.AddBindings(binding);
             const auto hash = TlouComputeSplit::PermutationKey(
@@ -2216,6 +2239,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                                    hash);
         }
     }
+    if (compute_memo_enabled && hw_stage == HwStage::Compute) ++memo_stats.full;
     auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
 
     size_t perm_idx = program->modules.size();
@@ -2255,9 +2279,11 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     }
     if (compute_memo_enabled && hw_stage == HwStage::Compute &&
         ExactComputeMemoSafe(info)) {
+        ++memo_stats.saved;
         program->compute_perm_memo.Remember(info.ProgramBase(), info.FlatUserData(),
                                             runtime_info, perm_idx);
     } else if (hw_stage == HwStage::Compute) {
+        if (compute_memo_enabled) ++memo_stats.rejected;
         program->compute_perm_memo.Invalidate();
     }
     return std::make_tuple(&program->info, module,

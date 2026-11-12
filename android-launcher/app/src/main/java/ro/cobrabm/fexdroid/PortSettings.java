@@ -169,6 +169,11 @@ final class PortSettings {
         // Do not enable automatically: command, draw and recorder threads could contend on two prime cores.
         env.put("TLOU_FAST_RENDER_CORES",p.getBoolean("fast_render_cores",false)?"1":"0");
         env.put("GOW3_ADPF", p.getBoolean("adpf",false) ? "1" : "0");
+        // Exact-key compute specialization memo: retain per-dispatch SRT walks,
+        // invalidate on any flattened descriptor/runtime/base change. Unlike a
+        // shader-skip it never drops draws or computes; a native A/B env fallback
+        // remains available for regression diagnosis.
+        env.put("GOW3_TLOU_COMPUTE_MEMO","1");
         env.remove("TLOU_PREP_NORMAL_PRIORITY");
         env.remove("TLOU_PREP_HIT_STATS");
         env.put("GOW3_DEFERRED_READBACK","0");
@@ -218,6 +223,7 @@ final class PortSettings {
         result.append("; virtual-vblank-hz=").append(env.getOrDefault("GOW3_VBLANK_HZ","?"));
         result.append("; adpf-native=").append(env.getOrDefault("GOW3_ADPF","0"));
         result.append("; fast-render-cores=").append(env.getOrDefault("TLOU_FAST_RENDER_CORES","0"));
+        result.append("; compute-exact-memo=").append(env.getOrDefault("GOW3_TLOU_COMPUTE_MEMO","0"));
         result.append("; guest-job-worker-wake=patched-sleep");
         return result.toString();
     }

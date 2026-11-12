@@ -71,6 +71,25 @@ def check_boot(path: Path) -> dict:
                 "modules": mc, "bindings": nb}
 
 
+def effective_game_folder(base_game: Path, boot: Path | None) -> Path:
+    """Use the selected update's merged view, never the original base eboot.
+
+    TLOU boots boot-linked.bin made from tlou-view (base + 1.11 update).
+    Using --game-dir against the base 1.00 ELF while the image has 1.11
+    would produce wrong function offsets and an unusable native library.
+    """
+    if boot is None:
+        return base_game
+    view = boot.parent / "tlou-view"
+    if view.is_dir():
+        if not (view / "eboot.bin").is_file():
+            raise ValueError("Prepared tlou-view is missing the effective eboot.bin")
+        return view.resolve(strict=True)
+    if (boot.parent / "device-ready.json").is_file():
+        raise ValueError("Prepared boot has no tlou-view: refusing to mix game versions")
+    return base_game
+
+
 def prepare(repo: Path, game: Path, out: Path) -> Path:
     scripts = repo / "gow3_pc/scripts"
     for script in ("prepare.py", "link_modules.py"):
@@ -124,6 +143,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         game = args.game.resolve(strict=True)
+        # Prefer the merged eboot of the prepared image when an update exists.
+        boot_input = args.boot.resolve(strict=True) if args.boot else None
+        original_game = game
+        game = effective_game_folder(game, boot_input)
         out = args.out.resolve()
         if not 1 <= args.jobs <= 16 or not 1 <= args.shards <= 4096:
             raise ValueError("Invalid --jobs or --shards")
@@ -135,7 +158,7 @@ def main(argv=None):
         if not (game / "sce_sys/param.sfo").is_file() and not args.dry_run:
             raise ValueError("Missing sce_sys/param.sfo, needed for AOT manifest")
         out.mkdir(parents=True, exist_ok=True)
-        boot = (args.boot.resolve(strict=True) if args.boot else
+        boot = (boot_input if boot_input else
                 prepare(Path(__file__).resolve().parents[2], game, out / "tlou-prepared"))
         staged = stage_boot(boot, out / "bb-prepared")
         aot = out / "aot"
@@ -148,7 +171,8 @@ def main(argv=None):
                    "-O1", "--no-nice", "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]
-        report = {"version": version, "eboot_sha256": sha256(game / "eboot.bin"),
+        report = {"version": version, "original_game": str(original_game),
+                  "effective_game": str(game), "eboot_sha256": sha256(game / "eboot.bin"),
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),
                   "input_boot": check_boot(boot), "translation_command": command,
                   "runtime_integrated": False, "status": "staged"}

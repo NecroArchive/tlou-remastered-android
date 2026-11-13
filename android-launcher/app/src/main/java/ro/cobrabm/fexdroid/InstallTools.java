@@ -144,7 +144,8 @@ final class InstallTools {
             "--out",output.getCanonicalPath(),
             "--compiler",compiler.getCanonicalPath(),
             "--bundle-dir",bundle.getCanonicalPath(),
-            "--jobs","3","--shards","64");
+            "--jobs","3","--shards","64",
+            "--misses",new File(context.getFilesDir(),"tlou/aot-misses.log").getAbsolutePath());
         run(command,progress);
         File so=new File(output,"aot/libtlouaot.so");
         File metadata=new File(output,"aot/libtlouaot.json");

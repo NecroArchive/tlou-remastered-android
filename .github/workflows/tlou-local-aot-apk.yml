@@ -4,7 +4,8 @@ on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
     paths:
-      - 'android/aot/**'
+      # Only release a new APK when its actual patched compiler artifact is
+      # pinned below; source edits/tests must not publish an unusable image.
       - 'android/bionic/repackage_local_aot.py'
       - 'android/bionic/stage_aot_compiler.sh'
       - 'android-launcher/**'
@@ -40,8 +41,9 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
       - name: Check local ARM64 AOT preparation
         run: |
-          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/bionic/repackage_local_aot.py
+          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/bionic/repackage_local_aot.py
           python3 android/aot/test_aot_local.py -v
+          python3 android/aot/test_aot_quality.py -v
       - name: Retrieve successful native ARM64 APK
         uses: actions/download-artifact@v4
         with:

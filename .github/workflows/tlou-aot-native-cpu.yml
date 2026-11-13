@@ -32,6 +32,7 @@ jobs:
           test -s "$so"
           readelf -h "$so" | grep -E 'Machine:.*AArch64'
           readelf -d "$so" | grep -F 'libc++_shared.so'
+          readelf -d out/android-bionic/aot-backend/libbbcpu.so | grep -F '[libgow3cpu.so]'
           readelf --dyn-syms --wide "$so" | grep -E 'guest_cpu_fiber_switch|bbr_dispatch|guest_cpu_init'
       - uses: actions/upload-artifact@v4
         with:
@@ -39,4 +40,6 @@ jobs:
           path: |
             out/android-bionic/aot-backend/libgow3cpu.so
             out/android-bionic/aot-backend/libgow3cpu.so.sha256
+            out/android-bionic/aot-backend/libbbcpu.so
+            out/android-bionic/aot-backend/libbbcpu.so.sha256
           if-no-files-found: error

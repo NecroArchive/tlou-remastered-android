@@ -25,9 +25,11 @@ final class RuntimeAot {
     static final class Ready {
         final File library;
         final File engineDirectory;
-        Ready(File library, File engineDirectory) {
+        final File bootImage;
+        Ready(File library, File engineDirectory, File bootImage) {
             this.library=library;
             this.engineDirectory=engineDirectory;
+            this.bootImage=bootImage;
         }
     }
 
@@ -98,6 +100,24 @@ final class RuntimeAot {
         String expectedBoot=source.optString("input_boot_sha256");
         if(expectedBoot.length()!=64 || !expectedBoot.equalsIgnoreCase(sha256(boot)))
             throw new java.io.IOException("O jogo preparado mudou após a compilação ARM64");
+        // The 1.11 AOT build must contain the already verified FEX animation
+        // pointer guard as native ARM64 instructions. Old AOT images omit it,
+        // and the unpatched path may dereference a bogus output pointer.
+        File runtimeBoot=boot;
+        if("1.11".equals(source.optString("version"))) {
+            if(!"tlou-111-animation-guard-v1".equals(source.optString("native_patch_profile")) ||
+               !"invalid-animation-output-pointer".equals(
+                   source.optJSONArray("native_patches")!=null ?
+                   source.getJSONArray("native_patches").optString(0) : ""))
+                throw new java.io.IOException(
+                    "O ARM64 1.11 ainda não contém a correção de animação. Recompile em Ajustes → CPU.");
+            runtimeBoot=new File(work,"native-boot-linked.bin");
+            String expectedNative=source.optString("native_boot_sha256");
+            if(!runtimeBoot.isFile() || expectedNative.length()!=64 ||
+               !expectedNative.equalsIgnoreCase(sha256(runtimeBoot)) ||
+               expectedNative.equalsIgnoreCase(expectedBoot))
+                throw new java.io.IOException("Imagem AOT 1.11 incompatível; recompile a CPU ARM64.");
+        }
         if(so.length()<4096 || meta.optLong("so_size",-1)!=so.length() ||
                 !meta.optString("so_sha256").equalsIgnoreCase(sha256(so)))
             throw new java.io.IOException("Biblioteca ARM64 alterada ou corrompida");
@@ -111,6 +131,6 @@ final class RuntimeAot {
         // the same AOT engine already used by the game executable.
         stageAsset(context,"runtime-aot/libbbcpu.so",
                    new File(engineDir,"libbbcpu.so"),512);
-        return new Ready(so,engineDir);
+        return new Ready(so,engineDir,runtimeBoot);
     }
 }

@@ -387,6 +387,12 @@ public final class GameActivity extends Activity {
             RunLog.write(this,"Processo "+(nativeAot!=null?"ARM64 AOT":"FEX")+" criado");
             final int result=game.waitFor();
             RunLog.write(this,"Processo "+(nativeAot!=null?"ARM64 AOT":"FEX")+" finalizado: código "+result);
+            if(nativeAot!=null && result!=0) {
+                // Strict native code may report an uncovered x86 entry. Keep
+                // the miss log for --extra-entries but never create a crash loop.
+                PortSettings.prefs(this).edit().putString("cpu_backend","fex").apply();
+                RunLog.write(this,"AOT terminou sem sucesso: FEX selecionado para a próxima inicialização; aot-misses.log preservado.");
+            }
             if(!closing.get()) {
                 if(result==0)handler.post(this::stopAndExit);
                 else error("Runtime encerrou com código "+result);

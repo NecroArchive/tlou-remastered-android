@@ -26,7 +26,13 @@ struct Thread { GuestState* s; };
 static thread_local Thread* self=nullptr;
 static struct { uintptr_t so_lo=0x100000, so_hi=0x200000; } E;
 enum { RSP=4 };
-namespace bbnative { uintptr_t HostPc(const void*) { return 0x110000; } }
+namespace bbnative {
+uintptr_t HostPc(const void*) { return 0x110000; }
+uintptr_t HostSp(const void*) { return 0x135780; }
+}
+static thread_local uintptr_t tlou_host_stack_low = 0;
+static thread_local uintptr_t tlou_host_stack_high = 0;
+static thread_local size_t tlou_host_stack_guard = 0;
 @TRACE@
 int main() {
     GuestState g; g.rip=0xb5a041; g.gregs[RSP]=0x1200000000ULL;
@@ -56,6 +62,8 @@ class FaultProbeTests(unittest.TestCase):
             self.assertIn("TLOU AOT fault entry",r.stderr)
             self.assertIn("0x0000000000b5a041",r.stderr)
             self.assertIn("0x00000000deadbeef",r.stderr)
+            self.assertIn("host_sp=0x0000000000135780",r.stderr)
+            self.assertIn("host_stack_lo=0x0000000000000000",r.stderr)
             self.assertEqual(len(r.stderr.splitlines()),48)
             self.assertIn("0x0000000000000030",r.stderr)
 

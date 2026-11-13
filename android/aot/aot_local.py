@@ -12,6 +12,13 @@ from __future__ import annotations
 # The upstream bb-recomp --resume shard key includes the calleeSaved option.
 NATIVE_FIBER_CPU_FLAGS = ("--tso", "--resume-entries", "--no-callee-saved")
 
+# AOT vs FEX gameplay (logs 28/29): six workers 3.00 vs 2.52 CPU cores.
+# Keep --tso and fiber ABI safeguards. The verified PS4 1.11 native image has
+# all static patches built in, --no-game-hooks, and no runtime x86 patch writes.
+# The pinned compiler explicitly supports -O2 and --no-dirty-check.
+AOT_111_PERFORMANCE_FLAGS = ("-O2", "--no-dirty-check")
+AOT_111_PERFORMANCE_PROFILE = "tlou-111-static-llvmO2-immutable-v1"
+
 import argparse
 import hashlib
 import json
@@ -466,11 +473,15 @@ def main(argv=None):
         aot = out / "aot"
         aot.mkdir(exist_ok=True)
         so = aot / "libtlouaot.so"
+        fast_111 = version == "1.11" and native_options is not None and (
+            "invalid-animation-output-pointer" in native_patches and
+            "frame-timeout" in native_patches)
+        cpu_flags = AOT_111_PERFORMANCE_FLAGS if fast_111 else ("-O1",)
         command = [str(args.compiler or "/path/to/libbbrecomp.so"),
                    "--boot", str(staged), "--game-dir", str(game), "--so", str(so),
                    "--stats", str(aot / "compile.txt"), "--jobs", str(args.jobs),
                    "--shards", str(args.shards), "--target", "aarch64",
-                   "--host", "armv8.2", *NATIVE_FIBER_CPU_FLAGS, "-O1", "--no-nice",
+                   "--host", "armv8.2", *NATIVE_FIBER_CPU_FLAGS, *cpu_flags, "--no-nice",
                    "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]
@@ -499,6 +510,10 @@ def main(argv=None):
                       else "tlou-111-animation-guard-v1" if native_patches else ""),
                   "native_patches": native_patches,
                   "native_patch_options": native_options,
+                  "native_codegen_profile": AOT_111_PERFORMANCE_PROFILE if fast_111 else "conservative-O1",
+                  "native_codegen_flags": list(cpu_flags),
+                  "runtime_code_immutable": bool(fast_111),
+                  "runtime_patch_contract": "static-patches;--no-game-hooks;--patches-disabled" if fast_111 else "checks-enabled",
                   "native_boot_sha256": sha256(native_boot) if native_patches else "",
                   "native_patch_entries": [f"+0x{x:x}" for x in patch_entries],
                   "verified_executable_bytes": verified_code_bytes,

@@ -75,6 +75,7 @@ jobs:
           readelf -h "$so" | grep -E 'Machine:.*AArch64'
           readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
           grep -aFq 'TLOU AOT invalid target' "$so"   # ensure the current traced dispatcher is actually packaged
+          grep -aFq 'TLOU AOT worker TLS' "$so" # ensure the worker-bootstrap fix was built
           mkdir -p out/android-bionic/apk-assets/runtime-aot
           cp "$so" out/android-bionic/apk-assets/runtime-aot/libgow3cpu.so
           test -s out/android-bionic/aot-backend/libbbcpu.so

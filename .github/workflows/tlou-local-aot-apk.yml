@@ -50,7 +50,7 @@ jobs:
         with:
           name: TLOU-AOT-CPU-ARM64-Fiber-Backend
           path: out/aot-native-backend
-          run-id: '43336589446'
+          run-id: '43337086932'
           github-token: ${{ github.token }}
       - name: Stage verified alternative AOT CPU, leave production FEX intact
         run: |
@@ -68,6 +68,9 @@ jobs:
           readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
           mkdir -p out/android-bionic/apk-assets/runtime-aot
           cp "$so" out/android-bionic/apk-assets/runtime-aot/libgow3cpu.so
+          test -s out/aot-native-backend/libbbcpu.so
+          readelf -d out/aot-native-backend/libbbcpu.so | grep -F '[libgow3cpu.so]'
+          cp out/aot-native-backend/libbbcpu.so out/android-bionic/apk-assets/runtime-aot/libbbcpu.so
       - name: Stage exact native game runtime with pinned ARM64 compiler
         run: |
           set -euo pipefail
@@ -107,6 +110,7 @@ jobs:
               for n in preserved:
                   assert hashlib.sha256(a.read(n)).digest()==hashlib.sha256(b.read(n)).digest(),n
               assert b.getinfo('assets/runtime-aot/libgow3cpu.so').file_size>4096
+              assert b.getinfo('assets/runtime-aot/libbbcpu.so').file_size>4096
               with zipfile.ZipFile(io.BytesIO(b.read('assets/tools.zip'))) as tools:
                   for n in ['bin/libbbrecomp.so','source/android/aot/aot_local.py','aot/upstream.sha256']:
                       assert tools.getinfo(n).file_size>0

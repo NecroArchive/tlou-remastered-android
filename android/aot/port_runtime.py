@@ -141,6 +141,46 @@ uint64_t guest_cpu_fiber_frame_pointer(const GuestFiberCpuState* target) {
 
 """
 
+FATAL_SIGNAL_PROBE = r"""
+// Runs first in src/probe.c's existing SIGSEGV/SIGBUS handler, before
+// GPU write-watch recovery. Never replace the renderer's signal handler.
+// Fixed-size stack buffer and write(2), not printf/allocator on a signal.
+static void TlouAotProbeFault(int sig, const siginfo_t* info, const void* uc) {
+    static std::atomic<uint32_t> count{0};
+    const uint32_t n = count.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n > 48 && n % 128 != 0) return;
+    const uintptr_t pc = bbnative::HostPc(uc);
+    const uint64_t addr = uint64_t(uintptr_t(info ? info->si_addr : nullptr));
+    const Thread* t = self;
+    const uint64_t rip = t && t->s ? t->s->rip : 0;
+    const uint64_t rsp = t && t->s ? t->s->gregs[RSP] : 0;
+    char line[300];
+    char* out = line;
+    const char* const end = line + sizeof(line) - 1;
+    auto add = [&](const char* word) {
+        for (; *word && out < end; ++word) *out++ = *word;
+    };
+    auto hex = [&](uint64_t value) {
+        static const char digits[] = "0123456789abcdef";
+        if (out + 18 >= end) return;
+        *out++ = '0'; *out++ = 'x';
+        for (unsigned i = 0; i < 16; ++i)
+            *out++ = digits[(value >> ((15-i)*4)) & 15];
+    };
+    add("TLOU AOT fault entry: n="); hex(n);
+    add(" sig="); hex(uint64_t(sig));
+    add(" tid="); hex(uint64_t(syscall(SYS_gettid)));
+    add(" si_code="); hex(uint64_t(info ? info->si_code : 0));
+    add(" fault_addr="); hex(addr);
+    add(" host_pc="); hex(pc);
+    add(" guest_rip="); hex(rip);
+    add(" rsp="); hex(rsp);
+    add(" in_aot="); hex(pc >= E.so_lo && pc < E.so_hi ? 1 : 0);
+    *out++ = '\n';
+    (void)write(STDERR_FILENO, line, size_t(out - line));
+}
+"""
+
 WORKER_ENTRY_TRACE = r"""
     // The 1.11 binary has two distinct job-loop entrypoints: 0xc6a0a0
     // explicitly registers a numbered worker in TLS, while 0xc6a050 does not.
@@ -339,6 +379,15 @@ def port(upstream: Path, out: Path) -> None:
     main = once(main, "    s.rip = fn;\n    bbr_dispatch(&s, fn);",
                 "    s.rip = fn;\n" + WORKER_ENTRY_TRACE + "    bbr_dispatch(&s, fn);",
                 "TLOU 1.11 AOT job worker entry provenance")
+    main = once(main,
+                "int guest_cpu_handle_fault(int sig, siginfo_t* info, void* ucontext) {",
+                "int guest_cpu_handle_fault(int sig, siginfo_t* info, void* ucontext) {\n"
+                "    TlouAotProbeFault(sig, info, ucontext);\n",
+                "AOT fault pretrace before GPU recovery")
+    main = once(main,
+                "int guest_cpu_handle_fault(int sig, siginfo_t* info, void* ucontext) {",
+                FATAL_SIGNAL_PROBE + "int guest_cpu_handle_fault(int sig, siginfo_t* info, void* ucontext) {",
+                "AOT fault recorder definition")
     main = once(main,
                 "inline void HostCall(GuestState* s, void* fn, Thread* t) {",
                 FIBER_RUN_TRACE + "inline void HostCall(GuestState* s, void* fn, Thread* t) {",

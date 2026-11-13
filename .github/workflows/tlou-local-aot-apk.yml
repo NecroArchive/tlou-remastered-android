@@ -119,21 +119,24 @@ jobs:
           python3 android/bionic/repackage_local_aot.py "$apk"
       - name: Generate save-selection fixtures for existing Android tests
         run: python3 gow3_pc/tests/test_android_save_choice.py
-      - name: Restore stable experimental debug signing identity
+      - name: Restore original TSO APK signing key (required for install-over)
         uses: actions/cache/restore@v4
         with:
           path: ~/.android/debug.keystore
           key: tlou-aotnative-development-signing-v1
-      - name: Create experimental debug signing identity only when absent
+          fail-on-cache-miss: true
+      - name: Verify installed TSO APK signing certificate before any build
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.android"
-          if [[ ! -s "$HOME/.android/debug.keystore" ]]; then
-            keytool -genkeypair -noprompt -keystore "$HOME/.android/debug.keystore" \
-              -alias androiddebugkey -storepass android -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+          test -s "$HOME/.android/debug.keystore"
+          expected=e4cf1b1d9b745daa1d735eca96570f91d17fccaee3a8080f930334354cfad9d1
+          actual=$(keytool -exportcert -alias androiddebugkey \
+            -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | sha256sum | cut -d' ' -f1)
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Debug signer mismatch: this APK would NOT install over the TSO experimental app. Refusing build. Found $actual" >&2
+            exit 1
           fi
+          echo "Pinned AOT signer verified: $actual"
       - name: Build standalone signed debug APK for local AOT compiler testing
         run: gradle -p android-launcher :app:assembleDebug :app:testDebugUnitTest --no-daemon --max-workers=2
       - name: Verify signed APK, distinct app ID and original CPU/GPU binaries
@@ -143,6 +146,7 @@ jobs:
           apk=android-launcher/app/build/outputs/apk/debug/app-debug.apk
           original=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
           "$sdk/apksigner" verify --verbose "$apk"
+          "$sdk/apksigner" verify --print-certs "$apk" | grep -F 'e4cf1b1d9b745daa1d735eca96570f91d17fccaee3a8080f930334354cfad9d1'
           "$sdk/aapt" dump badging "$apk" | grep "package: name='com.daedalus.tlou.remastered.aotnative'"
           python3 android/bionic/check_tools_apk.py "$apk"
           python3 - "$original" "$apk" <<'PY'
@@ -160,13 +164,9 @@ jobs:
                   compiler=tools.read('bin/libbbrecomp.so')
                   assert b'2-tlou-tso' in compiler, 'old compiler staged in APK'
                   assert tools.read('aot/upstream.sha256').strip()==b'32199a7501742bb575001498d1d449be77f50061fb529bed2af8f93357794fbf', 'wrong compiler archive'
+                  assert b'3-tlou-string' in compiler, 'VPCMPISTRX compiler missing: no APK can be published'
               print('Verified',len(preserved),'unchanged native/runtime/driver payload files and AOT compiler')
           PY
-      - name: Save experimental debug signing identity for future updates
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: tlou-aotnative-development-signing-v1
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:

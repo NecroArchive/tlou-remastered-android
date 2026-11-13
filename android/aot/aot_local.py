@@ -137,8 +137,18 @@ def prepare_extra_entries(boot: Path, eboot_sha: str, misses: Path | None,
 
 
 def prepare_native_animation_patch(boot: Path, self_digest: str,
-                                   output: Path) -> list[str]:
-    """Patch a *copy* of verified 1.11 guest code BEFORE native compilation."""
+                                   output: Path,
+                                   options: dict | None = None) -> list[str]:
+    """Compile fully byte-verified 1.11 patches into an isolated native image.
+
+    Unspecified options retain the legacy animation-only mode for compatibility
+    with the synthetic regression fixtures. The Android app ALWAYS supplies its
+    current patch-options.json and checks the selected profile before launch.
+
+    The normal FEX boot and the player's SELF are never modified. Every byte
+    guard, including the read-only guards, must match the original linked
+    image before the transactional output file is published.
+    """
     if KNOWN_EBOOTS.get(self_digest) != "1.11":
         output.unlink(missing_ok=True)
         return []
@@ -150,24 +160,51 @@ def prepare_native_animation_patch(boot: Path, self_digest: str,
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     if self_digest not in module.SELF_SHA256_111:
-        raise ValueError("AOT animation guard requires verified 1.11 executable")
-    sites = module.BASE_PATCHES_111["invalid-animation-output-pointer"]
-    if len(sites) != 2 or [a for a, _, _ in sites] != [0xA623D3, 0xC9FC61]:
+        raise ValueError("AOT native patches require verified 1.11 executable")
+    if options is None:
+        groups = {"invalid-animation-output-pointer":
+                  module.BASE_PATCHES_111["invalid-animation-output-pointer"]}
+    else:
+        groups = module.base_patches_for(options, "01.11")
+        groups.update(module.selected_options(options, "01.11", self_digest))
+        if "invalid-animation-output-pointer" not in groups:
+            raise ValueError("Required native animation guard was disabled")
+    cave = groups["invalid-animation-output-pointer"]
+    if len(cave) != 2 or [addr for addr, _, _ in cave] != [0xA623D3, 0xC9FC61]:
         raise ValueError("Verified 1.11 animation patch changed")
     info = check_boot(boot)
     if info["magic"] != "G3PROBE5":
         raise ValueError("Expected original G3PROBE5 image")
     start = boot.stat().st_size - info["size"]
-    changes = []
+    changes: list[tuple[int, bytes]] = []
+    original_checks: dict[tuple[int, int], bytes] = {}
     with boot.open("rb") as source:
-        for addr, expected_hex, new_hex in sites:
-            expected, replacement = bytes.fromhex(expected_hex), bytes.fromhex(new_hex)
-            if len(expected) != len(replacement) or addr + len(expected) > info["size"]:
-                raise ValueError("Native animation patch changes image layout")
-            source.seek(start + addr)
-            if source.read(len(expected)) != expected:
-                raise ValueError("1.11 native animation guard mismatch at " + hex(addr))
-            changes.append((addr, replacement))
+        for group, entries in groups.items():
+            for addr, expected_hex, replacement_hex in entries:
+                expected = bytes.fromhex(expected_hex)
+                if not expected or addr < 0 or addr + len(expected) > info["size"]:
+                    raise ValueError("Native patch outside linked guest image: "
+                                     + group + " " + hex(addr))
+                source.seek(start + addr)
+                actual = source.read(len(expected))
+                if actual != expected:
+                    raise ValueError("1.11 native patch guard mismatch: "
+                                     + group + " at " + hex(addr))
+                key = (addr, len(expected))
+                if key in original_checks and original_checks[key] != expected:
+                    raise ValueError("Conflicting original-byte patch guards")
+                original_checks[key] = expected
+                if replacement_hex is None:
+                    continue  # validation only, never write this span
+                replacement = bytes.fromhex(replacement_hex)
+                if len(replacement) != len(expected):
+                    raise ValueError("Native patch changes executable image layout: "
+                                     + group + " at " + hex(addr))
+                for previous_at, previous in changes:
+                    if addr < previous_at + len(previous) and previous_at < addr + len(replacement):
+                        raise ValueError("Overlapping native patches: "
+                                         + group + " at " + hex(addr))
+                changes.append((addr, replacement))
     output.parent.mkdir(parents=True, exist_ok=True)
     temp = output.with_suffix(output.suffix + ".tmp")
     try:
@@ -183,7 +220,7 @@ def prepare_native_animation_patch(boot: Path, self_digest: str,
         os.replace(temp, output)
     finally:
         temp.unlink(missing_ok=True)
-    return ["invalid-animation-output-pointer"]
+    return list(groups)
 
 
 
@@ -380,6 +417,7 @@ def main(argv=None):
     parser.add_argument("--compiler", type=Path, help="On-device bb-recomp v1.3+ executable")
     parser.add_argument("--bundle-dir", type=Path, help="bb-recomp bundle directory")
     parser.add_argument("--misses", type=Path, help="Previous AOT misses; add missing guest entry points")
+    parser.add_argument("--options", type=Path, help="Current FEX-validated native patch selections")
     parser.add_argument("--jobs", type=int, default=3)
     parser.add_argument("--shards", type=int, default=64)
     parser.add_argument("--dry-run", action="store_true")
@@ -406,7 +444,13 @@ def main(argv=None):
         verified_code_bytes = verify_eboot_image(game / "eboot.bin", boot)
         digest = sha256(game / "eboot.bin")
         native_boot = out / "native-boot-linked.bin"
-        native_patches = prepare_native_animation_patch(boot, digest, native_boot)
+        native_options = None
+        if args.options is not None:
+            native_options = json.loads(args.options.read_text(encoding="utf-8"))
+            if not isinstance(native_options, dict):
+                raise ValueError("Native patch options must be a JSON object")
+        native_patches = prepare_native_animation_patch(
+            boot, digest, native_boot, native_options)
         staged = stage_boot(native_boot if native_patches else boot, out / "bb-prepared")
         aot = out / "aot"
         aot.mkdir(exist_ok=True)
@@ -439,8 +483,11 @@ def main(argv=None):
         report = {"version": version, "original_game": str(original_game),
                   "effective_game": str(game), "eboot_sha256": sha256(game / "eboot.bin"),
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),
-                  "native_patch_profile": "tlou-111-animation-guard-v1" if native_patches else "",
+                  "native_patch_profile": (
+                      "tlou-111-static-v2" if native_options is not None and native_patches
+                      else "tlou-111-animation-guard-v1" if native_patches else ""),
                   "native_patches": native_patches,
+                  "native_patch_options": native_options,
                   "native_boot_sha256": sha256(native_boot) if native_patches else "",
                   "native_patch_entries": [f"+0x{x:x}" for x in patch_entries],
                   "verified_executable_bytes": verified_code_bytes,

@@ -114,6 +114,24 @@ final class RuntimeAot {
                 if("native-job-idle-backoff".equals(patch))hasIdleBackoff=true;
             }
             JSONObject expected=source.optJSONObject("native_patch_options");
+            // Byte-verified 01.11 AOT compilation now uses LLVM -O2 and an
+            // immutable executable contract. Static patches are already
+            // present in the boot used to compile each unit, so --patches and
+            // runtime executable hooks MUST remain disabled.
+            boolean fastO2=false,noDirty=false;
+            if(command!=null)for(int i=0;i<command.length();i++) {
+                if("-O2".equals(command.optString(i)))fastO2=true;
+                if("--no-dirty-check".equals(command.optString(i)))noDirty=true;
+            }
+            if(!fastO2 || !noDirty ||
+                    !"tlou-111-static-llvmO2-immutable-v1".equals(
+                        source.optString("native_codegen_profile")) ||
+                    !source.optBoolean("runtime_code_immutable",false) ||
+                    !"static-patches;--no-game-hooks;--patches-disabled".equals(
+                        source.optString("runtime_patch_contract")))
+                throw new java.io.IOException(
+                    "CPU ARM64 1.11 antiga (LLVM -O1). Recompile para ativar -O2 e o perfil estático otimizado.");
+            RunLog.write(context,"TLOU AOT 1.11 codegen: LLVM -O2, immutable code, dirty-unit entry checks removed, TSO/fibers retained.");
             if(!"tlou-111-static-v2".equals(source.optString("native_patch_profile")) ||
                     !hasAnimationGuard || !hasTimeout || expected==null ||
                     (expected.optBoolean("job_sleep",true) && !hasIdleBackoff))

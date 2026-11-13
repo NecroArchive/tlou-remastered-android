@@ -319,6 +319,14 @@ public final class GameActivity extends Activity {
             if(nativeAot!=null) {
                 cpuLibraryPath=nativeAot.engineDirectory.getAbsolutePath()+":"+cpuLibraryPath;
                 env.put("BB_AOT",nativeAot.library.getAbsolutePath());
+                // Native AOT units use the host ARM64 C++ call stack. The
+                // original 320 KiB pthreads are too small for nested calls;
+                // preload our already-verified AOT CPU to enlarge ONLY the
+                // 320 KiB worker stacks, leaving FEX/system stacks untouched.
+                String originalPreload=env.get("LD_PRELOAD");
+                String aotPreload=new File(nativeAot.engineDirectory,"libgow3cpu.so").getAbsolutePath();
+                env.put("LD_PRELOAD",aotPreload+(originalPreload==null||originalPreload.isEmpty()?"":" "+originalPreload));
+                RunLog.write(this,"AOT pthread stack policy preload: "+aotPreload+" (320 KiB → 2 MiB)");
                 env.put("BB_AOT_MISS_LOG",new File(state,"aot-misses.log").getAbsolutePath());
                 env.put("BB_AOT_STATS","1");
                 env.put("BB_AOT_TRACE","1");

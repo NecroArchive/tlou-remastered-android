@@ -249,7 +249,7 @@ def main(argv=None):
                    "--boot", str(staged), "--game-dir", str(game), "--so", str(so),
                    "--stats", str(aot / "compile.txt"), "--jobs", str(args.jobs),
                    "--shards", str(args.shards), "--target", "aarch64",
-                   "--host", "armv8.2", "--tso", "--resume-entries", "-O1", "--no-nice",
+                   "--host", "armv8.2", "--tso", "--resume-entries", "--no-callee-saved", "-O1", "--no-nice",
                    "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]
@@ -263,6 +263,7 @@ def main(argv=None):
                   "runtime_integrated": False, "status": "staged",
                   "guest_memory_model": "conservative_TSO",
                   "fiber_resume_entries": True,
+                  "callee_saved_policy": "reload_after_calls_for_fibers",
                   "x87_mode_warning": "bb-recomp uses reduced precision x87, while TLOU FEX defaults to full; do not execute without compatibility validation"}
         (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\n")
         if args.dry_run:

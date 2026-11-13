@@ -13,6 +13,7 @@ on:
       - 'android/aot/test_fiber_tls.py'
       - 'android/aot/test_aot_fault_probe.py'
       - 'android/aot/test_aot_signal_stack.py'
+      - 'android/aot/test_aot_host_stack.py'
       - 'android/bionic/build_aot_cpu.sh'
       - 'android/bionic/repackage_local_aot.py'
       - 'android/bionic/stage_aot_compiler.sh'
@@ -85,6 +86,8 @@ jobs:
           assert hashlib.file_digest(path.open('rb'),'sha256').hexdigest()==expected
           PY
           readelf -h "$so" | grep -E 'Machine:.*AArch64'
+          readelf --dyn-syms --wide "$so" | grep -F 'pthread_attr_setstacksize'
+          grep -aFq 'TLOU AOT host pthread stack' "$so"
           readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
           grep -aFq 'TLOU AOT invalid target' "$so"   # ensure the current traced dispatcher is actually packaged
           grep -aFq 'TLOU AOT fiber TLS preserved' "$so" # ensure cross-thread TLS fix is linked

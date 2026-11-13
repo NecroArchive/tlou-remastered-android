@@ -75,6 +75,7 @@ jobs:
           readelf -h "$so" | grep -E 'Machine:.*AArch64'
           readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
           grep -aFq 'TLOU AOT invalid target' "$so"   # ensure the current traced dispatcher is actually packaged
+          grep -aFq 'TLOU AOT sceFiberRun' "$so" # require fiber return-code provenance in packaged CPU engine
           grep -aFq 'TLOU AOT job thread entry' "$so" # thread-type and actual TLS provenance
           grep -aFq 'TLOU AOT queue lane' "$so" # confirm the failing queue record is captured
           mkdir -p out/android-bionic/apk-assets/runtime-aot

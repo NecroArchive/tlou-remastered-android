@@ -398,9 +398,19 @@ public final class GameActivity extends Activity {
             gpuTurbo.start(this); // root is optional; if unavailable gameplay still runs
             game=builder.start();
             if(closing.get()){game.destroyForcibly();game.waitFor();return;}
-            RunLog.write(this,"Processo "+(nativeAot!=null?"ARM64 AOT":"FEX")+" criado");
-            final int result=game.waitFor();
-            RunLog.write(this,"Processo "+(nativeAot!=null?"ARM64 AOT":"FEX")+" finalizado: código "+result);
+            final String backend=nativeAot!=null?"ARM64 AOT":"FEX";
+            RunLog.write(this,"Processo "+backend+" criado");
+            // Include all six game workers on their actual LITTLE/BIG cores.
+            // Previously TLOU CPU critical counted only the Vulkan threads.
+            // This 5-second /proc sampling runs in the Java launcher, NOT in
+            // any game worker or renderer hot path, and works for both modes.
+            final TlouCpuThreads threadCpu=new TlouCpuThreads(game.pid(),backend,
+                    line->RunLog.write(this,line));
+            threadCpu.start();
+            final int result;
+            try {result=game.waitFor();}
+            finally {threadCpu.close();}
+            RunLog.write(this,"Processo "+backend+" finalizado: código "+result);
             if(nativeAot!=null && result!=0) {
                 // Keep the explicitly selected native backend for debugging.
                 // Avoid an endless auto-launch crash loop; FEX remains a manual option.

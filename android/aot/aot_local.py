@@ -167,6 +167,17 @@ def prepare_native_animation_patch(boot: Path, self_digest: str,
     else:
         groups = module.base_patches_for(options, "01.11")
         groups.update(module.selected_options(options, "01.11", self_digest))
+        # NdJobWorkerThread 0..5: after checking the entire job queue is
+        # empty, the 1.11 worker spins up to 1000 PAUSE iterations before
+        # entering its existing blocking sleep path. The AOT's ARM64 PAUSE
+        # lowering can keep little cores busy with this unproductive polling.
+        # Only the validated AOT 1.11 image shortens this idle retry budget
+        # to 128; neither FEX nor actual queued work paths are changed.
+        # Instruction length (cmp rax,imm32) and branch displacements match.
+        if options.get("job_sleep", True):
+            groups["native-job-idle-backoff"] = [
+                (0xC87D71, "483de8030000", "483d80000000"),
+            ]
         if "invalid-animation-output-pointer" not in groups:
             raise ValueError("Required native animation guard was disabled")
     cave = groups["invalid-animation-output-pointer"]

@@ -63,6 +63,13 @@ def self_and_boot(root: Path):
 
 
 class TestBridge(unittest.TestCase):
+    def test_native_fiber_profile_uses_exact_register_reload(self):
+        self.assertEqual(
+            mod.NATIVE_FIBER_CPU_FLAGS,
+            ("--tso", "--resume-entries", "--no-callee-saved"))
+        # Existing no-flag shards must not be mistaken for a fiber-safe build.
+        self.assertNotIn("--flags-at-calls", mod.NATIVE_FIBER_CPU_FLAGS)
+
     def test_header_only_and_never_modify_input(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

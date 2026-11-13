@@ -18,6 +18,10 @@
 #include <dlfcn.h>
 #endif
 #include <functional>
+#ifdef __ANDROID__
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #include "gow3_copy.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
@@ -393,6 +397,7 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
     Common::SetCurrentThreadName("gow3:VkRecorder");
 #ifdef __ANDROID__
     tlou_cpu_policy_apply("Vulkan recorder",1);
+    native_recorder_tid.store(static_cast<u32>(syscall(SYS_gettid)), std::memory_order_release);
 #endif
 #ifndef _WIN32
     if (clockid_t clock; pthread_getcpuclockid(pthread_self(), &clock) == 0)

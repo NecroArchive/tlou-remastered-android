@@ -973,6 +973,11 @@ public:
     static inline std::atomic<u64> direct_recordings{0};
 
     /// Returns the current command buffer tick.
+    // Published by the actual Bionic recorder thread; absent when recording
+    // is direct. This TID may join the game's optional ADPF session.
+    [[nodiscard]] u32 NativeRecorderTid() const noexcept {
+        return native_recorder_tid.load(std::memory_order_acquire);
+    }
     [[nodiscard]] u64 CurrentTick() const noexcept {
         return work_semaphore.CurrentTick();
     }
@@ -1071,6 +1076,7 @@ private:
     // gow3: whether recorder_thread runs, read on every Record(). std::jthread::joinable()
     // compares thread ids, which on Windows (libc++ over winpthreads) costs two system calls.
     bool recording_threaded{false};
+    std::atomic<u32> native_recorder_tid{0};
     u64 record_serial = 0; ///< gow3: see RecordSerial()
     /// gow3 20 Oct 2026: the draw scheduler counts its waits for the submit lock (Gow3Stats).
     bool count_lock_waits{false};

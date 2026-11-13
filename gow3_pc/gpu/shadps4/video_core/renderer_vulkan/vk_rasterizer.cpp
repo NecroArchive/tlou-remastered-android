@@ -1702,17 +1702,29 @@ void Rasterizer::FilterPendingRange(VAddr begin, VAddr end) {
     }
 }
 
+static thread_local u64 g_tlou_pending_word_queries = 0;
 bool Rasterizer::PendingFilterHit(VAddr begin, VAddr end) const {
+    if (end <= begin) return false;
     const u64 first = begin >> PendingGranuleBits;
     const u64 last = (end - 1) >> PendingGranuleBits;
-    if (last - first >= PendingFilterBits) {
-        return true;
+    if (last - first >= PendingFilterBits) return true;
+    // Keep the previous cheap scalar loop for small (<8-granule) queries.
+    // Large guest writes use exactly the same 4096-bit bloom filter, tested
+    // one 64-bit mask at a time. No changes to barriers or stage ordering.
+    if (last - first >= 8) {
+        static const bool word_hit = [] {
+            const char* env = std::getenv("GOW3_TLOU_PENDING_WORD_HIT");
+            return !(env && env[0] == '0');
+        }();
+        if (word_hit) {
+            ++g_tlou_pending_word_queries;
+            return Detail::AnyPendingGranules<PendingFilterBits, PendingGranuleBits>(
+                pending_filter, begin, end);
+        }
     }
     for (u64 granule = first; granule <= last; ++granule) {
         const u32 bit = u32(granule % PendingFilterBits);
-        if ((pending_filter[bit / 64] >> (bit % 64)) & 1) {
-            return true;
-        }
+        if ((pending_filter[bit / 64] >> (bit % 64)) & 1) return true;
     }
     return false;
 }
@@ -2139,6 +2151,13 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         // this atomic for EVERY guest flip at the command stream's actual
         // frame boundary. Preserve the native TID and per-512-call sampling.
         adpf.NotePostDraw(AmdGpu::g_gow3_flips.load(std::memory_order_relaxed));
+        // Add all cooperating native graphics threads to the SAME ADPF frame
+        // session, instead of boosting Stage A while Stage B/recorder lag.
+        // No new syscall for stable TID sets. Leave affinities untouched.
+        if ((draw_pipe->packets & 511u) == 0u) {
+            adpf.IncludeRenderingThreads(draw_pipe->StageBThreadId(),
+                                          scheduler.NativeRecorderTid());
+        }
     }
 #endif
     // This is the saturated command thread's most expensive sampled phase:
@@ -2513,6 +2532,9 @@ void Rasterizer::PrintPipeStats() {
                         (unsigned long long)pending_prune_erased,
                         (unsigned long long)pending_index_small_prunes,
                         pending_writes.size());
+            std::printf("TLOU pending word-hit (5 s): long-queries=%llu (exact filter, not FPS)\n",
+                        (unsigned long long)g_tlou_pending_word_queries);
+            g_tlou_pending_word_queries = 0;
             pending_prune_skips = pending_prune_scans = pending_prune_erased = 0;
             pending_index_small_prunes = 0;
             // Sync contention is distinct from command-packet CPU work:

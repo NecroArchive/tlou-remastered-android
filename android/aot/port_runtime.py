@@ -154,7 +154,7 @@ def port(upstream: Path, out: Path) -> None:
     # only. Extend its dispatcher to recognize compiler-provided resume
     # entries as well, without interpreting arbitrary x86 instructions.
     main = once(main, "    const uint8_t* flags = nullptr;    // bbr_func_granular[]",
-                "    const uint8_t* flags = nullptr;    // bbr_func_granular[]\\n    bool resume = false;       // bbr_abi_flags bit 0",
+                "    const uint8_t* flags = nullptr;    // bbr_func_granular[]\n    bool resume = false;       // bbr_abi_flags bit 0",
                 "resume capability")
     main = once(main, "    if (!G.flags) return false;",
                 "    if (!G.flags && !G.resume) return false;",

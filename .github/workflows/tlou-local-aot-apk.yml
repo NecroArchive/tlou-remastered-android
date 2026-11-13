@@ -7,6 +7,8 @@ on:
       # Only release a new APK when its actual patched compiler artifact is
       # pinned below; source edits/tests must not publish an unusable image.
       - 'android/aot/port_runtime.py'
+      - 'android/aot/affinity_name_interpose.cpp'
+      - 'android/aot/test_affinity_preload.py'
       - 'android/aot/aot_local.py'
       - 'android/aot/test_aot_local.py'
       - 'android/aot/test_aot_quality.py'
@@ -59,6 +61,7 @@ jobs:
           python3 android/aot/test_aot_fault_probe.py -v
           python3 android/aot/test_aot_signal_stack.py -v
           python3 android/aot/test_aot_host_stack.py -v
+          python3 android/aot/test_affinity_preload.py -v
           cc -std=gnu11 -O2 -pthread -Wall -Wextra -Werror gow3_pc/tests/test_android_cpu_policy.c -o /tmp/tlou-test-cpu-placement
           /tmp/tlou-test-cpu-placement
           mkdir -p out/aot-java-test
@@ -96,6 +99,8 @@ jobs:
           readelf -h "$so" | grep -E 'Machine:.*AArch64'
           readelf --dyn-syms --wide "$so" | grep -F 'pthread_attr_setstacksize'
           grep -aFq 'TLOU AOT host pthread stack' "$so"
+          readelf --dyn-syms --wide "$so" | grep -F pthread_setname_np
+          grep -aFq 'TLOU CPU placement:' "$so"
           readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
           grep -aFq 'TLOU AOT invalid target' "$so"   # ensure the current traced dispatcher is actually packaged
           grep -aFq 'TLOU AOT fiber TLS preserved' "$so" # ensure cross-thread TLS fix is linked

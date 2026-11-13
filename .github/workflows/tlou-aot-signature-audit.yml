@@ -1,0 +1,24 @@
+name: TLOU AOT debug signing identity audit
+on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths: ['.github/workflows/tlou-aot-signature-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Restore canonical experimental TSO keystore
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-development-signing-v1
+          fail-on-cache-miss: true
+      - name: Compare private keystore's public cert with installed APK
+        run: |
+          set -euo pipefail
+          cert=$(keytool -exportcert -alias androiddebugkey -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | sha256sum | cut -d' ' -f1)
+          echo "Stored AOT signer: $cert"
+          test "$cert" = 'e4cf1b1d9b745daa1d735eca96570f91d17fccaee3a8080f930334354cfad9d1'

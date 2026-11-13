@@ -8,7 +8,7 @@ ndk=${TLOU_NDK:-${ANDROID_NDK_HOME:-$root/.local-deps/android/sdk/ndk/android-nd
 api=${TLOU_ANDROID_API:-30}
 llvm="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
 cc="$llvm/aarch64-linux-android${api}-clang++"
-readelf="$llvm/llvm-readelf"
+readelf=$(command -v readelf)
 [[ -x $cc && -x $readelf ]] || { echo "AOT backend requires Android NDK: $ndk" >&2; exit 2; }
 pin=b6d4cfb6972c84d4029f54765406ec143df3c30e
 repo="$root/.local-deps/Bloodborne-Android-AOT"

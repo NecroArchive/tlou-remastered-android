@@ -5,6 +5,8 @@ import json
 import struct
 import tempfile
 import unittest
+import hashlib
+from unittest.mock import patch
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("tlou_aot_local", Path(__file__).with_name("aot_local.py"))
@@ -62,7 +64,82 @@ def self_and_boot(root: Path):
     return source, boot, len(code)
 
 
+
+def synthetic_switch_boot(path: Path) -> bytes:
+    """Sparse BBPROBE5 with invented data, matching the known switch layout.
+
+    Replaces the signature digest in tests to avoid including any game's code.
+    """
+    fake_boot(path)
+    initial_size = path.stat().st_size
+    image_start = initial_size - 16384
+    size = mod.TLOU_111_SWITCH_TABLE + 1024
+    signature = bytes(range(mod.TLOU_111_SWITCH_SIGNATURE_LEN))
+    targets = (0xB5A041, 0xB5A0BD, 0xB5A127, 0xB5A1E8,
+               0xB5A252, 0xB5A280, 0xB5A2B6, 0xB5A012,
+               0xB5A012, 0xB5A2E4, 0xB5A33F)
+    table = struct.pack("<11i", *(target-mod.TLOU_111_SWITCH_TABLE for target in targets))
+    with path.open("r+b") as f:
+        f.seek(8)
+        f.write(struct.pack("<Q", size))
+        f.truncate(image_start + size)
+        f.seek(image_start + mod.TLOU_111_SWITCH_PC)
+        f.write(signature)
+        f.seek(image_start + mod.TLOU_111_SWITCH_TABLE)
+        f.write(table)
+    return signature
+
+
 class TestBridge(unittest.TestCase):
+    def test_batch_known_1_11_jump_cases_before_codegen(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            boot = root / "bb-boot"
+            signature = synthetic_switch_boot(boot)
+            with patch.object(mod, "TLOU_111_SWITCH_SIGNATURE_SHA256",
+                              hashlib.sha256(signature).hexdigest()):
+                targets = mod.known_switch_entries(boot, mod.TLOU_111_SWITCH_SHA256)
+                self.assertEqual(len(targets), 10)
+                self.assertIn(0xB5A041, targets)
+                self.assertIn(0xB5A33F, targets)
+                self.assertEqual(mod.known_switch_entries(boot, "other-eboot"), [])
+                misses = root / "misses.log"
+                misses.write_text(
+                    "# old crashes are not entry addresses\n"
+                    "outside 0xffffffffffffffff kind=outside\n"
+                    "miss +0xb5a041 kind=jump\n"
+                    "miss +0xb5a041 kind=jump\n"
+                    "miss +0xb5a111 kind=jump\n"
+                    "miss +0xffffffffffffffff kind=outside\n")
+                out = root / "extra-entries.txt"
+                seed, extra = mod.prepare_extra_entries(
+                    boot, mod.TLOU_111_SWITCH_SHA256, misses, out)
+                self.assertEqual(seed, targets)
+                self.assertEqual(extra, sorted(set(targets + [0xB5A111])))
+                self.assertEqual(
+                    out.read_text().splitlines(),
+                    [f"+0x{x:x}" for x in extra])
+
+    def test_switch_signature_mismatch_fails_early(self):
+        with tempfile.TemporaryDirectory() as td:
+            boot = Path(td) / "bb-boot"
+            synthetic_switch_boot(boot)
+            with self.assertRaisesRegex(ValueError, "verified switch dispatch"):
+                mod.known_switch_entries(boot, mod.TLOU_111_SWITCH_SHA256)
+
+    def test_old_outside_misses_do_not_trigger_recompilation(self):
+        with tempfile.TemporaryDirectory() as td:
+            boot = Path(td) / "boot"
+            fake_boot(boot)
+            misses = Path(td) / "misses.log"
+            misses.write_text(
+                "outside 0xffffffffffffffff kind=outside\n"
+                "miss +0xffffffffffffffff kind=outside\n")
+            out = Path(td) / "verified.txt"
+            seeds, all_entries = mod.prepare_extra_entries(boot, "not-1.11", misses, out)
+            self.assertEqual((seeds, all_entries), ([], []))
+            self.assertFalse(out.exists())
+
     def test_native_fiber_profile_uses_exact_register_reload(self):
         self.assertEqual(
             mod.NATIVE_FIBER_CPU_FLAGS,

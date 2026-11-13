@@ -62,6 +62,8 @@ jobs:
           java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouApp0AssetsTest
           javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/UpdateInPlace.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/UpdateInPlaceTest.java
           java -cp out/aot-java-test ro.cobrabm.fexdroid.UpdateInPlaceTest
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouCpuThreads.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouCpuThreadsTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouCpuThreadsTest
       - name: Retrieve successful native ARM64 APK
         uses: actions/download-artifact@v4
         with:

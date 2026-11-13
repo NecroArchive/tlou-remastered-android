@@ -106,17 +106,19 @@ final class RuntimeAot {
         File runtimeBoot=boot;
         if("1.11".equals(source.optString("version"))) {
             JSONArray nativePatches=source.optJSONArray("native_patches");
-            boolean hasAnimationGuard=false,hasTimeout=false;
+            boolean hasAnimationGuard=false,hasTimeout=false,hasIdleBackoff=false;
             if(nativePatches!=null)for(int i=0;i<nativePatches.length();i++) {
                 String patch=nativePatches.optString(i);
                 if("invalid-animation-output-pointer".equals(patch))hasAnimationGuard=true;
                 if("frame-timeout".equals(patch))hasTimeout=true;
+                if("native-job-idle-backoff".equals(patch))hasIdleBackoff=true;
             }
-            if(!"tlou-111-static-v2".equals(source.optString("native_patch_profile")) ||
-                    !hasAnimationGuard || !hasTimeout)
-                throw new java.io.IOException(
-                    "O ARM64 1.11 não contém os patches nativos de estabilidade. Recompile em Ajustes → CPU.");
             JSONObject expected=source.optJSONObject("native_patch_options");
+            if(!"tlou-111-static-v2".equals(source.optString("native_patch_profile")) ||
+                    !hasAnimationGuard || !hasTimeout || expected==null ||
+                    (expected.optBoolean("job_sleep",true) && !hasIdleBackoff))
+                throw new java.io.IOException(
+                    "AOT 1.11 sem correção de espera ativa dos seis workers. Recompile em Ajustes → CPU.");
             JSONObject actual=new JSONObject(new String(Files.readAllBytes(
                     PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
             if(expected==null || !expected.optString("resolution","?").equals(

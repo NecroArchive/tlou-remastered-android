@@ -91,6 +91,60 @@ def synthetic_switch_boot(path: Path) -> bytes:
 
 
 class TestBridge(unittest.TestCase):
+
+    def test_native_111_animation_patch_isolated_and_guarded(self):
+        # Synthetic header and invented filler, NO original PS4 data.
+        import importlib.util
+        profile_path = Path(__file__).resolve().parents[1] / "tlou_patches.py"
+        spec = importlib.util.spec_from_file_location("tlou_test_patch_profile", profile_path)
+        profile = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(profile)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            boot = root / "original.bin"
+            fake_boot(boot)
+            initial = boot.stat().st_size
+            start = initial - 16384
+            size = 0xC9FC61 + 128
+            sites = profile.BASE_PATCHES_111["invalid-animation-output-pointer"]
+            with boot.open("r+b") as stream:
+                stream.seek(8)
+                stream.write(struct.pack("<Q", size))
+                stream.truncate(start + size)
+                for addr, original, replacement in sites:
+                    self.assertEqual(len(original), len(replacement))
+                    stream.seek(start + addr)
+                    stream.write(bytes.fromhex(original))
+            before = hashlib.sha256(boot.read_bytes()).hexdigest()
+            result = root / "native-boot-linked.bin"
+            patched = mod.prepare_native_animation_patch(
+                boot, mod.TLOU_111_SWITCH_SHA256, result)
+            self.assertEqual(patched, ["invalid-animation-output-pointer"])
+            self.assertEqual(before, hashlib.sha256(boot.read_bytes()).hexdigest(),
+                             "native compilation must not modify original FEX boot")
+            self.assertEqual(mod.check_boot(result), mod.check_boot(boot))
+            with boot.open("rb") as old, result.open("rb") as native:
+                for addr, original, replacement in sites:
+                    old.seek(start + addr)
+                    native.seek(start + addr)
+                    self.assertEqual(old.read(len(bytes.fromhex(original))),
+                                     bytes.fromhex(original))
+                    self.assertEqual(native.read(len(bytes.fromhex(replacement))),
+                                     bytes.fromhex(replacement))
+            # Wrong version must NOT produce the known 1.11 patch.
+            self.assertEqual(mod.prepare_native_animation_patch(
+                boot, "e5f0aa322f60bd90637cc10d83de08c77885b1921084021c630e04ed3d6febf7",
+                result), [])
+            self.assertFalse(result.exists())
+            # Any mismatching opcode must fail closed without creating image.
+            with boot.open("r+b") as stream:
+                stream.seek(start + sites[0][0])
+                stream.write(b"\xcc")
+            with self.assertRaisesRegex(ValueError, "guard mismatch"):
+                mod.prepare_native_animation_patch(
+                    boot, mod.TLOU_111_SWITCH_SHA256, result)
+            self.assertFalse(result.exists())
+
     def test_batch_known_1_11_jump_cases_before_codegen(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

@@ -314,6 +314,10 @@ def port(upstream: Path, out: Path) -> None:
                 "    s.rip = fn;\n" + WORKER_ENTRY_TRACE + "    bbr_dispatch(&s, fn);",
                 "TLOU 1.11 AOT job worker entry provenance")
     main = once(main,
+                "inline void HostCall(GuestState* s, void* fn, Thread* t) {",
+                FIBER_RUN_TRACE + "inline void HostCall(GuestState* s, void* fn, Thread* t) {",
+                "TLOU sceFiberRun trace helper definition")
+    main = once(main,
                 "    Trace(t, EvHost, reinterpret_cast<uint64_t>(fn), sp, ret);\n",
                 "    Trace(t, EvHost, reinterpret_cast<uint64_t>(fn), sp, ret);\n"
                 "    TlouTraceFiberRun(s, fn, ret, false);\n",

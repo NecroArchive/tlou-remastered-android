@@ -239,9 +239,11 @@ public final class MainActivity extends Activity {
             manual.setOnClickListener(v->{if(!busy)manualPath();});game.addView(manual);
             toggleSetting(game,"launch_direct","Entrar direto no jogo",false);
             LinearLayout updates=card(root,"ATUALIZAÇÃO DO JOGO");
-            updates.addView(text("Aplique um PKG de update ou selecione uma pasta extraída. O jogo base e os saves não serão sobrescritos.",12,MUTED));
+            updates.addView(text("O modo padrão mantém o update separado. Também é possível instalá-lo fisicamente na pasta do jogo, substituindo os arquivos alterados.",12,MUTED));
             add(updates,"Atualizar por PKG",false,()->withAccess(()->pickFile(PICK_UPDATE_PKG)));
             add(updates,"Atualizar por pasta",false,()->withAccess(()->pickFolder(PICK_UPDATE_FOLDER)));
+            add(updates,"Aplicar update diretamente na pasta do jogo",false,()->withAccess(this::confirmInPlaceUpdate));
+            updates.addView(text("Substituição física opcional: preserva saves e pode recuperar uma falha, mas após concluir não permite voltar à versão anterior sem os arquivos originais.",11,MUTED));
             add(game,"Sair do aplicativo",false,this::finishAffinity);
         } else if(currentTab.equals("patches")) {
             LinearLayout box=card(root,"PATCHES");
@@ -369,6 +371,51 @@ public final class MainActivity extends Activity {
                 .putString("update_path",patch.getAbsolutePath())
                 .putString("prepared_path",prepared.getAbsolutePath()).apply();
             update("Atualização aplicada. Toque em JOGAR.");
+        });
+    }
+
+    private void confirmInPlaceUpdate() {
+        if(busy)return;
+        try {
+            File game=baseForUpdate();
+            File patch=updateForGame(game);
+            if(patch==null) {alert("Atualização","Instale ou selecione primeiro uma atualização separada.");return;}
+            String message="Jogo base: "+game.getAbsolutePath()+"\\nUpdate: "+patch.getAbsolutePath()
+                +"\\n\\nA versão 1.11 substituirá fisicamente os arquivos correspondentes na pasta base. "
+                +"Os saves não serão modificados. A operação tem recuperação automática se for interrompida, "
+                +"mas após concluída os arquivos 1.00 sobrescritos não estarão mais disponíveis. "
+                +"Tenha uma cópia do seu jogo base. A alteração não garante corrigir o crash ARM64 139.";
+            TlouDialogs.show(this,new AlertDialog.Builder(this)
+                .setTitle("Instalar update na pasta base?")
+                .setMessage(message)
+                .setNegativeButton("Cancelar",null)
+                .setPositiveButton("Substituir arquivos",(d,which)->installUpdateInPlace()));
+        }catch(Exception error){alert("Atualização",error.getMessage());}
+    }
+
+    private void installUpdateInPlace() {
+        task("Instalando atualização na pasta do jogo…",()->{
+            File game=baseForUpdate();
+            File patch=updateForGame(game);
+            if(patch==null)throw new IOException("Não existe atualização selecionada para este jogo.");
+            // Validate CUSA, update version and game files through the existing
+            // PS4 preparation before modifying ANY original game file.
+            tools.prepare(game,patch,this::update);
+            try(SaveArchive.Guard guard=SaveArchive.lock(new File(getFilesDir(),"tlou/user"))) {
+                try(UpdateInPlace.Transaction transaction=UpdateInPlace.apply(game,patch,this::update)) {
+                    // Verify the new BASE as a standalone 1.11 installation.
+                    File prepared=tools.prepare(game,null,this::update);
+                    org.json.JSONObject record=GameInstallState.marker(prepared);
+                    if(record==null || !"01.11".equals(record.optString("version")))
+                        throw new IOException("A atualização física não resultou em jogo base 01.11; alterações revertidas.");
+                    transaction.commit();
+                    prefs.edit().remove("update_game").remove("update_path")
+                        .putString("game_path",game.getAbsolutePath())
+                        .putString("prepared_path",prepared.getAbsolutePath()).apply();
+                    RunLog.write(this,"Update 01.11 instalado fisicamente e validado no jogo base: "+game.getAbsolutePath());
+                }
+            }
+            update("Atualização instalada na pasta do jogo. Base 01.11 validada, saves preservados.");
         });
     }
 

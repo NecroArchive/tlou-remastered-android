@@ -283,7 +283,9 @@ public final class GameActivity extends Activity {
             if("aot".equals(PortSettings.prefs(this).getString("cpu_backend","fex"))) {
                 try {
                     nativeAot=RuntimeAot.prepare(this,base);
-                    RunLog.write(this,"CPU backend: native ARM64 AOT ABI v2; guest library="+nativeAot.library);
+                    args.set(1,nativeAot.bootImage.getAbsolutePath());
+                    RunLog.write(this,"CPU backend: native ARM64 AOT ABI v2; guest library="+nativeAot.library
+                        +" • native boot="+nativeAot.bootImage.getAbsolutePath());
                 } catch(Exception problem) {
                     RunLog.failure(this,"AOT indisponível; execução nativa não foi substituída por FEX",problem);
                     PortSettings.prefs(this).edit().putBoolean("launch_direct",false).apply();
@@ -298,7 +300,7 @@ public final class GameActivity extends Activity {
             } else if(nativeAot!=null && patches.isFile() && patches.length()>0) {
                 // AOT strict mode cannot execute modified x86 code until native
                 // patch variants exist. Do not silently apply uncompiled patches.
-                RunLog.write(this,"AOT inicial: patches executáveis desativados nesta sessão (sem variantes compiladas)");
+                RunLog.write(this,"AOT: patches de configuração desativados; proteção de animação 1.11 compilada no executável nativo verificado");
             }
             ProcessBuilder builder=new ProcessBuilder(RuntimeProcess.command(args,runtimePidFile));
             Map<String,String> env=builder.environment();

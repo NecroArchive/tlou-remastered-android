@@ -34,6 +34,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/tlou_deferred_signal_wait.h"
+#include "video_core/renderer_vulkan/tlou_host_copy_wait.h"
 #include "gow3_threads.h"
 
 namespace Vulkan {
@@ -323,9 +324,10 @@ void Scheduler::WaitHostCopies() {
         Gow3Stats::host_copy_waits.fetch_add(1, std::memory_order_relaxed);
         const auto start = std::chrono::steady_clock::now();
         KickRecording(true);
-        while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
-            std::this_thread::yield();
-        }
+        // A short spin keeps uncontended completions fast. For longer waits,
+        // park until the recorder publishes the required sequence instead of
+        // scheduling this thread repeatedly while game workers need CPU time.
+        Detail::WaitForHostCopySequence(host_copies_done, host_copies_issued);
         if (OrderWaitStatsEnabled()) {
             NoteOrderWait(1, start);
         }

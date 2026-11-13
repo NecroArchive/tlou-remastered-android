@@ -925,6 +925,7 @@ public:
                 seq = ++host_copies_issued](vk::CommandBuffer) {
             copy();
             host_copies_done.store(seq, std::memory_order_release);
+            host_copies_done.notify_all();
         });
     }
 

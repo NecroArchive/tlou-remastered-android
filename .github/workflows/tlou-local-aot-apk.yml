@@ -45,6 +45,29 @@ jobs:
           path: out/aot-source-apk
           run-id: '43315820944'
           github-token: ${{ github.token }}
+      - name: Download newly compiled ARM64 AOT runtime with TLOU fibers
+        uses: actions/download-artifact@v4
+        with:
+          name: TLOU-AOT-CPU-ARM64-Fiber-Backend
+          path: out/aot-native-backend
+          run-id: '43336589446'
+          github-token: ${{ github.token }}
+      - name: Stage verified alternative AOT CPU, leave production FEX intact
+        run: |
+          set -euo pipefail
+          so=out/aot-native-backend/libgow3cpu.so
+          test -s "$so"
+          python3 - "$so" <<'PY'
+          import hashlib,sys
+          from pathlib import Path
+          path=Path(sys.argv[1])
+          expected=Path(str(path)+'.sha256').read_text().split()[0]
+          assert hashlib.file_digest(path.open('rb'),'sha256').hexdigest()==expected
+          PY
+          readelf -h "$so" | grep -E 'Machine:.*AArch64'
+          readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
+          mkdir -p out/android-bionic/apk-assets/runtime-aot
+          cp "$so" out/android-bionic/apk-assets/runtime-aot/libgow3cpu.so
       - name: Stage exact native game runtime with pinned ARM64 compiler
         run: |
           set -euo pipefail
@@ -74,7 +97,7 @@ jobs:
           apk=android-launcher/app/build/outputs/apk/debug/app-debug.apk
           original=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
           "$sdk/apksigner" verify --verbose "$apk"
-          "$sdk/aapt" dump badging "$apk" | grep "package: name='com.daedalus.tlou.remastered.aot'"
+          "$sdk/aapt" dump badging "$apk" | grep "package: name='com.daedalus.tlou.remastered.aotnative'"
           python3 android/bionic/check_tools_apk.py "$apk"
           python3 - "$original" "$apk" <<'PY'
           import sys,zipfile,hashlib,io
@@ -83,6 +106,7 @@ jobs:
               assert preserved
               for n in preserved:
                   assert hashlib.sha256(a.read(n)).digest()==hashlib.sha256(b.read(n)).digest(),n
+              assert b.getinfo('assets/runtime-aot/libgow3cpu.so').file_size>4096
               with zipfile.ZipFile(io.BytesIO(b.read('assets/tools.zip'))) as tools:
                   for n in ['bin/libbbrecomp.so','source/android/aot/aot_local.py','aot/upstream.sha256']:
                       assert tools.getinfo(n).file_size>0
@@ -91,7 +115,7 @@ jobs:
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-Local-ARM64-AOT-Experimental-APK
+          name: TLOU-v011-Native-ARM64-AOT-Experimental-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

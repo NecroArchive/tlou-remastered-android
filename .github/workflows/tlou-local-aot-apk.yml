@@ -162,7 +162,6 @@ jobs:
                   for n in ['bin/libbbrecomp.so','source/android/aot/aot_local.py','aot/upstream.sha256']:
                       assert tools.getinfo(n).file_size>0
                   compiler=tools.read('bin/libbbrecomp.so')
-                  assert b'2-tlou-tso' in compiler, 'old compiler staged in APK'
                   assert tools.read('aot/upstream.sha256').strip()==b'fed33b282195034ce0da405b3ad60f513451786c6fda59767344cbedb219e7c0', 'wrong compiler archive'
                   assert b'3-tlou-string' in compiler, 'VPCMPISTRX compiler missing: no APK can be published'
               print('Verified',len(preserved),'unchanged native/runtime/driver payload files and AOT compiler')

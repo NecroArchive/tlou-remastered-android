@@ -132,6 +132,35 @@ WORKER_ENTRY_TRACE = r"""
     }
 """
 
+FIBER_RUN_TRACE = r"""
+// At 01.11 x86 offset c82869, StartFiberExecution calls sceFiberRun.
+// c828a3 is a deliberate INT 41 after sceFiberRun returned nonzero.
+// Diagnose the HLE result and fiber state without modifying the call.
+static void TlouTraceFiberRun(const GuestState* s, void* fn, uint64_t ret, bool after) {
+    if (ret != E.base + 0xc8286e) return;
+    const uint64_t fiber = s->gregs[RDI];
+    const uint64_t header = fiber ? ReadGuest(fiber) : 0;
+    const uint64_t entry = fiber ? ReadGuest(fiber + 8) : 0;
+    const uint64_t magic_end = fiber ? ReadGuest(fiber + 0x68) : 0;
+    const uint32_t sig_start = uint32_t(header);
+    const uint32_t state = uint32_t(header >> 32);
+    const uint32_t sig_end = uint32_t(magic_end);
+    std::fprintf(stderr,
+        "TLOU AOT sceFiberRun %s: tid=%ld fn=%p fiber=%#llx magic=%#x/%#x state=%u "
+        "entry=%#llx stack=%#llx size=%#llx incoming=%#llx outgoing=%#llx result=%#x\n",
+        after ? "return" : "enter", (long)syscall(SYS_gettid), fn,
+        (unsigned long long)fiber, sig_start, sig_end, state,
+        (unsigned long long)entry,
+        (unsigned long long)(fiber ? ReadGuest(fiber + 0x18) : 0),
+        (unsigned long long)(fiber ? ReadGuest(fiber + 0x20) : 0),
+        (unsigned long long)s->gregs[RSI],
+        (unsigned long long)s->gregs[RDX],
+        after ? uint32_t(s->gregs[RAX]) : 0u);
+    std::fflush(stderr);
+}
+
+"""
+
 TARGET_PROVENANCE = r"""
 // An all-ones indirect target is NOT the AOT guest return sentinel.
 // Keep the strict failure but report its ARM64 caller and guest registers.
@@ -284,6 +313,17 @@ def port(upstream: Path, out: Path) -> None:
     main = once(main, "    s.rip = fn;\n    bbr_dispatch(&s, fn);",
                 "    s.rip = fn;\n" + WORKER_ENTRY_TRACE + "    bbr_dispatch(&s, fn);",
                 "TLOU 1.11 AOT job worker entry provenance")
+    main = once(main,
+                "    Trace(t, EvHost, reinterpret_cast<uint64_t>(fn), sp, ret);\n",
+                "    Trace(t, EvHost, reinterpret_cast<uint64_t>(fn), sp, ret);\n"
+                "    TlouTraceFiberRun(s, fn, ret, false);\n",
+                "TLOU fiber run HLE entry diagnostics")
+    main = once(main,
+                "    CallHostFn(s, fn);\n    --t->host_depth;\n",
+                "    CallHostFn(s, fn);\n"
+                "    TlouTraceFiberRun(s, fn, ret, true);\n"
+                "    --t->host_depth;\n",
+                "TLOU fiber run HLE return diagnostics")
     (out / "guest_cpu_aot.cpp").write_text(main)
     print(f"TLOU AOT backend: upstream {UPSTREAM}, PS4 fiber ABI ported; source generated at {out}")
 

@@ -28,8 +28,8 @@ android {
         // Experimental debug builds use a separate package/signing identity;
         // never replace the user's stable signed installation or its saves.
         debug {
-            applicationIdSuffix '.aotnative'
-            versionNameSuffix '-AOT-STR-fix'
+            applicationIdSuffix '.aotnative2'
+            versionNameSuffix '-AOT-native-v2'
             signingConfig signingConfigs.debug
         }
     }

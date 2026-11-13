@@ -77,7 +77,7 @@ final class RuntimeAot {
         JSONObject source=new JSONObject(new String(Files.readAllBytes(report.toPath()),StandardCharsets.UTF_8));
         if(meta.optInt("abi_version",-1)!=2)
             throw new java.io.IOException("ABI da biblioteca AOT incompatível");
-        if(!"3-tlou-string".equals(meta.optString("compiler_version")) ||
+        if(!"4-tlou-tso-one-fence".equals(meta.optString("compiler_version")) ||
                 !"aarch64_generated_native_ready".equals(source.optString("status")))
             throw new java.io.IOException("Biblioteca AOT antiga ou sem suporte a TSO. Recompile em Ajustes → CPU.");
         // Guest PS4 fibers can replace RBX/RBP/R12-R15 in HostCall. Old native

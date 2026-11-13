@@ -12,6 +12,7 @@ on:
       - 'android/aot/test_aot_quality.py'
       - 'android/aot/test_fiber_tls.py'
       - 'android/aot/test_aot_fault_probe.py'
+      - 'android/aot/test_aot_signal_stack.py'
       - 'android/bionic/build_aot_cpu.sh'
       - 'android/bionic/repackage_local_aot.py'
       - 'android/bionic/stage_aot_compiler.sh'
@@ -53,6 +54,7 @@ jobs:
           python3 android/aot/test_aot_quality.py -v
           python3 android/aot/test_fiber_tls.py -v
           python3 android/aot/test_aot_fault_probe.py -v
+          python3 android/aot/test_aot_signal_stack.py -v
           mkdir -p out/aot-java-test
           javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouApp0Assets.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouApp0AssetsTest.java
           java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouApp0AssetsTest

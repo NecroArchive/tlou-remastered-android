@@ -1,0 +1,42 @@
+name: TLOU AOT native guest CPU build
+
+on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - 'android/aot/port_runtime.py'
+      - 'android/bionic/build_aot_cpu.sh'
+      - '.github/workflows/tlou-aot-native-cpu.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 ndk;29.0.14206865'
+      - name: Build native ABI v2 AOT engine, adapted for TLOU fibers
+        env:
+          TLOU_NDK: /usr/local/lib/android/sdk/ndk/29.0.14206865
+        run: bash android/bionic/build_aot_cpu.sh
+      - name: Inspect exported symbols and ELF interpreter dependencies
+        run: |
+          set -euo pipefail
+          so=out/android-bionic/aot-backend/libgow3cpu.so
+          test -s "$so"
+          readelf -h "$so" | grep -E 'Machine:.*AArch64'
+          readelf -d "$so" | grep -F 'libc++_shared.so'
+          readelf --dyn-syms --wide "$so" | grep -E 'guest_cpu_fiber_switch|bbr_dispatch|guest_cpu_init'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-AOT-CPU-ARM64-Fiber-Backend
+          path: |
+            out/android-bionic/aot-backend/libgow3cpu.so
+            out/android-bionic/aot-backend/libgow3cpu.so.sha256
+          if-no-files-found: error

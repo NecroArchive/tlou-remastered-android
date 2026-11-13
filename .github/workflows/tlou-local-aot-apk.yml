@@ -80,23 +80,23 @@ jobs:
       - name: Retrieve fixed Android AOT compiler (TSO lowering included)
         uses: actions/download-artifact@v4
         with:
-          name: TLOU-bb-recomp-1.3.0-TSO-ARM64
+          name: TLOU-bb-recomp-1.3.0-TSO-STR-ARM64
           path: out/aot-tso-compiler
-          run-id: '43341035397'
+          run-id: '43347558246'
           github-token: ${{ github.token }}
       - name: Verify pinned TSO compiler artifact and archive integrity
         run: |
           set -euo pipefail
           archive=out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
           test -s "$archive"
-          echo '32199a7501742bb575001498d1d449be77f50061fb529bed2af8f93357794fbf  '"$archive" | sha256sum -c
+          echo 'fed33b282195034ce0da405b3ad60f513451786c6fda59767344cbedb219e7c0  '"$archive" | sha256sum -c
           (cd out/aot-tso-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
           mkdir -p out/aot-tso-extract
           tar -xJf "$archive" -C out/aot-tso-extract
           test -s out/aot-tso-extract/android/libbbrecomp.so
           test -s out/aot-tso-extract/android/bundle/libbbcpu-stub.so
           readelf -h out/aot-tso-extract/android/libbbrecomp.so | grep -E 'Machine:.*AArch64'
-          strings -a out/aot-tso-extract/android/libbbrecomp.so | grep -F '2-tlou-tso'
+          grep -aFq '3-tlou-string' out/aot-tso-extract/android/libbbrecomp.so
       - name: Stage exact native game runtime with pinned ARM64 compiler
         run: |
           set -euo pipefail
@@ -119,21 +119,21 @@ jobs:
           python3 android/bionic/repackage_local_aot.py "$apk"
       - name: Generate save-selection fixtures for existing Android tests
         run: python3 gow3_pc/tests/test_android_save_choice.py
-      - name: Restore original TSO APK signing key (required for install-over)
+      - name: Restore pinned AOT v2 signing key (reused on future APKs)
         uses: actions/cache/restore@v4
         with:
           path: ~/.android/debug.keystore
           key: tlou-aotnative-development-signing-v1
           fail-on-cache-miss: true
-      - name: Verify installed TSO APK signing certificate before any build
+      - name: Verify pinned AOT v2 certificate before build
         run: |
           set -euo pipefail
           test -s "$HOME/.android/debug.keystore"
-          expected=e4cf1b1d9b745daa1d735eca96570f91d17fccaee3a8080f930334354cfad9d1
+          expected=adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c
           actual=$(keytool -exportcert -alias androiddebugkey \
             -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | sha256sum | cut -d' ' -f1)
           if [[ "$actual" != "$expected" ]]; then
-            echo "::error::Debug signer mismatch: this APK would NOT install over the TSO experimental app. Refusing build. Found $actual" >&2
+            echo "::error::Debug signer mismatch: this APK would NOT update the AOT v2 experimental app. Refusing build. Found $actual" >&2
             exit 1
           fi
           echo "Pinned AOT signer verified: $actual"
@@ -146,8 +146,8 @@ jobs:
           apk=android-launcher/app/build/outputs/apk/debug/app-debug.apk
           original=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
           "$sdk/apksigner" verify --verbose "$apk"
-          "$sdk/apksigner" verify --print-certs "$apk" | grep -F 'e4cf1b1d9b745daa1d735eca96570f91d17fccaee3a8080f930334354cfad9d1'
-          "$sdk/aapt" dump badging "$apk" | grep "package: name='com.daedalus.tlou.remastered.aotnative'"
+          "$sdk/apksigner" verify --print-certs "$apk" | grep -F 'adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c'
+          "$sdk/aapt" dump badging "$apk" | grep "package: name='com.daedalus.tlou.remastered.aotnative2'"
           python3 android/bionic/check_tools_apk.py "$apk"
           python3 - "$original" "$apk" <<'PY'
           import sys,zipfile,hashlib,io
@@ -163,14 +163,14 @@ jobs:
                       assert tools.getinfo(n).file_size>0
                   compiler=tools.read('bin/libbbrecomp.so')
                   assert b'2-tlou-tso' in compiler, 'old compiler staged in APK'
-                  assert tools.read('aot/upstream.sha256').strip()==b'32199a7501742bb575001498d1d449be77f50061fb529bed2af8f93357794fbf', 'wrong compiler archive'
+                  assert tools.read('aot/upstream.sha256').strip()==b'fed33b282195034ce0da405b3ad60f513451786c6fda59767344cbedb219e7c0', 'wrong compiler archive'
                   assert b'3-tlou-string' in compiler, 'VPCMPISTRX compiler missing: no APK can be published'
               print('Verified',len(preserved),'unchanged native/runtime/driver payload files and AOT compiler')
           PY
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-Native-ARM64-AOT-TSO-Fix-APK
+          name: TLOU-v011-Native-ARM64-AOT-STRING-Fix2-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

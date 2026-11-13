@@ -26,6 +26,10 @@ on:
       - 'android/bionic/repackage_local_aot.py'
       - 'android/bionic/stage_aot_compiler.sh'
       - 'android-launcher/**'
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.h'
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/tlou_readback_watch_gate.h'
+      - 'gow3_pc/tests/test_tlou_readback_watch_gate.cpp'
       - 'gow3_pc/src/android_cpu_policy.h'
       - 'gow3_pc/tests/test_android_cpu_policy.c'
       - '.github/workflows/tlou-local-aot-apk.yml'
@@ -40,7 +44,81 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  gpu:
+    name: Cross-compile optimized Bionic TLOU Vulkan renderer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TLOU_JOBS: '3'
+      TLOU_ANDROID_API: '30'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Test readback watcher exact submission ordering and CPU work removed
+        run: |
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_readback_watch_gate.cpp -o /tmp/tlou-test-readback-gate
+          /tmp/tlou-test-readback-gate
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: ci/environment.yml
+          cache-environment: true
+          init-shell: bash
+      - name: Restore native dependencies and incremental compiler cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .local-deps/android/bionic-prefix
+            .local-deps/android/bionic-src
+            .local-deps/android/bionic-build
+            .local-deps/FEX
+            ~/.cache/ccache
+          key: tlou-bionic-arm64-v2-${{ runner.os }}-${{ hashFiles('android/bionic/build_deps.sh', 'android/bionic/build_fex.sh') }}
+      - name: Cross-compile host utilities
+        shell: bash -el {0}
+        run: |
+          bash ci/setup-deps.sh "$CONDA_PREFIX"
+          echo "TLOU_BIONIC_HEADERS=$CONDA_PREFIX" >> "$GITHUB_ENV"
+          echo "TLOU_NDK=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+      - name: Restore pinned Android Bionic libraries (cached when available)
+        shell: bash -el {0}
+        run: bash android/bionic/build_deps.sh
+      - name: Configure updated GPU renderer with current source
+        shell: bash -el {0}
+        run: bash android/bionic/build_gpu.sh --configure-only
+      - name: Compile REAL libgow3gpu.so from modified BufferCache source
+        shell: bash -el {0}
+        run: bash android/bionic/build_gpu.sh
+      - name: Verify AArch64 and save separately hashed native GPU artifact
+        run: |
+          set -euo pipefail
+          mkdir -p out/native-gpu
+          cp out/android-bionic/lib/libgow3gpu.so out/native-gpu/libgow3gpu.so
+          readelf -h out/native-gpu/libgow3gpu.so | grep -E 'Machine:.*AArch64'
+          readelf -d out/native-gpu/libgow3gpu.so | grep NEEDED
+          (cd out/native-gpu && sha256sum libgow3gpu.so > libgow3gpu.so.sha256 && sha256sum -c libgow3gpu.so.sha256)
+          test $(stat -c %s out/native-gpu/libgow3gpu.so) -gt 100000
+      - name: Publish exact source-built optimized GPU for AOT APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-AOT-Bionic-Optimized-GPU
+          path: out/native-gpu/libgow3gpu.so*
+          if-no-files-found: error
+      - name: Upload native compiler errors on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-AOT-Native-GPU-Errors
+          path: |
+            out/android-bionic/gpu/CMakeFiles/CMakeConfigureLog.yaml
+            out/android-bionic/gpu/CMakeCache.txt
+          if-no-files-found: ignore
+
   apk:
+    needs: gpu
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -72,6 +150,8 @@ jobs:
           python3 android/aot/test_tso_one_fence.py -v
           cc -std=gnu11 -O2 -pthread -Wall -Wextra -Werror gow3_pc/tests/test_android_cpu_policy.c -o /tmp/tlou-test-cpu-placement
           /tmp/tlou-test-cpu-placement
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_readback_watch_gate.cpp -o /tmp/tlou-test-readback-gate
+          /tmp/tlou-test-readback-gate
           mkdir -p out/aot-java-test
           javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouApp0Assets.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouApp0AssetsTest.java
           java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouApp0AssetsTest
@@ -161,6 +241,28 @@ jobs:
           export TLOU_AOT_COMPILER_ARCHIVE="$PWD/out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz"
           bash android/bionic/stage_aot_compiler.sh
           python3 android/bionic/repackage_local_aot.py "$apk"
+      - name: Fetch GPU library compiled from current optimized renderer
+        uses: actions/download-artifact@v4
+        with:
+          name: TLOU-AOT-Bionic-Optimized-GPU
+          path: out/native-gpu
+      - name: Replace old pinned libgow3gpu.so in AOT APK staging (keep same package and signing key)
+        run: |
+          set -euo pipefail
+          (cd out/native-gpu && sha256sum -c libgow3gpu.so.sha256)
+          original=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+          python3 - "$original" <<'PY'
+          from pathlib import Path
+          import hashlib,sys,zipfile
+          new=Path('out/native-gpu/libgow3gpu.so').read_bytes()
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              old=archive.read('lib/arm64-v8a/libgow3gpu.so')
+          assert new[:4]==b'\x7fELF' and len(new)>100000, 'GPU is not a real ELF'
+          assert hashlib.sha256(new).digest()!=hashlib.sha256(old).digest(), 'GPU binary did not change: refuse pointless APK'
+          print('Verified changed Bionic GPU:', hashlib.sha256(old).hexdigest()[:16], '->',hashlib.sha256(new).hexdigest()[:16])
+          PY
+          readelf -h out/native-gpu/libgow3gpu.so | grep -E 'Machine:.*AArch64'
+          cp out/native-gpu/libgow3gpu.so out/android-bionic/apk-jni/arm64-v8a/libgow3gpu.so
       - name: Generate save-selection fixtures for existing Android tests
         run: python3 gow3_pc/tests/test_android_save_choice.py
       - name: Restore pinned AOT v2 signing key (reused on future APKs)
@@ -183,7 +285,7 @@ jobs:
           echo "Pinned AOT signer verified: $actual"
       - name: Build standalone signed debug APK for local AOT compiler testing
         run: gradle -p android-launcher :app:assembleDebug :app:testDebugUnitTest --no-daemon --max-workers=2
-      - name: Verify signed APK, distinct app ID and original CPU/GPU binaries
+      - name: Verify signed APK, unchanged FEX/CPU and ACTUAL newly built GPU
         run: |
           set -euo pipefail
           sdk="$ANDROID_HOME/build-tools/35.0.0"
@@ -198,7 +300,12 @@ jobs:
           with zipfile.ZipFile(sys.argv[1]) as a, zipfile.ZipFile(sys.argv[2]) as b:
               preserved=[n for n in a.namelist() if n.startswith(('lib/arm64-v8a/','assets/runtime/','assets/drivers/')) and not n.endswith('/')]
               assert preserved
+              new_gpu=b.read('lib/arm64-v8a/libgow3gpu.so')
+              intended=open('out/native-gpu/libgow3gpu.so','rb').read()
+              assert new_gpu==intended, 'new GPU not packaged: refusing old renderer'
+              assert new_gpu!=a.read('lib/arm64-v8a/libgow3gpu.so'), 'old native GPU still packaged'
               for n in preserved:
+                  if n=='lib/arm64-v8a/libgow3gpu.so': continue
                   assert hashlib.sha256(a.read(n)).digest()==hashlib.sha256(b.read(n)).digest(),n
               assert b.getinfo('assets/runtime-aot/libgow3cpu.so').file_size>4096
               assert b.getinfo('assets/runtime-aot/libbbcpu.so').file_size>=512
@@ -215,12 +322,12 @@ jobs:
                   assert b'-O2' in compiler, 'AOT compiler lacks LLVM O2'
                   assert b'tlou-111-static-llvmO2-immutable-v1' in aot_source, 'AOT fast codegen profile not packaged'
                   assert b'if version != "3-tlou-string"' in aot_source, 'AOT v3 codegen adapter missing'
-              print('Verified',len(preserved),'unchanged native/runtime/driver payload files and AOT compiler')
+              print('Verified',len(preserved)-1,'unchanged native/runtime/driver files; new GPU rebuilt and AOT compiler pinned')
           PY
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-Native-ARM64-AOT-STRING-Fix2-APK
+          name: TLOU-v011-ARM64-AOT-GPU-Readback-WatchFix-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

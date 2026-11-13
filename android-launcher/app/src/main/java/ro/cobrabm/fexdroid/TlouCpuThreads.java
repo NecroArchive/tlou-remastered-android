@@ -29,14 +29,14 @@ final class TlouCpuThreads implements AutoCloseable {
             this.runtimeNs=runtimeNs;this.delayNs=delayNs;
         }
     }
-    private final long pid;
+    private final File pidFile;
     private final String backend;
     private final Consumer<String> log;
     private final Thread worker;
     private volatile boolean running=true;
 
-    TlouCpuThreads(long pid,String backend,Consumer<String> log) {
-        this.pid=pid;this.backend=backend;this.log=log;
+    TlouCpuThreads(File pidFile,String backend,Consumer<String> log) {
+        this.pidFile=pidFile;this.backend=backend;this.log=log;
         worker=new Thread(this::monitor,"tlou-cpu-threads");
         worker.setDaemon(true);
         worker.setPriority(Thread.MIN_PRIORITY);
@@ -124,8 +124,15 @@ final class TlouCpuThreads implements AutoCloseable {
                 String.join(", ",top));
     }
     private void monitor() {
-        File tasks=new File("/proc/"+pid+"/task");
         try {
+            int pid=-1;
+            for(int retry=0;retry<100 && running;retry++) {
+                pid=RuntimeProcess.readPid(pidFile);
+                if(pid>0)break;
+                Thread.sleep(50);
+            }
+            if(pid<=0||!running) return;
+            File tasks=new File("/proc/"+pid+"/task");
             Map<Integer,Sample> previous=snapshot(tasks);
             long before=System.nanoTime();
             while(running) {

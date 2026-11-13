@@ -10,8 +10,18 @@ android {
         // Android 10/11 allow execution of extracted native payload in app-private files
         // for legacy target SDK. Keep separate from SDK version for compilation.
         targetSdk 28
-        versionCode 41
+        versionCode 42
         versionName '0.1.1'
+    }
+    // Reuse the same keystore as the previous TSO experimental APK.
+    // No new debug key may be generated for an update.
+    signingConfigs {
+        debug {
+            storeFile file(System.getProperty('user.home') + '/.android/debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
     }
     buildTypes {
         release { minifyEnabled false }
@@ -19,7 +29,8 @@ android {
         // never replace the user's stable signed installation or its saves.
         debug {
             applicationIdSuffix '.aotnative'
-            versionNameSuffix '-AOT-experimental'
+            versionNameSuffix '-AOT-STR-fix'
+            signingConfig signingConfigs.debug
         }
     }
     // This is an experimental sideload-only native research build, not a

@@ -262,6 +262,7 @@ public final class GameActivity extends Activity {
             if(closing.get())return;
             if (!user.exists() && !user.mkdirs()) throw new IllegalStateException("Falha no usuário PS4");
             if (!app0.isDirectory()) throw new IllegalStateException("tlou-view ausente, rode o preparador TLOU");
+            RunLog.write(this,TlouApp0Assets.ensure(app0));
             List<String> args=new ArrayList<>();
             args.add(bin.getAbsolutePath());
             args.add(new File(base,"boot-linked.bin").getAbsolutePath());

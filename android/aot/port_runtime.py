@@ -115,6 +115,30 @@ uint64_t guest_cpu_fiber_frame_pointer(const GuestFiberCpuState* target) {
 
 """
 
+WORKER_TLS_BOOTSTRAP = r"""
+    // CUSA00552 01.11 job-worker thread entry: c6a0a0 calls c89c10
+    // to tag the 16-bit thread ID (0x8000|id) in static TLS at FS:-0x88.
+    // The ARM64 startup can reach c89bd0 with this slot still unset,
+    // which returns -1 and makes the scheduler index task slot -1.
+    // Prime only a known worker entry with a valid 0..5 argument, before
+    // running guest instructions. The guest's original setter still runs.
+    if (count == 1 && args && fn == E.base + 0xc6a0a0 && args[0] < 6 &&
+        s.gs_cached >= 0x88 && s.gs_cached < (uint64_t{1} << 40)) {
+        const uintptr_t tls_slot = s.gs_cached - 0x88;
+        const uint64_t prior = ReadGuest(tls_slot);
+        const uint64_t wanted = 0x8000 | args[0];
+        if ((prior & 0x8000) == 0) {
+            *reinterpret_cast<uint64_t*>(tls_slot) = wanted;
+        }
+        std::fprintf(stderr,
+            "TLOU AOT worker TLS: id=%llu fs=%#llx gs=%#llx slot=%#llx before=%#llx after=%#llx\n",
+            (unsigned long long)args[0],
+            (unsigned long long)s.fs_cached, (unsigned long long)s.gs_cached,
+            (unsigned long long)tls_slot, (unsigned long long)prior,
+            (unsigned long long)ReadGuest(tls_slot));
+    }
+"""
+
 TARGET_PROVENANCE = r"""
 // An all-ones indirect target is NOT the AOT guest return sentinel.
 // Keep the strict failure but report its ARM64 caller and guest registers.
@@ -143,6 +167,13 @@ static void TlouTraceInvalidDispatch(GuestState* s, uint64_t target,
         std::fprintf(stderr, "TLOU AOT stack[%u] @%#llx = %#llx\n",
                      i, (unsigned long long)(s->gregs[RSP] + i * 8),
                      (unsigned long long)ReadGuest(s->gregs[RSP] + i * 8));
+    if (s->gs_cached >= 0x88 && s->gs_cached < (uint64_t{1} << 40)) {
+        std::fprintf(stderr,
+            "TLOU AOT TLS at crash: fs=%#llx gs=%#llx id_slot=%#llx id_value=%#llx\n",
+            (unsigned long long)s->fs_cached, (unsigned long long)s->gs_cached,
+            (unsigned long long)(s->gs_cached - 0x88),
+            (unsigned long long)ReadGuest(s->gs_cached - 0x88));
+    }
     if (Thread* t = self) {
         std::fprintf(stderr, "TLOU AOT depth=%u host_depth=%u trace_n=%u\n",
                      t->depth, t->host_depth, t->trace_n);
@@ -241,6 +272,9 @@ def port(upstream: Path, out: Path) -> None:
     const uint64_t target = s->rip;
     if (target == ~uint64_t{0}) TlouTraceInvalidDispatch(s, target, (uintptr_t)__builtin_return_address(0), "tail");""",
                 "invalid indirect tail provenance")
+    main = once(main, "    s.rip = fn;\n    bbr_dispatch(&s, fn);",
+                "    s.rip = fn;\n" + WORKER_TLS_BOOTSTRAP + "    bbr_dispatch(&s, fn);",
+                "TLOU 1.11 AOT job worker TLS bootstrap")
     (out / "guest_cpu_aot.cpp").write_text(main)
     print(f"TLOU AOT backend: upstream {UPSTREAM}, PS4 fiber ABI ported; source generated at {out}")
 

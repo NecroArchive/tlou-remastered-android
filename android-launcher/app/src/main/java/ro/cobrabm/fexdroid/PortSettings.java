@@ -113,16 +113,18 @@ final class PortSettings {
         env.put("TLOU_SPLIT_CS64","1");
         env.put("TLOU_MAPPED_FAULT_READBACKS","1");
         env.put("TLOU_MAPPED_READBACKS","1");
-        // Eight bounded CPU samples per second per draw/dispatch role. The latest
-        // gameplay log has 95% command and 84% draw CPU, but not the phase
-        // breakdown needed to avoid another speculative APK. This sampler
-        // uses CPU-thread clocks only and remains disableable by an env override.
-        // The native Android default is ON unless explicitly disabled.
-        env.put("TLOU_CPU_PHASE_SAMPLES","1");
-        // Diagnostic-only branch: report real per-thread shader scan frequency
-        // and sampled scalar vs NEON cost every 5 seconds during gameplay.
-        // The production launcher does not set this variable.
-        env.put("TLOU_SHADER_SCAN_PROFILE","1");
+        // 2026-11-13 CPU-bound gameplay: 850k post-draw calls and ~750k shader
+        // scans every 5 s. Profiling these hot paths in a production session
+        // distorts the saturated GPU-command thread even with sparse samples.
+        // Keep the native scanner/NEON implementation unchanged and make its
+        // diagnostics strictly opt-in via existing AOT detailed diagnostics.
+        final boolean detailedAotDiagnostics =
+                p.getBoolean("aot_detailed_diagnostics",false);
+        // Native phase sampler defaults ON when env is absent; force 0 here.
+        env.put("TLOU_CPU_PHASE_SAMPLES",detailedAotDiagnostics?"1":"0");
+        // The shader scanner profile checks env presence, not merely "1".
+        if(detailedAotDiagnostics) env.put("TLOU_SHADER_SCAN_PROFILE","1");
+        else env.remove("TLOU_SHADER_SCAN_PROFILE");
         env.put("TLOU_SHADER_SCAN_SCALAR",
                 p.getBoolean("shader_scan_scalar",false)?"1":"0");
         // Leave profiling truly disabled. Some native switches check presence,

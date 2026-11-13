@@ -273,6 +273,21 @@ class TestBridge(unittest.TestCase):
         # Existing no-flag shards must not be mistaken for a fiber-safe build.
         self.assertNotIn("--flags-at-calls", mod.NATIVE_FIBER_CPU_FLAGS)
 
+    def test_native_fast_codegen_profile_preserves_memory_order_and_fibers(self):
+        # In AOT the 1.11 game image is compiled with all static patches
+        # already applied. Runtime hook installation and x86 executable patch
+        # writes are disabled by GameActivity --no-game-hooks.
+        self.assertEqual(
+            mod.AOT_111_PERFORMANCE_FLAGS,
+            ("-O2", "--no-dirty-check"))
+        self.assertEqual(mod.AOT_111_PERFORMANCE_PROFILE,
+                         "tlou-111-static-llvmO2-immutable-v1")
+        self.assertEqual(
+            mod.NATIVE_FIBER_CPU_FLAGS,
+            ("--tso", "--resume-entries", "--no-callee-saved"))
+        self.assertNotIn("--no-tso", mod.AOT_111_PERFORMANCE_FLAGS)
+        self.assertNotIn("--no-callee-saved", mod.AOT_111_PERFORMANCE_FLAGS)
+
     def test_header_only_and_never_modify_input(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

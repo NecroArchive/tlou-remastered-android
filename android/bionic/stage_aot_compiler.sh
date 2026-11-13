@@ -51,6 +51,12 @@ cp -a "$bundle" "$stage/payload/bundle"
 upstream_licenses=$(find "$stage/extract" -type d -name licenses -print -quit)
 if [[ -n "$upstream_licenses" ]]; then cp -a "$upstream_licenses" "$stage/payload/licenses"; fi
 readelf -h "$stage/payload/bin/libbbrecomp.so" | grep -Eq 'Machine:.*AArch64'
+if [[ "${TLOU_TSO_REQUIRED:-0}" == "1" ]]; then
+  if ! strings -a "$stage/payload/bin/libbbrecomp.so" | grep -qF '2-tlou-tso'; then
+    echo "Refusing compiler without verified TSO lowering/shard version" >&2
+    exit 2
+  fi
+fi
 printf '%s\n' "$digest" > "$stage/payload/upstream.sha256"
 rm -rf "$out"
 mkdir -p "$(dirname "$out")"

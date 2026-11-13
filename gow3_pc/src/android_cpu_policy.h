@@ -71,11 +71,10 @@ static inline int tlou_cpu_policy_enabled(void) {
     const char *value=getenv("TLOU_FAST_RENDER_CORES");
     return value && !strcmp(value,"1");
 }
-/* Distinct from legacy fast-render-cores, which pins all critical threads
- * together. Logs 29(FEX)/30(AOT) show GpuComm consuming ~73% on prime CPU6
- * vs ~90% on CPU5. Opt-in AOT-only placement uses separate prime cores for
- * GPU command and draw recording; the six guest workers retain the full
- * original launch mask. Never select CPUs that were not already allowed. */
+/* AOT-only shared-PRIME placement, replacing exclusive CPU6/CPU7 pins.
+ * The toggle name is retained for saved preference/ABI compatibility; both
+ * critical threads can migrate across allowed PRIME cores. Workers are never
+ * narrowed by this option, and FEX is unchanged. */
 static inline int tlou_aot_split_prime_enabled(void) {
     const char *value=getenv("TLOU_AOT_SPLIT_PRIME");
     const char *aot=getenv("BB_AOT");
@@ -85,17 +84,13 @@ static inline int tlou_aot_split_prime_mask(const char *role,
                                             const cpu_set_t *fast,
                                             cpu_set_t *out) {
     if (!role || !fast || !out || CPU_COUNT(fast)!=2) return 0;
-    int first=-1,last=-1;
-    for (int cpu=0;cpu<CPU_SETSIZE;++cpu) if(CPU_ISSET(cpu,fast)) {
-        if(first<0)first=cpu;
-        last=cpu;
-    }
-    int chosen=-1;
-    if (!strcmp(role,"GPU command")) chosen=last;
-    if (!strcmp(role,"draw recording")) chosen=first;
-    if(chosen<0)return 0;
-    CPU_ZERO(out);
-    CPU_SET(chosen,out);
+    // TLOU log 2(5): draw pinned to CPU6 coincided with 56.9 -> 32.8
+    // flips/s, while GPU command dropped to ~38% and recorder stayed ~63%.
+    // Exclusive masks make CPU6 a serial bottleneck even when CPU7 is free.
+    // Both critical threads may use both PRIME cores; kernel schedules each
+    // runnable thread. Never include cores outside the original launch mask.
+    if (strcmp(role,"GPU command") && strcmp(role,"draw recording")) return 0;
+    *out = *fast;
     return 1;
 }
 static inline uint64_t tlou_cpu_read(unsigned cpu,const char *field) {
@@ -128,7 +123,7 @@ static inline void tlou_cpu_policy_prepare(void) {
     if (!tlou_cpu_mask_text(&allowed,baseline,sizeof(baseline)) ||
         !tlou_cpu_mask_text(&fast,selected,sizeof(selected))) return;
     if (setenv("TLOU_BASE_CPU_SET",baseline,1) || setenv("TLOU_FAST_CPU_SET",selected,1)) return;
-    printf("TLOU CPU placement: allowed=%s critical=%s metric=%s split-prime=%d; workers keep launch mask\n",
+    printf("TLOU CPU placement: allowed=%s critical=%s metric=%s shared-prime=%d; workers keep launch mask\n",
            baseline,selected,metric==1 ? "capacity" : metric==2 ? "maximum-frequency" : "unchanged/unknown",
            tlou_aot_split_prime_enabled());
 }

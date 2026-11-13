@@ -30,15 +30,15 @@ int main(void) {
     expect(unknown,3,0x4a,0);
     TlCpuRank partial[]={{2,0,1500},{6,1024,0}};
     expect(partial,2,0x44,0); // incomplete metadata must not exclude an unranked CPU
-    // New optional AOT-only split is NOT legacy critical-thread pinning:
-    // two prime CPUs go to GPU-command and draw-record separately; the
-    // guest main and six job workers have no split role and stay unrestricted.
+    // AOT-only shared prime mask: both critical threads can migrate to
+    // CPU6 or CPU7. Exclusive CPU6 pinning regressed FPS when other threads
+    // still had CPU time to spare. FEX and all six workers remain unrestricted.
     cpu_set_t primes,for_gpu,for_draw;
     CPU_ZERO(&primes);CPU_SET(6,&primes);CPU_SET(7,&primes);
     assert(tlou_aot_split_prime_mask("GPU command",&primes,&for_gpu));
     assert(tlou_aot_split_prime_mask("draw recording",&primes,&for_draw));
-    assert(CPU_COUNT(&for_gpu)==1 && CPU_ISSET(7,&for_gpu));
-    assert(CPU_COUNT(&for_draw)==1 && CPU_ISSET(6,&for_draw));
+    assert(CPU_COUNT(&for_gpu)==2 && CPU_ISSET(7,&for_gpu) && CPU_ISSET(6,&for_gpu));
+    assert(CPU_COUNT(&for_draw)==2 && CPU_ISSET(7,&for_draw) && CPU_ISSET(6,&for_draw));
     assert(!tlou_aot_split_prime_mask("guest main",&primes,&for_gpu));
     assert(!tlou_aot_split_prime_mask("NdJobWorkerThread",&primes,&for_gpu));
     assert(!tlou_aot_split_prime_mask(NULL,&primes,&for_gpu));

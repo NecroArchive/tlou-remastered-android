@@ -47,6 +47,9 @@ public final class TlouCpuThreadsTest {
         ok(withRenderer.contains("worker-cores=0.90"),"worker thread accounting");
         ok(withRenderer.contains("GPUcommand:14367=40.0%@CPU7"),"non-worker measurement");
         ok("".equals(TlouCpuThreads.report(before,after,0,"FEX")),"reject zero wall time");
+        ok(TlouCpuThreads.choosePid(4321L,9999)==4321,"actual child PID preferred");
+        ok(TlouCpuThreads.choosePid(-1L,9999)==9999,"published PID fallback");
+        ok(TlouCpuThreads.choosePid(2147483648L,9999)==9999,"oversized PID fallback");
         System.out.println("TLOU CPU worker sampling tests passed");
     }
 }

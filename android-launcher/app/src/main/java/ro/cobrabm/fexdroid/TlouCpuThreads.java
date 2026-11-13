@@ -30,13 +30,18 @@ final class TlouCpuThreads implements AutoCloseable {
         }
     }
     private final File pidFile;
+    private final long knownPid;
     private final String backend;
     private final Consumer<String> log;
     private final Thread worker;
     private volatile boolean running=true;
 
     TlouCpuThreads(File pidFile,String backend,Consumer<String> log) {
-        this.pidFile=pidFile;this.backend=backend;this.log=log;
+        this(pidFile,-1L,backend,log);
+    }
+    TlouCpuThreads(File pidFile,long knownPid,String backend,Consumer<String> log) {
+        this.pidFile=pidFile;this.knownPid=knownPid;
+        this.backend=backend;this.log=log;
         worker=new Thread(this::monitor,"tlou-cpu-threads");
         worker.setDaemon(true);
         worker.setPriority(Thread.MIN_PRIORITY);
@@ -123,15 +128,25 @@ final class TlouCpuThreads implements AutoCloseable {
                 workerCount,workers,workers/100.0,String.join(", ",jobs),
                 String.join(", ",top));
     }
+    static int choosePid(long processPid,int publishedPid) {
+        if(processPid>0 && processPid<=Integer.MAX_VALUE)return (int)processPid;
+        return publishedPid;
+    }
     private void monitor() {
         try {
-            int pid=-1;
-            for(int retry=0;retry<100 && running;retry++) {
+            int pid=choosePid(knownPid,-1);
+            for(int retry=0;pid<=0 && retry<100 && running;retry++) {
                 pid=RuntimeProcess.readPid(pidFile);
                 if(pid>0)break;
                 Thread.sleep(50);
             }
-            if(pid<=0||!running) return;
+            if(pid<=0) {
+                if(running) log.accept("TLOU CPU all-threads: unavailable: child PID absent (direct+file)");
+                return;
+            }
+            if(!running)return;
+            log.accept("TLOU CPU all-threads: monitor started pid="+pid+" source="+
+                       (knownPid>0 ? "Process.pid" : "runtime.pid"));
             File tasks=new File("/proc/"+pid+"/task");
             Map<Integer,Sample> previous=snapshot(tasks);
             long before=System.nanoTime();

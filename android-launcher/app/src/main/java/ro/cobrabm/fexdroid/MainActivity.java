@@ -290,9 +290,9 @@ public final class MainActivity extends Activity {
             toggleSetting(cpu,"fast_render_cores","Priorizar núcleos rápidos (experimental)",false);
             cpu.addView(text("Não força o clock. Limita as threads críticas aos núcleos mais rápidos; reinicie o jogo para aplicar. Pode aumentar a disputa entre threads.",12,MUTED));
             toggleSetting(cpu,"aot_gpu_prime_split_v2",
-                "AOT: separar comandos GPU e draws nos núcleos prime (A/B experimental)",false);
+                "AOT: usar os dois núcleos prime sem pinagem exclusiva (A/B)",false);
             cpu.addView(text("Experimental, somente ARM64 AOT: se houver dois núcleos prime permitidos, "
-                +"isola a thread de comandos em um e a de draws no outro. Os seis workers permanecem "
+                +"permite comandos e draws em ambos os prime. Os seis workers permanecem "
                 +"com todos os núcleos disponíveis. Não habilite junto com 'Priorizar núcleos rápidos' "
                 +"no primeiro teste. Não aumenta clocks e pode piorar o FPS; reinicie o jogo.",12,MUTED));
             toggleSetting(cpu,"adpf","ADPF — ajuste dinâmico de desempenho",false);

@@ -74,8 +74,12 @@ final class RuntimeAot {
         JSONObject source=new JSONObject(new String(Files.readAllBytes(report.toPath()),StandardCharsets.UTF_8));
         if(meta.optInt("abi_version",-1)!=2)
             throw new java.io.IOException("ABI da biblioteca AOT incompatível");
-        if(!"aarch64_generated_runtime_not_integrated".equals(source.optString("status")))
-            throw new java.io.IOException("Biblioteca AOT não validada pelo compilador");
+        if(!"2-tlou-tso".equals(meta.optString("compiler_version")) ||
+                !"aarch64_generated_native_ready".equals(source.optString("status")))
+            throw new java.io.IOException("Biblioteca AOT antiga ou sem suporte a TSO. Recompile em Ajustes → CPU.");
+        JSONObject quality=source.optJSONObject("coverage");
+        if(quality==null || quality.optDouble("unsupported_percent",100)>0.25)
+            throw new java.io.IOException("Biblioteca AOT incompleta; recompile com o compilador TSO corrigido");
         String expectedBoot=source.optString("input_boot_sha256");
         if(expectedBoot.length()!=64 || !expectedBoot.equalsIgnoreCase(sha256(boot)))
             throw new java.io.IOException("O jogo preparado mudou após a compilação ARM64");

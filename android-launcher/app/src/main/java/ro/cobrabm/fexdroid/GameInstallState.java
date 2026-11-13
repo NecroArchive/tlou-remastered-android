@@ -35,6 +35,9 @@ final class GameInstallState {
                 throw new IOException("A pasta preparada não informa a origem do jogo.");
             root=new File(info.getString("game")).getCanonicalFile();
         }
+        // An interrupted physical update must be rolled back BEFORE reading
+        // the eboot, SFO or preparing the merged view on a later APK launch.
+        UpdateInPlace.recover(root);
         if(!new File(root,"eboot.bin").isFile() ||
            !new File(root,"sce_sys/param.sfo").isFile())
             throw new IOException("A pasta original do jogo não está acessível. Selecione-a novamente.");

@@ -165,11 +165,16 @@ class TestBridge(unittest.TestCase):
                    "omni_light_shadows": False, "spot_light_shadows": False}
         groups = profile.base_patches_for(options, "01.11")
         groups.update(profile.selected_options(options,"01.11",mod.TLOU_111_SWITCH_SHA256))
+        # AOT-only: the PS4 worker checks for queued jobs before each idle
+        # pause, so reducing the no-work spin count does not skip real jobs.
+        groups["native-job-idle-backoff"] = [(0xC87D71, "483de8030000", "483d80000000")]
         self.assertIn("frame-timeout", groups)
         self.assertIn("job-sleep", groups)
         self.assertIn("resolution-720", groups)
         self.assertIn("disable-motion_blur", groups)
         self.assertIn("disable-ssao", groups)
+        self.assertEqual(groups["native-job-idle-backoff"],
+                         [(0xC87D71, "483de8030000", "483d80000000")])
         self.assertEqual(len(groups["resolution-720"]), 8)
         with tempfile.TemporaryDirectory() as td:
             folder = Path(td)

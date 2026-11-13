@@ -119,6 +119,10 @@ final class InstallTools {
     File buildExperimentalAot(File prepared, Consumer<String> progress) throws Exception {
         if(!prepared(prepared))throw new IOException("Prepare o jogo antes de compilar ARM64");
         install();
+        // Synchronize the *same* verified 1.11 options as FEX before building
+        // any ARM64 units. Static native code cannot toggle x86 patches later.
+        applyPatches(prepared,progress);
+        File nativeOptions=PortSettings.patchOptions(context);
         File compiler=new File(root,"bin/libbbrecomp.so");
         File bundle=new File(root,"aot/bundle");
         File frontend=new File(root,"source/android/aot/aot_local.py");
@@ -144,6 +148,7 @@ final class InstallTools {
             "--out",output.getCanonicalPath(),
             "--compiler",compiler.getCanonicalPath(),
             "--bundle-dir",bundle.getCanonicalPath(),
+            "--options",nativeOptions.getCanonicalPath(),
             "--jobs","3","--shards","64",
             "--misses",new File(context.getFilesDir(),"tlou/aot-misses.log").getAbsolutePath());
         run(command,progress);

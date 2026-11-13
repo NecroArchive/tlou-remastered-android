@@ -298,9 +298,10 @@ public final class GameActivity extends Activity {
                 args.add("--patches");
                 args.add(patches.getAbsolutePath());
             } else if(nativeAot!=null && patches.isFile() && patches.length()>0) {
-                // AOT strict mode cannot execute modified x86 code until native
-                // patch variants exist. Do not silently apply uncompiled patches.
-                RunLog.write(this,"AOT: patches de configuração desativados; proteção de animação 1.11 compilada no executável nativo verificado");
+                // The exact validated FEX patch selection has been compiled
+                // statically into the AOT guest image. --patches would rewrite
+                // it AGAIN after loading, invalidating the compiled units.
+                RunLog.write(this,"AOT: patches de estabilidade, efeitos e resolução já integrados no boot ARM64; não reaplicando patches.bin");
             }
             ProcessBuilder builder=new ProcessBuilder(RuntimeProcess.command(args,runtimePidFile));
             Map<String,String> env=builder.environment();

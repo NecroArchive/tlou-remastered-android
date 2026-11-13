@@ -30,6 +30,26 @@ int main(void) {
     expect(unknown,3,0x4a,0);
     TlCpuRank partial[]={{2,0,1500},{6,1024,0}};
     expect(partial,2,0x44,0); // incomplete metadata must not exclude an unranked CPU
+    // New optional AOT-only split is NOT legacy critical-thread pinning:
+    // two prime CPUs go to GPU-command and draw-record separately; the
+    // guest main and six job workers have no split role and stay unrestricted.
+    cpu_set_t primes,for_gpu,for_draw;
+    CPU_ZERO(&primes);CPU_SET(6,&primes);CPU_SET(7,&primes);
+    assert(tlou_aot_split_prime_mask("GPU command",&primes,&for_gpu));
+    assert(tlou_aot_split_prime_mask("draw recording",&primes,&for_draw));
+    assert(CPU_COUNT(&for_gpu)==1 && CPU_ISSET(7,&for_gpu));
+    assert(CPU_COUNT(&for_draw)==1 && CPU_ISSET(6,&for_draw));
+    assert(!tlou_aot_split_prime_mask("guest main",&primes,&for_gpu));
+    assert(!tlou_aot_split_prime_mask("NdJobWorkerThread",&primes,&for_gpu));
+    assert(!tlou_aot_split_prime_mask(NULL,&primes,&for_gpu));
+    cpu_set_t only_one;CPU_ZERO(&only_one);CPU_SET(6,&only_one);
+    assert(!tlou_aot_split_prime_mask("GPU command",&only_one,&for_gpu));
+    assert(!tlou_aot_split_prime_enabled());
+    assert(!setenv("TLOU_AOT_SPLIT_PRIME","1",1));
+    assert(!tlou_aot_split_prime_enabled()); // FEX mode remains untouched
+    assert(!setenv("BB_AOT","/data/local/libtlouaot.so",1));
+    assert(tlou_aot_split_prime_enabled());
+    assert(!unsetenv("BB_AOT"));assert(!unsetenv("TLOU_AOT_SPLIT_PRIME"));
     cpu_set_t set,roundtrip;char text[CPU_SETSIZE*6];
     CPU_ZERO(&set);CPU_SET(2,&set);CPU_SET(CPU_SETSIZE-1,&set);
     assert(tlou_cpu_mask_text(&set,text,sizeof(text)));

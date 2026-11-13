@@ -153,6 +153,61 @@ class TestBridge(unittest.TestCase):
                     boot, mod.TLOU_111_SWITCH_SHA256, result)
             self.assertFalse(result.exists())
 
+    def test_full_verified_111_static_patch_profile(self):
+        import importlib.util
+        profile_path = Path(__file__).resolve().parents[1] / "tlou_patches.py"
+        spec = importlib.util.spec_from_file_location("tlou_test_full_patch_profile", profile_path)
+        profile = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(profile)
+        options = {"resolution": "720", "job_sleep": True, "ssao": True,
+                   "motion_blur": True, "depth_of_field": False, "bloom": False,
+                   "sunlight_shadows": False, "subsurface": False,
+                   "omni_light_shadows": False, "spot_light_shadows": False}
+        groups = profile.base_patches_for(options, "01.11")
+        groups.update(profile.selected_options(options,"01.11",mod.TLOU_111_SWITCH_SHA256))
+        self.assertIn("frame-timeout", groups)
+        self.assertIn("job-sleep", groups)
+        self.assertIn("resolution-720", groups)
+        self.assertIn("disable-motion_blur", groups)
+        self.assertIn("disable-ssao", groups)
+        self.assertEqual(len(groups["resolution-720"]), 8)
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td)
+            boot = folder / "original-111-boot.bin"
+            fake_boot(boot)
+            start = boot.stat().st_size-16384
+            image_size = 0x116BF30 + 256
+            with boot.open("r+b") as io:
+                io.seek(8)
+                io.write(struct.pack("<Q", image_size))
+                io.truncate(start+image_size)
+                for name, changes in groups.items():
+                    for addr, original, new in changes:
+                        io.seek(start+addr)
+                        io.write(bytes.fromhex(original))
+            before = hashlib.sha256(boot.read_bytes()).hexdigest()
+            native = folder / "native-111-boot.bin"
+            selected = mod.prepare_native_animation_patch(
+                boot,mod.TLOU_111_SWITCH_SHA256,native,options)
+            self.assertEqual(set(selected),set(groups))
+            self.assertEqual(before,hashlib.sha256(boot.read_bytes()).hexdigest())
+            self.assertEqual(mod.check_boot(boot),mod.check_boot(native))
+            with native.open("rb") as applied:
+                for name, changes in groups.items():
+                    for addr,original,new in changes:
+                        if new is None:continue
+                        applied.seek(start+addr)
+                        self.assertEqual(applied.read(len(bytes.fromhex(new))),
+                                         bytes.fromhex(new),name+" "+hex(addr))
+            # Any invalid original instruction in ANY selected group must
+            # reject the whole compilation, not silently omit one patch.
+            with boot.open("r+b") as io:
+                io.seek(start+0xB3D887)
+                io.write(b"\xcc")
+            with self.assertRaisesRegex(ValueError,"frame-timeout"):
+                mod.prepare_native_animation_patch(
+                    boot,mod.TLOU_111_SWITCH_SHA256,native,options)
+
     def test_batch_known_1_11_jump_cases_before_codegen(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

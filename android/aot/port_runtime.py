@@ -185,8 +185,26 @@ AOT_SIGNAL_STACK = r"""
 // alternate stack on EACH thread before its first guest execution.
 static thread_local void* tlou_signal_stack = nullptr;
 static constexpr size_t TlouSignalStackSize = 256u * 1024u;
+static thread_local bool tlou_host_stack_sampled = false;
+static thread_local uintptr_t tlou_host_stack_low = 0;
+static thread_local uintptr_t tlou_host_stack_high = 0;
+static thread_local size_t tlou_host_stack_guard = 0;
 
 static void TlouEnsureSignalStack() {
+    if (!tlou_host_stack_sampled) {
+        tlou_host_stack_sampled = true;
+        pthread_attr_t attributes{};
+        if (pthread_getattr_np(pthread_self(), &attributes) == 0) {
+            void* address = nullptr;
+            size_t length = 0;
+            if (pthread_attr_getstack(&attributes, &address, &length) == 0) {
+                tlou_host_stack_low = reinterpret_cast<uintptr_t>(address);
+                tlou_host_stack_high = tlou_host_stack_low + length;
+            }
+            (void)pthread_attr_getguardsize(&attributes, &tlou_host_stack_guard);
+            pthread_attr_destroy(&attributes);
+        }
+    }
     stack_t previous{};
     const int query = sigaltstack(nullptr, &previous);
     if (query == 0 && (previous.ss_flags & SS_DISABLE)) {
@@ -259,7 +277,13 @@ static void TlouAotProbeFault(int sig, const siginfo_t* info, const void* uc) {
     const Thread* t = self;
     const uint64_t rip = t && t->s ? t->s->rip : 0;
     const uint64_t rsp = t && t->s ? t->s->gregs[RSP] : 0;
-    char line[300];
+    const uintptr_t host_sp = bbnative::HostSp(uc);
+    // si_code=SEGV_ACCERR at the bottom of a small host pthread stack
+    // is distinguishable from an invalid low guest address or GPU page.
+    const bool near_host_stack_guard = tlou_host_stack_low &&
+        addr <= tlou_host_stack_low &&
+        tlou_host_stack_low - addr <= 65536;
+    char line[450];
     char* out = line;
     const char* const end = line + sizeof(line) - 1;
     auto add = [&](const char* word) {
@@ -281,6 +305,11 @@ static void TlouAotProbeFault(int sig, const siginfo_t* info, const void* uc) {
     add(" guest_rip="); hex(rip);
     add(" rsp="); hex(rsp);
     add(" in_aot="); hex(pc >= E.so_lo && pc < E.so_hi ? 1 : 0);
+    add(" host_sp="); hex(host_sp);
+    add(" host_stack_lo="); hex(tlou_host_stack_low);
+    add(" host_stack_hi="); hex(tlou_host_stack_high);
+    add(" guard_bytes="); hex(tlou_host_stack_guard);
+    add(" near_guard="); hex(near_host_stack_guard ? 1 : 0);
     *out++ = '\n';
     (void)write(STDERR_FILENO, line, size_t(out - line));
 }

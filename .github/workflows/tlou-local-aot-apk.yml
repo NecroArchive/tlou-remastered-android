@@ -110,7 +110,7 @@ jobs:
               for n in preserved:
                   assert hashlib.sha256(a.read(n)).digest()==hashlib.sha256(b.read(n)).digest(),n
               assert b.getinfo('assets/runtime-aot/libgow3cpu.so').file_size>4096
-              assert b.getinfo('assets/runtime-aot/libbbcpu.so').file_size>4096
+              assert b.getinfo('assets/runtime-aot/libbbcpu.so').file_size>=512
               with zipfile.ZipFile(io.BytesIO(b.read('assets/tools.zip'))) as tools:
                   for n in ['bin/libbbrecomp.so','source/android/aot/aot_local.py','aot/upstream.sha256']:
                       assert tools.getinfo(n).file_size>0

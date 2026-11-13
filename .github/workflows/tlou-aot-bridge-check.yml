@@ -13,8 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Python syntax
-        run: python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/aot/patch_recompiler_tso.py
+        run: python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/aot/patch_recompiler_tso.py android/aot/patch_recompiler_vpcmpistrx.py
       - name: Validate synthetic boot images (no game files)
         run: python3 android/aot/test_aot_local.py -v
       - name: Reject incomplete AOT unit coverage and old compiler
         run: python3 android/aot/test_aot_quality.py -v
+      - name: Cross-check PCMPISTRX helper against real x86 SSE4.2 hardware
+        run: |
+          clang -std=c11 -O2 -Wall -Wextra -Werror -c android/aot/bbr_vpcmpistrx.c -o /tmp/bbr-vpcmpistrx.o
+          clang++ -std=c++17 -O2 -msse4.2 android/aot/test_vpcmpistrx.cpp /tmp/bbr-vpcmpistrx.o -o /tmp/tlou-vpcmp
+          /tmp/tlou-vpcmp
+

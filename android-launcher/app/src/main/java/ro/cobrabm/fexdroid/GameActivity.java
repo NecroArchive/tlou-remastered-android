@@ -329,9 +329,24 @@ public final class GameActivity extends Activity {
                 env.put("LD_PRELOAD",aotPreload+(originalPreload==null||originalPreload.isEmpty()?"":" "+originalPreload));
                 RunLog.write(this,"AOT pthread stack policy preload: "+aotPreload+" (320 KiB → 2 MiB)");
                 env.put("BB_AOT_MISS_LOG",new File(state,"aot-misses.log").getAbsolutePath());
-                env.put("BB_AOT_STATS","1");
-                env.put("BB_AOT_TRACE","1");
-                RunLog.write(this,"AOT native: strict unit execution; misses are logged; FEX can be selected in Settings");
+                // The AOT backend counts EACH dispatched unit and samples
+                // CNTVCT around EACH host callback when these are present.
+                // The workers make millions of both calls per second. Do not
+                // leave expensive full tracing on during benchmark gameplay.
+                // A dedicated opt-in switch preserves crash investigations.
+                boolean detailedAotStats=getSharedPreferences("tlou",MODE_PRIVATE)
+                        .getBoolean("aot_detailed_diagnostics",false);
+                if(detailedAotStats) {
+                    env.put("BB_AOT_STATS","1");
+                    env.put("BB_AOT_TRACE","1");
+                } else {
+                    env.remove("BB_AOT_STATS");
+                    env.remove("BB_AOT_TRACE");
+                }
+                RunLog.write(this,"AOT native: strict unit execution; misses and fault-entry logging always on; "
+                        +"full per-call stats/trace="+(detailedAotStats?"ON (diagnostic, slower)":"OFF (performance)"));
+                RunLog.write(this,"TLOU AOT performance markers: all-thread monitor=ON; raw AOT stats="+detailedAotStats);
+                RunLog.write(this,"AOT native: FEX can be selected in Settings");
             }
             env.put("LD_LIBRARY_PATH",cpuLibraryPath);
             env.put("GOW3_ANDROID_PORT","1");

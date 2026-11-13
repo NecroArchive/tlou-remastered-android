@@ -42,7 +42,7 @@ final class RuntimeAot {
         return hash.toString();
     }
 
-    private static void stageAsset(Context context,String path,File target) throws Exception {
+    private static void stageAsset(Context context,String path,File target,long minimum) throws Exception {
         File folder=target.getParentFile();
         if(folder==null || (!folder.isDirectory()&&!folder.mkdirs()))
             throw new java.io.IOException("Não foi possível criar diretório ARM64");
@@ -54,7 +54,7 @@ final class RuntimeAot {
                 while((n=in.read(buffer))!=-1)out.write(buffer,0,n);
                 out.getFD().sync();
             }
-            if(temp.length()<4096 || !temp.setReadable(true,true))
+            if(temp.length()<minimum || !temp.setReadable(true,true))
                 throw new java.io.IOException("Biblioteca de CPU AOT incompleta");
             if(target.exists()&&!target.delete())throw new java.io.IOException("Não foi possível atualizar CPU AOT");
             if(!temp.renameTo(target))throw new java.io.IOException("Não foi possível instalar CPU AOT");
@@ -86,12 +86,12 @@ final class RuntimeAot {
         File engine=new File(engineDir,"libgow3cpu.so");
         // Unpack a separate CPU engine. The FEX library in nativeLibraryDir
         // is left byte-identical, and normal gameplay continues to use it.
-        stageAsset(context,"runtime-aot/libgow3cpu.so",engine);
+        stageAsset(context,"runtime-aot/libgow3cpu.so",engine,4096);
         // bb-recomp's output depends on SONAME libbbcpu.so. The tiny shim
         // depends on libgow3cpu.so, ensuring bbr_* symbols resolve from
         // the same AOT engine already used by the game executable.
         stageAsset(context,"runtime-aot/libbbcpu.so",
-                   new File(engineDir,"libbbcpu.so"));
+                   new File(engineDir,"libbbcpu.so"),512);
         return new Ready(so,engineDir);
     }
 }

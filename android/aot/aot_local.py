@@ -299,7 +299,7 @@ def main(argv=None):
             report["status"] = "validation_failed"
             report["failure_reason"] = str(e)
             try:
-                (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\\n")
+                (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\n")
             except OSError:
                 pass
         print(f"TLOU local AOT: {e}", file=sys.stderr)

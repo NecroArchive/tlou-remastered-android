@@ -79,6 +79,10 @@ def synthetic_switch_boot(path: Path) -> bytes:
                0xB5A252, 0xB5A280, 0xB5A2B6, 0xB5A012,
                0xB5A012, 0xB5A2E4, 0xB5A33F)
     table = struct.pack("<11i", *(target-mod.TLOU_111_SWITCH_TABLE for target in targets))
+    second_signature = bytes(reversed(range(mod.TLOU_111_SECOND_SWITCH_SIGNATURE_LEN)))
+    second_targets = (0x9C7667, 0x9C76D2, 0x9C769E, 0x9C7708)
+    second_table = struct.pack("<4i", *(
+        target-mod.TLOU_111_SECOND_SWITCH_TABLE for target in second_targets))
     with path.open("r+b") as f:
         f.seek(8)
         f.write(struct.pack("<Q", size))
@@ -87,6 +91,10 @@ def synthetic_switch_boot(path: Path) -> bytes:
         f.write(signature)
         f.seek(image_start + mod.TLOU_111_SWITCH_TABLE)
         f.write(table)
+        f.seek(image_start + mod.TLOU_111_SECOND_SWITCH_PC)
+        f.write(second_signature)
+        f.seek(image_start + mod.TLOU_111_SECOND_SWITCH_TABLE)
+        f.write(second_table)
     return signature
 
 
@@ -151,9 +159,13 @@ class TestBridge(unittest.TestCase):
             boot = root / "bb-boot"
             signature = synthetic_switch_boot(boot)
             with patch.object(mod, "TLOU_111_SWITCH_SIGNATURE_SHA256",
-                              hashlib.sha256(signature).hexdigest()):
+                              hashlib.sha256(signature).hexdigest()), patch.object(
+                    mod, "TLOU_111_SECOND_SWITCH_SIGNATURE_SHA256",
+                    hashlib.sha256(bytes(reversed(range(mod.TLOU_111_SECOND_SWITCH_SIGNATURE_LEN)))).hexdigest()):
                 targets = mod.known_switch_entries(boot, mod.TLOU_111_SWITCH_SHA256)
-                self.assertEqual(len(targets), 10)
+                self.assertEqual(len(targets), 14)
+                self.assertIn(0x9C7667, targets)
+                self.assertIn(0x9C7708, targets)
                 self.assertIn(0xB5A041, targets)
                 self.assertIn(0xB5A33F, targets)
                 self.assertEqual(mod.known_switch_entries(boot, "other-eboot"), [])

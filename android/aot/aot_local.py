@@ -404,7 +404,7 @@ def verify_aot_coverage(stats: Path, meta: dict) -> dict:
     """Refuse useless native images that mostly contain unsupported-op traps."""
     import re
     version = str(meta.get("compiler_version", ""))
-    if version != "3-tlou-string":
+    if version != "4-tlou-tso-one-fence":
         raise ValueError("Old bb-recomp compiler: TSO LLVM lowering is missing; rebuild with TLOU TSO tool")
     if not stats.is_file():
         raise ValueError("No native compiler coverage report")

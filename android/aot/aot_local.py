@@ -37,8 +37,9 @@ TLOU_111_SWITCH_SHA256 = "3cfa475f88ca68485b6b9230e62b84e195cdbe19e6f7295c110b8d
 TLOU_111_SWITCH_PC = 0xB59FF7
 TLOU_111_SWITCH_TABLE = 0x117D550
 TLOU_111_SWITCH_SLOTS = 11
-TLOU_111_SWITCH_SIGNATURE = bytes.fromhex(
-    "ffcb83fb0a0f872e030000488d054735620048630c984801c1ffe1")
+# Hash of a short instruction sequence; no game code bytes are shipped.
+TLOU_111_SWITCH_SIGNATURE_LEN = 27
+TLOU_111_SWITCH_SIGNATURE_SHA256 = "0682edaeaeb0618c6124ac1af9927f051e1cbb04de0f47ce636fe889cb2ee711"
 
 
 def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
@@ -57,8 +58,8 @@ def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
         raise ValueError("1.11 jump table outside the linked image")
     with boot.open("rb") as stream:
         stream.seek(image_start + TLOU_111_SWITCH_PC)
-        signature = stream.read(len(TLOU_111_SWITCH_SIGNATURE))
-        if signature != TLOU_111_SWITCH_SIGNATURE:
+        signature = stream.read(TLOU_111_SWITCH_SIGNATURE_LEN)
+        if hashlib.sha256(signature).hexdigest() != TLOU_111_SWITCH_SIGNATURE_SHA256:
             raise ValueError("1.11 executable no longer matches the verified switch dispatch")
         stream.seek(image_start + TLOU_111_SWITCH_TABLE)
         data = stream.read(TLOU_111_SWITCH_SLOTS * 4)

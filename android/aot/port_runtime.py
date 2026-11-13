@@ -160,7 +160,11 @@ BBR_EXPORT int pthread_attr_setstacksize(pthread_attr_t* attr, size_t requested)
     const char* aot = std::getenv("BB_AOT");
     const bool enabled = aot && *aot && std::strcmp(aot, "0") != 0;
     constexpr size_t TinyGuestHostStack = (64u + 256u) * 1024u;
-    constexpr size_t SafeAotHostStack = 2u * 1024u * 1024u;
+    // Two 2026-11-13 DCLoader SIGSEGVs landed 16/32 bytes inside the
+    // 16 KiB guard after exhausting the previous 2 MiB pthread stack.
+    // 4 MiB is applied ONLY to the exact 320 KiB PS4 guest-thread request
+    // when BB_AOT is active; all FEX, GPU and explicitly sized threads stay unchanged.
+    constexpr size_t SafeAotHostStack = 4u * 1024u * 1024u;
     const bool adjusted = enabled && requested == TinyGuestHostStack;
     const size_t actual = adjusted ? SafeAotHostStack : requested;
     const int result = real(attr, actual);

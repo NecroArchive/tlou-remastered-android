@@ -6,6 +6,8 @@ on:
     paths:
       # Only release a new APK when its actual patched compiler artifact is
       # pinned below; source edits/tests must not publish an unusable image.
+      - 'android/aot/port_runtime.py'
+      - 'android/bionic/build_aot_cpu.sh'
       - 'android/bionic/repackage_local_aot.py'
       - 'android/bionic/stage_aot_compiler.sh'
       - 'android-launcher/**'

@@ -53,5 +53,51 @@ class TsoOneFence(unittest.TestCase):
             self.assertIn(other,contents)
             self.assertEqual(contents.count("B.CreateFence(AtomicOrdering::SequentiallyConsistent);"),3)
 
+
+    def test_tso_ordered_pairs(self):
+        # Conservative pairwise check, NOT a proof of the complete ARM model.
+        # TSO orders LL, LS and SS but permits Store->Load via the store buffer.
+        sequence={"L": ["load", "barrier"], "S": ["barrier", "store"]}
+        def ordered(a,b):
+            ops=sequence[a]+sequence[b]
+            return "barrier" in ops[ops.index("load" if a=="L" else "store")+1:
+                                      ops.index("load" if b=="L" else "store",2)]
+        self.assertTrue(ordered("L","L"))
+        self.assertTrue(ordered("L","S"))
+        self.assertTrue(ordered("S","S"))
+        self.assertFalse(ordered("S","L"))
+
+    def test_actual_clang_aarch64_dmb_count(self):
+        import subprocess, shutil
+        compiler=shutil.which("clang")
+        if not compiler:
+            self.skipTest("clang not installed: source shape tests still apply")
+        fixture=r"""
+typedef unsigned long long u64;
+__attribute__((noinline)) u64 baseline_load(volatile u64 *p){
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);u64 v=*p;__atomic_thread_fence(__ATOMIC_SEQ_CST);return v;
+}
+__attribute__((noinline)) void baseline_store(volatile u64 *p,u64 v){
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);*p=v;__atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+__attribute__((noinline)) u64 candidate_load(volatile u64 *p){
+    u64 v=*p;__atomic_thread_fence(__ATOMIC_SEQ_CST);return v;
+}
+__attribute__((noinline)) void candidate_store(volatile u64 *p,u64 v){
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);*p=v;
+}
+"""
+        result=subprocess.run([compiler,"--target=aarch64-linux-gnu","-O2","-S","-x","c","-o","-","-"],
+            input=fixture,text=True,capture_output=True,check=True)
+        assembly=result.stdout
+        counts={}
+        for name in ("baseline_load","baseline_store","candidate_load","candidate_store"):
+            start=assembly.index(name+":")
+            end=assembly.index(".Lfunc_end",start)
+            counts[name]=assembly[start:end].count("dmb\tish")
+        self.assertEqual(counts, {"baseline_load":2,"baseline_store":2,
+                                  "candidate_load":1,"candidate_store":1})
+        print("ARM64 synthetic codegen: 2 -> 1 DMB ISH per guest access (50% fewer); no FPS claim")
+
 if __name__ == "__main__":
     unittest.main()

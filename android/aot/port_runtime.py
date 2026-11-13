@@ -51,10 +51,36 @@ HOST_RETURN = """
         tlou_pending_fiber = nullptr;
         tlou_pending_release = nullptr;
         tlou_pending_previous = nullptr;
+        // FS/GS are TLS bases of the EXECUTING OS thread, not fiber-owned
+        // state. A fiber is often prepared by the main thread and later runs
+        // on NdJobWorkerThread N; copying its saved fs/gs would make the worker
+        // read the creator's TLS and return worker-id -1 at guest 0xc89bd0.
+        const uint64_t worker_fs = s->fs_cached;
+        const uint64_t worker_gs = s->gs_cached;
+        const uint64_t saved_fiber_fs = next->state.fs_cached;
+        const uint64_t saved_fiber_gs = next->state.gs_cached;
         *s = next->state;
-        // GuestState contains pointers to its own embedded GDT. Rebase after copy.
+        s->fs_cached = worker_fs;
+        s->gs_cached = worker_gs;
+        // GuestState also contains pointers to its own embedded GDT.
         s->segment_arrays[0] = s->private_gdt;
         s->segment_arrays[1] = s->private_gdt;
+        // Sample only initial switches per thread. This proves the fix
+        // without flooding the runtime with hundreds of lines per boot.
+        static thread_local unsigned tlou_tls_switch_samples = 0;
+        if (tlou_tls_switch_samples++ < 3) {
+            std::fprintf(stderr,
+                "TLOU AOT fiber TLS preserved: tid=%ld fiber_fs=%#llx fiber_gs=%#llx thread_fs=%#llx thread_gs=%#llx final_fs=%#llx final_gs=%#llx worker_id=%#llx\\n",
+                (long)syscall(SYS_gettid),
+                (unsigned long long)saved_fiber_fs,
+                (unsigned long long)saved_fiber_gs,
+                (unsigned long long)worker_fs,
+                (unsigned long long)worker_gs,
+                (unsigned long long)s->fs_cached,
+                (unsigned long long)s->gs_cached,
+                (unsigned long long)((worker_gs >= 0x88) ? ReadGuest(worker_gs - 0x88) : 0));
+            std::fflush(stderr);
+        }
         if (release) release(previous);  // previous fiber can now be reclaimed
     } else {
         s->gregs[RSP] = sp + 8;

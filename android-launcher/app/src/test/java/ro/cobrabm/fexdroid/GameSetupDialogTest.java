@@ -65,9 +65,21 @@ public class GameSetupDialogTest {
             env.put("TLOU_CPU_PHASE_SAMPLES","1");env.put("GOW3_GPU_PROFILE","1");
             env.put("GOW3_FRAME_STATS","1");env.put("GOW3_PERF_DIAG","1");
             PortSettings.environment(activity,env);
-            // Eight bounded samples per second expose draw/dispatch CPU phase
-            // costs without enabling verbose frame/GPU diagnostics.
+            // Normal gameplay must never spend saturated command-thread CPU on
+            // per-dispatch phase sampling or the shader scanner's A/B profiler.
+            assertEquals("0",env.get("TLOU_CPU_PHASE_SAMPLES"));
+            assertFalse(env.containsKey("TLOU_SHADER_SCAN_PROFILE"));
+            // The existing opt-in diagnostics switch re-enables both for logs.
+            PortSettings.prefs(activity).edit()
+                    .putBoolean("aot_detailed_diagnostics",true).commit();
+            PortSettings.environment(activity,env);
             assertEquals("1",env.get("TLOU_CPU_PHASE_SAMPLES"));
+            assertEquals("1",env.get("TLOU_SHADER_SCAN_PROFILE"));
+            PortSettings.prefs(activity).edit()
+                    .putBoolean("aot_detailed_diagnostics",false).commit();
+            PortSettings.environment(activity,env);
+            assertEquals("0",env.get("TLOU_CPU_PHASE_SAMPLES"));
+            assertFalse(env.containsKey("TLOU_SHADER_SCAN_PROFILE"));
             // Draw workers were previously measured as a regression in TLOU.
             // Restore zero-worker default; never use a hidden stale preference
             // or enable the five-second preparation stats in gameplay.

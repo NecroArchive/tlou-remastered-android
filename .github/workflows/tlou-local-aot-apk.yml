@@ -15,6 +15,10 @@ permissions:
   contents: read
   actions: read
 
+concurrency:
+  group: tlou-aotnative-apk-stable-signature
+  cancel-in-progress: true
+
 jobs:
   apk:
     runs-on: ubuntu-24.04
@@ -91,6 +95,21 @@ jobs:
           python3 android/bionic/repackage_local_aot.py "$apk"
       - name: Generate save-selection fixtures for existing Android tests
         run: python3 gow3_pc/tests/test_android_save_choice.py
+      - name: Restore stable experimental debug signing identity
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-development-signing-v1
+      - name: Create experimental debug signing identity only when absent
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          if [[ ! -s "$HOME/.android/debug.keystore" ]]; then
+            keytool -genkeypair -noprompt -keystore "$HOME/.android/debug.keystore" \
+              -alias androiddebugkey -storepass android -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
       - name: Build standalone signed debug APK for local AOT compiler testing
         run: gradle -p android-launcher :app:assembleDebug :app:testDebugUnitTest --no-daemon --max-workers=2
       - name: Verify signed APK, distinct app ID and original CPU/GPU binaries
@@ -116,6 +135,11 @@ jobs:
                       assert tools.getinfo(n).file_size>0
               print('Verified',len(preserved),'unchanged native/runtime/driver payload files and AOT compiler')
           PY
+      - name: Save experimental debug signing identity for future updates
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-development-signing-v1
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:

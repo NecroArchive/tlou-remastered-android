@@ -141,6 +141,43 @@ uint64_t guest_cpu_fiber_frame_pointer(const GuestFiberCpuState* target) {
 
 """
 
+
+AOT_HOST_STACK_POLICY = r"""
+// Strict ARM64 units execute x86 calls on the host C++ call stack. The pinned
+// executable allocates only 64 KiB guest + 256 KiB margin = 320 KiB pthread
+// stacks for NdJobWorkerThread/DCLoader. A native unit at +0xca4d40 faulted
+// at a *host-high* page (0x70231e0ff0) with SEGV_ACCERR while working on
+// core. Grow only this known short stack when BB_AOT is enabled; keep FEX,
+// GPU and other Android pthread stack configurations untouched.
+//
+// The pinned probe calls pthread_attr_setstacksize@LIBC through a dynamic
+// relocation. Preloading this AOT engine installs this wrapper without
+// rebuilding or modifying the signed stable runtime executable.
+BBR_EXPORT int pthread_attr_setstacksize(pthread_attr_t* attr, size_t requested) {
+    using Real = int (*)(pthread_attr_t*, size_t);
+    static Real real = reinterpret_cast<Real>(dlsym(RTLD_NEXT, "pthread_attr_setstacksize"));
+    if (!real) return EINVAL;
+    const char* aot = std::getenv("BB_AOT");
+    const bool enabled = aot && *aot && std::strcmp(aot, "0") != 0;
+    constexpr size_t TinyGuestHostStack = (64u + 256u) * 1024u;
+    constexpr size_t SafeAotHostStack = 2u * 1024u * 1024u;
+    const bool adjusted = enabled && requested == TinyGuestHostStack;
+    const size_t actual = adjusted ? SafeAotHostStack : requested;
+    const int result = real(attr, actual);
+    if (adjusted) {
+        static std::atomic<unsigned> reported{0};
+        const unsigned n = reported.fetch_add(1, std::memory_order_relaxed);
+        if (n < 12) {
+            std::fprintf(stderr,
+                "TLOU AOT host pthread stack: requested=%zu applied=%zu error=%d tid=%ld\n",
+                requested, actual, result, (long)syscall(SYS_gettid));
+            std::fflush(stderr);
+        }
+    }
+    return result;
+}
+"""
+
 AOT_SIGNAL_STACK = r"""
 // Native DCLoader workers can use 320 KiB host pthread stacks. A stack
 // overflow may prevent Linux from delivering SIGSEGV to the existing handler,
@@ -389,7 +426,7 @@ def port(upstream: Path, out: Path) -> None:
                   "fiber ABI declarations")
     (out / "guest_cpu.h").write_text(header)
     main = (out / "guest_cpu_aot.cpp").read_text()
-    main = once(main, 'namespace {\nusing namespace bbaot;', GLOBAL_STATE + 'namespace {\nusing namespace bbaot;',
+    main = once(main, 'namespace {\nusing namespace bbaot;', AOT_HOST_STACK_POLICY + GLOBAL_STATE + 'namespace {\nusing namespace bbaot;',
                 "global guest fiber state")
     main = once(main, "thread_local Thread* self;\n", "thread_local Thread* self;\n" + PENDING,
                 "per-thread fiber switch")

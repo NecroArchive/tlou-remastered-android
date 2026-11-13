@@ -7,6 +7,11 @@ Never upload games, prepared images or generated .so files to CI/GitHub.
 """
 from __future__ import annotations
 
+# PS4 fiber callbacks can replace the entire x86 register file. The compiled
+# caller must reload callee-saved GPRs from GuestState after a callback.
+# The upstream bb-recomp --resume shard key includes the calleeSaved option.
+NATIVE_FIBER_CPU_FLAGS = ("--tso", "--resume-entries", "--no-callee-saved")
+
 import argparse
 import hashlib
 import json
@@ -249,7 +254,7 @@ def main(argv=None):
                    "--boot", str(staged), "--game-dir", str(game), "--so", str(so),
                    "--stats", str(aot / "compile.txt"), "--jobs", str(args.jobs),
                    "--shards", str(args.shards), "--target", "aarch64",
-                   "--host", "armv8.2", "--tso", "--resume-entries", "--no-callee-saved", "-O1", "--no-nice",
+                   "--host", "armv8.2", *NATIVE_FIBER_CPU_FLAGS, "-O1", "--no-nice",
                    "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]

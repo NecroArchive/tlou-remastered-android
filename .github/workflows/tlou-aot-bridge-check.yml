@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Python syntax
-        run: python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py
+        run: python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/aot/patch_recompiler_tso.py
       - name: Validate synthetic boot images (no game files)
         run: python3 android/aot/test_aot_local.py -v
+      - name: Reject incomplete AOT unit coverage and old compiler
+        run: python3 android/aot/test_aot_quality.py -v

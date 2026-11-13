@@ -24,6 +24,27 @@ Without --boot the script invokes the repo's gow3_pc/scripts/prepare.py and link
 
 The app does not yet ship or start libbbrecomp.so; it needs to be provisioned locally or bundled and invoked from the Android launcher in a later change. Do not reuse Bloodborne game-specific patch catalogs.
 
+## TLOU 1.11 on-device test: actual first native startup failure
+
+Logs collected 2026-11-12 show the Android linker successfully chose the
+native AOT backend ("Guest CPU: ahead-of-time units only", not FEX), the
+Vulkan renderer initialized, and the first linked `libc.prx` initializer at
+guest offset `+0x1c30000` failed. This is **not** a missing FDE or a game
+patch: the upstream compiler with `--tso` marks 60,598 of 75,413 units
+(80.35%) dirty because LLVM lowering does not implement `LoadMemTSO` and
+`StoreMemTSO`. The miss logger calls these "patched" (there is no
+compiled native variant), which is misleading in this case.
+
+The fix is in `android/aot/patch_recompiler_tso.py`: the pinned LLVM compiler
+must handle scalar and up-to-128-bit SIMD TSO memory ops with conservative
+system-scope sequentially consistent fences. The patch also bumps the
+compiler's shard identity to `2-tlou-tso` so no old object files are reused.
+The synthetic `test_aot_quality.py` rejects old compiler versions and trap
+counts above 0.25% or any remaining TSO trap. The local builder refuses to
+call an 80%-dirty native library "ready". This does not yet prove gameplay,
+FPS, or x87 numerical equivalence. A host-native rebuild alone is not an
+on-device test.
+
 ## Integrated experimental app path
 
 The experimental APK build can include the official, SHA-256-pinned Android

@@ -26,13 +26,17 @@ fi
 test "$(git -C "$repo" rev-parse HEAD)" = "$pin"
 out="$root/out/android-bionic/aot-backend"
 python3 android/aot/port_runtime.py --upstream "$repo" --out "$out/src"
+echo "AOT toolchain: $cc"
+"$cc" --version | head -2
+echo "Compiling TLOU AOT C++ host dispatcher and fiber bridge"
 "$cc" -std=c++20 -O2 -g -Wall -Wextra -Werror -fPIC -shared \
   -fvisibility=hidden -fvisibility-inlines-hidden -fno-strict-aliasing \
   -I "$out/src" \
   "$out/src/guest_cpu_aot.cpp" "$out/src/guest_cpu_native.cpp" \
   "$out/src/host_call_arm64.S" \
   -Wl,-soname,libgow3cpu.so -Wl,--no-undefined -ldl -lm \
-  -o "$out/libgow3cpu.so"
+  -v -o "$out/libgow3cpu.so"
+echo "TLOU AOT dispatcher binary produced"
 "$readelf" -h "$out/libgow3cpu.so" | grep -Eq 'Machine:.*AArch64'
 "$readelf" -d "$out/libgow3cpu.so" | grep -F '[libc.so]'
 "$readelf" --dyn-syms --wide "$out/libgow3cpu.so" > "$out/symbols.txt"

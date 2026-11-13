@@ -284,8 +284,10 @@ public final class GameActivity extends Activity {
                     nativeAot=RuntimeAot.prepare(this,base);
                     RunLog.write(this,"CPU backend: native ARM64 AOT ABI v2; guest library="+nativeAot.library);
                 } catch(Exception problem) {
-                    RunLog.failure(this,"AOT indisponível; voltando ao FEX",problem);
-                    update("Biblioteca ARM64 inválida/ausente. Iniciando pelo FEX.");
+                    RunLog.failure(this,"AOT indisponível; execução nativa não foi substituída por FEX",problem);
+                    PortSettings.prefs(this).edit().putBoolean("launch_direct",false).apply();
+                    throw new java.io.IOException(
+                        "CPU AOT selecionada, mas a biblioteca ARM64 não está válida. Recompile em Ajustes → CPU.",problem);
                 }
             }
             File patches=new File(base,"patches.bin");
@@ -388,10 +390,10 @@ public final class GameActivity extends Activity {
             final int result=game.waitFor();
             RunLog.write(this,"Processo "+(nativeAot!=null?"ARM64 AOT":"FEX")+" finalizado: código "+result);
             if(nativeAot!=null && result!=0) {
-                // Strict native code may report an uncovered x86 entry. Keep
-                // the miss log for --extra-entries but never create a crash loop.
-                PortSettings.prefs(this).edit().putString("cpu_backend","fex").apply();
-                RunLog.write(this,"AOT terminou sem sucesso: FEX selecionado para a próxima inicialização; aot-misses.log preservado.");
+                // Keep the explicitly selected native backend for debugging.
+                // Avoid an endless auto-launch crash loop; FEX remains a manual option.
+                PortSettings.prefs(this).edit().putBoolean("launch_direct",false).apply();
+                RunLog.write(this,"AOT terminou sem sucesso: ARM64 nativo continua selecionado; inicialização direta desativada; aot-misses.log preservado.");
             }
             if(!closing.get()) {
                 if(result==0)handler.post(this::stopAndExit);

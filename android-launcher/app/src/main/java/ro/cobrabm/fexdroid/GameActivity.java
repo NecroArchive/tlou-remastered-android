@@ -276,10 +276,26 @@ public final class GameActivity extends Activity {
             args.add(app0.getAbsolutePath());
             args.add("--user");
             args.add(user.getAbsolutePath());
+            // ARM64 AOT is opt-in and strictly validated against this game's
+            // image; any mismatch keeps the stable FEX backend available.
+            RuntimeAot.Ready nativeAot=null;
+            if("aot".equals(PortSettings.prefs(this).getString("cpu_backend","fex"))) {
+                try {
+                    nativeAot=RuntimeAot.prepare(this,base);
+                    RunLog.write(this,"CPU backend: native ARM64 AOT ABI v2; guest library="+nativeAot.library);
+                } catch(Exception problem) {
+                    RunLog.failure(this,"AOT indisponível; voltando ao FEX",problem);
+                    update("Biblioteca ARM64 inválida/ausente. Iniciando pelo FEX.");
+                }
+            }
             File patches=new File(base,"patches.bin");
-            if (patches.isFile() && patches.length()>0) {
+            if(nativeAot==null && patches.isFile() && patches.length()>0) {
                 args.add("--patches");
                 args.add(patches.getAbsolutePath());
+            } else if(nativeAot!=null && patches.isFile() && patches.length()>0) {
+                // AOT strict mode cannot execute modified x86 code until native
+                // patch variants exist. Do not silently apply uncompiled patches.
+                RunLog.write(this,"AOT inicial: patches executáveis desativados nesta sessão (sem variantes compiladas)");
             }
             ProcessBuilder builder=new ProcessBuilder(RuntimeProcess.command(args,runtimePidFile));
             Map<String,String> env=builder.environment();
@@ -294,7 +310,16 @@ public final class GameActivity extends Activity {
                 env.put("GOW3_AUDIO","none");
                 RunLog.write(this,"Áudio indisponível após 5 s: usando timer sem som nesta sessão");
             } else RunLog.write(this,"Áudio PCM pronto antes da execução");
-            env.put("LD_LIBRARY_PATH",getApplicationInfo().nativeLibraryDir);
+            String cpuLibraryPath=getApplicationInfo().nativeLibraryDir;
+            if(nativeAot!=null) {
+                cpuLibraryPath=nativeAot.engineDirectory.getAbsolutePath()+":"+cpuLibraryPath;
+                env.put("BB_AOT",nativeAot.library.getAbsolutePath());
+                env.put("BB_AOT_MISS_LOG",new File(state,"aot-misses.log").getAbsolutePath());
+                env.put("BB_AOT_STATS","1");
+                env.put("BB_AOT_TRACE","1");
+                RunLog.write(this,"AOT native: strict unit execution; misses are logged; FEX can be selected in Settings");
+            }
+            env.put("LD_LIBRARY_PATH",cpuLibraryPath);
             env.put("GOW3_ANDROID_PORT","1");
             env.put("GOW3_ANDROID_INPUT","1");
             env.put("GOW3_PAD_FILE",new File(state,"controller.state").getAbsolutePath());
@@ -346,27 +371,28 @@ public final class GameActivity extends Activity {
                 if(!custom.isFile()) throw new IllegalStateException("Driver selecionado ausente; selecione outro driver no menu");
                 DriverArchive.validateLibrary(custom);
                 env.put("GOW3_VULKAN_DRIVER",custom.getAbsolutePath());
-                env.put("LD_LIBRARY_PATH",custom.getParent()+":"+getApplicationInfo().nativeLibraryDir);
+                env.put("LD_LIBRARY_PATH",custom.getParent()+":"+cpuLibraryPath);
             }
             builder.directory(app0);
             builder.redirectErrorStream(true);
             builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
             RunLog.write(this,"Comando: "+args+"\nLD_LIBRARY_PATH="+env.get("LD_LIBRARY_PATH")+"\nDriver="+env.get("GOW3_VULKAN_DRIVER"));
-            update("Iniciando TLOU x86-64 pelo FEX...");
+            update(nativeAot!=null?"Iniciando TLOU em ARM64 recompilado (AOT)…"
+                                  :"Iniciando TLOU x86-64 pelo FEX...");
             if(closing.get())return;
-            RunLog.write(this,"ProcessBuilder.start • iniciando FEX • watchdog de teste desativado");
+            RunLog.write(this,"ProcessBuilder.start • CPU="+(nativeAot!=null?"ARM64 AOT":"FEX")+" • watchdog de teste desativado");
             gpuTurbo.start(this); // root is optional; if unavailable gameplay still runs
             game=builder.start();
             if(closing.get()){game.destroyForcibly();game.waitFor();return;}
-            RunLog.write(this,"Processo FEX criado");
+            RunLog.write(this,"Processo "+(nativeAot!=null?"ARM64 AOT":"FEX")+" criado");
             final int result=game.waitFor();
-            RunLog.write(this,"Processo FEX finalizado: código "+result);
+            RunLog.write(this,"Processo "+(nativeAot!=null?"ARM64 AOT":"FEX")+" finalizado: código "+result);
             if(!closing.get()) {
                 if(result==0)handler.post(this::stopAndExit);
                 else error("Runtime encerrou com código "+result);
             }
         } catch (Throwable err) {
-            RunLog.failure(this,"Falha ao executar FEX",err);
+            RunLog.failure(this,"Falha ao executar runtime TLOU",err);
             if(!closing.get()) error("Falha ao iniciar runtime TLOU: "+err+"\n"+tailLog());
         } finally {
             // Never release the transfer lock while a surviving child could still write saves.

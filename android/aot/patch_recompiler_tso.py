@@ -72,6 +72,16 @@ def patch(root: Path) -> Path:
             return file
         raise RuntimeError("Upstream changed: refusing to patch LLVM lowering by guesswork")
     file.write_text(data.replace(BEFORE, AFTER), encoding="utf-8")
+    # The original 1.3.0 tool uses compiler-version 1 for resume/shard keys.
+    # The memory lowering fix changes generated code, so invalidate all old
+    # shards even when the image and command-line inputs are identical.
+    version = root / "src/version.h"
+    version_text = version.read_text(encoding="utf-8")
+    old = '#define BBR_COMPILER_VERSION "1"'
+    if version_text.count(old) != 1:
+        raise RuntimeError("Cannot safely bump bb-recomp compiler shard version")
+    version.write_text(version_text.replace(
+        old, '#define BBR_COMPILER_VERSION "2-tlou-tso"'), encoding="utf-8")
     assert file.read_text().count("case OP_LOADMEMTSO:") == 1
     assert file.read_text().count("case OP_STOREMEMTSO:") == 1
     print("Conservative ARM64 TSO lowering patched: scalar and SIMD <=128 bits")

@@ -190,6 +190,7 @@ def main(argv=None):
     parser.add_argument("--boot", type=Path, help="Prepared G3PROBE5 boot-linked.bin")
     parser.add_argument("--compiler", type=Path, help="On-device bb-recomp v1.3+ executable")
     parser.add_argument("--bundle-dir", type=Path, help="bb-recomp bundle directory")
+    parser.add_argument("--misses", type=Path, help="Previous AOT misses; add missing guest entry points")
     parser.add_argument("--jobs", type=int, default=3)
     parser.add_argument("--shards", type=int, default=64)
     parser.add_argument("--dry-run", action="store_true")
@@ -226,6 +227,8 @@ def main(argv=None):
                    "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]
+        if args.misses and args.misses.is_file() and args.misses.stat().st_size:
+            command += ["--extra-entries", str(args.misses.resolve(strict=True))]
         report = {"version": version, "original_game": str(original_game),
                   "effective_game": str(game), "eboot_sha256": sha256(game / "eboot.bin"),
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),

@@ -4,8 +4,18 @@
 #include <cstdint>
 namespace Vulkan::Detail {
 // Only these classes can omit ProcessCompute's unconditional PRE-drain.
-// WAIT_REG_MEM, DMA_DATA and other guest-visible synchronization remain intact.
+// DMA_DATA and other guest-visible synchronization remain intact; memory
+// WAIT_REG_MEM takes a separate deferred-wait path that preserves the predicate
+// and the existing pending-fence/deferred-readback checks.
 enum class ComputePreDrain : std::uint8_t { Required, InnerDrain, NestedBuffer };
+// Only the compute-memory wait may defer its pre-drain, NEVER a register wait.
+// It must then run the existing guarded compute wait implementation (not a
+// direct guest Test() read without pending-fence or deferred-readback checks).
+[[nodiscard]] constexpr bool CanDeferComputeMemoryWait(AmdGpu::PM4ItOpcode op,
+                                                        bool memory_wait,
+                                                        bool enabled) noexcept {
+    return enabled && memory_wait && op == AmdGpu::PM4ItOpcode::WaitRegMem;
+}
 constexpr ComputePreDrain ClassifyComputePreDrain(AmdGpu::PM4ItOpcode op) noexcept {
     using AmdGpu::PM4ItOpcode;
     switch (op) {

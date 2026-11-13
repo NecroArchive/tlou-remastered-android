@@ -10,6 +10,10 @@ digest="e0598aebe5b148419d06484e2f02aa19a2a2743915cfdd87a45da814f34d0681"
 # TLOU's patched compiler must be downloaded from our source-build action.
 # Never silently use the official compiler for a TSO-enabled TLOU image:
 # upstream 1.3.0 marks ~80% of its units dirty with unsupported LoadMemTSO.
+if [[ "${TLOU_TSO_REQUIRED:-0}" == "1" && -z "${TLOU_AOT_COMPILER_ARCHIVE:-}" ]]; then
+  echo "TLOU native AOT APK requires patched compiler: upstream 1.3.0 --tso dirties 80% of functions" >&2
+  exit 2
+fi
 if [[ -n "${TLOU_AOT_COMPILER_ARCHIVE:-}" ]]; then
   cache="$TLOU_AOT_COMPILER_ARCHIVE"
   [[ -s "$cache" ]] || { echo "Patched TSO compiler archive is missing: $cache" >&2; exit 1; }

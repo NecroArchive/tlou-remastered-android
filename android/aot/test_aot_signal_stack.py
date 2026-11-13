@@ -29,7 +29,16 @@ CPP=r"""
 #include <sys/syscall.h>
 #include <unistd.h>
 
+// Count actual signal-stack syscalls performed by the port implementation.
+// The signal handler and its original Android recovery remain unchanged.
+static std::atomic<unsigned> tracked_calls{0};
+static int traced_sigaltstack(const stack_t* ss, stack_t* old) {
+    tracked_calls.fetch_add(1, std::memory_order_relaxed);
+    return ::sigaltstack(ss, old);
+}
+#define sigaltstack traced_sigaltstack
 @IMPL@
+#undef sigaltstack
 
 static thread_local int handler_calls=0;
 static thread_local bool on_alternate_stack=false;
@@ -44,6 +53,10 @@ void original_fault(int, siginfo_t*, void*) {
 
 int check() {
     TlouEnsureSignalStack();
+    const unsigned setup_queries = tracked_calls.load(std::memory_order_relaxed);
+    for (int i=0; i<100000; ++i) TlouEnsureSignalStack();
+    if (tracked_calls.load(std::memory_order_relaxed) != setup_queries) return 8;
+    if (!tlou_signal_stack_ready) return 9;
     struct sigaction actual{};
     if(sigaction(SIGSEGV,nullptr,&actual)!=0) return 1;
     if(!(actual.sa_flags & SA_ONSTACK)) return 2;
@@ -55,6 +68,11 @@ int check() {
     if(handler_calls!=1 || !on_alternate_stack) return 6;
     TlouReleaseSignalStack();
     if(sigaltstack(nullptr,&ss)!=0 || !(ss.ss_flags & SS_DISABLE))return 7;
+    // A guest-thread reentry after explicit cleanup must rearm the altstack.
+    TlouEnsureSignalStack();
+    if (!tlou_signal_stack_ready || sigaltstack(nullptr,&ss)!=0 ||
+        (ss.ss_flags & SS_DISABLE)) return 10;
+    TlouReleaseSignalStack();
     return 0;
 }
 
@@ -82,6 +100,7 @@ class AltSignalStackTests(unittest.TestCase):
         self.assertIn("sigaltstack",port.AOT_SIGNAL_STACK)
         self.assertIn("TlouReleaseSignalStack",port.AOT_SIGNAL_STACK)
         self.assertNotIn("SIG_DFL",port.AOT_SIGNAL_STACK)
+        self.assertIn("tlou_signal_stack_ready",port.AOT_SIGNAL_STACK)
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             source=root/"signal.cpp";exe=root/"signal"

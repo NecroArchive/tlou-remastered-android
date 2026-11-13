@@ -176,7 +176,7 @@ final class PortSettings {
         // FEX always ignores this preference to preserve the benchmark base.
         final boolean nativeAot="aot".equals(p.getString("cpu_backend","fex"));
         env.put("TLOU_AOT_SPLIT_PRIME",nativeAot &&
-                p.getBoolean("aot_gpu_prime_split",false) ? "1" : "0");
+                p.getBoolean("aot_gpu_prime_split_v2",false) ? "1" : "0");
         env.put("GOW3_ADPF", p.getBoolean("adpf",false) ? "1" : "0");
         env.remove("TLOU_PREP_NORMAL_PRIORITY");
         env.remove("TLOU_PREP_HIT_STATS");

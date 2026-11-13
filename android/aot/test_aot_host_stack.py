@@ -34,17 +34,40 @@ INTERPOSER=r"""
 
 CALLER=r"""
 #include <cstdio>
+#include <cstdlib>
 #include <pthread.h>
+static __attribute__((noinline)) void depth_test(int depth, volatile unsigned* output) {
+    // 6 x 512 KiB = 3 MiB of actual stack page touches. The 2026-11-13
+    // DCLoader crashes landed just below the previous 2 MiB stack guard.
+    volatile unsigned char scratch[512 * 1024];
+    for (unsigned i=0;i<sizeof(scratch);i+=4096) scratch[i] = (unsigned char)(depth+i);
+    if (depth) depth_test(depth-1, output);
+    *output += scratch[0];
+}
+static void* worker(void* arg) {
+    volatile unsigned sum=0;
+    depth_test(5,&sum);
+    *static_cast<unsigned*>(arg)=sum;
+    return nullptr;
+}
 int main() {
     pthread_attr_t attr;
     if (pthread_attr_init(&attr)) return 10;
     if (pthread_attr_setstacksize(&attr, 320u * 1024u)) return 11;
     size_t stack=0;
     if(pthread_attr_getstacksize(&attr,&stack))return 12;
-    printf("short=%zu\n",stack);
+    printf("short=%zu\\n",stack);
+    // Run the 3 MiB stack probe ONLY under AOT; FEX's 320 KiB is unchanged.
+    if (std::getenv("BB_AOT")) {
+        pthread_t thread;
+        unsigned output=0;
+        if (pthread_create(&thread,&attr,worker,&output)) return 20;
+        if (pthread_join(thread,nullptr)) return 21;
+        printf("depth3MiB=passed sum=%u\\n",output);
+    }
     if (pthread_attr_setstacksize(&attr, 1024u * 1024u)) return 13;
     if(pthread_attr_getstacksize(&attr,&stack))return 14;
-    printf("other=%zu\n",stack);
+    printf("other=%zu\\n",stack);
     pthread_attr_destroy(&attr);
     return 0;
 }
@@ -79,6 +102,7 @@ class HostStackInterposerTests(unittest.TestCase):
             native["BB_AOT"]="/data/data/com.daedalus/.../libtlouaot.so"
             result=subprocess.run([str(app)],env=native,check=True,capture_output=True,text=True)
             self.assertIn("short=4194304",result.stdout)
+            self.assertIn("depth3MiB=passed",result.stdout)
             self.assertIn("other=1048576",result.stdout)
             self.assertIn("TLOU AOT host pthread stack: requested=327680 applied=4194304 error=0",result.stderr)
 

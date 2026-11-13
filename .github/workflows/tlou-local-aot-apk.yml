@@ -119,26 +119,26 @@ jobs:
           test -s out/android-bionic/aot-backend/libbbcpu.so
           readelf -d out/android-bionic/aot-backend/libbbcpu.so | grep -F '[libgow3cpu.so]'
           cp out/android-bionic/aot-backend/libbbcpu.so out/android-bionic/apk-assets/runtime-aot/libbbcpu.so
-      - name: Build verified one-fence TSO compiler from pinned upstream source
-        env:
-          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/29.0.14206865
-          TLOU_AOT_BUILD_JOBS: '3'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zstd xz-utils build-essential cmake ninja-build
-          bash android/aot/build_recompiler_tso.sh
-      - name: Verify current one-fence compiler archive and ARM64 ABI
+      - name: Retrieve validated 3-tlou-string ARM64 compiler (rollback from v4)
+        uses: actions/download-artifact@v4
+        with:
+          name: TLOU-bb-recomp-1.3.0-TSO-STR-ARM64
+          path: out/aot-tso-compiler
+          run-id: '43347558246'
+          github-token: ${{ github.token }}
+      - name: Verify pinned v3 compiler archive and ARM64 ABI
         run: |
           set -euo pipefail
-          archive=out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
+          archive=out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
           test -s "$archive"
-          (cd out/android-bionic/aot-tso-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
+          echo 'fed33b282195034ce0da405b3ad60f513451786c6fda59767344cbedb219e7c0  '"$archive" | sha256sum -c
+          (cd out/aot-tso-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
           mkdir -p out/aot-tso-extract
           tar -xJf "$archive" -C out/aot-tso-extract
           test -s out/aot-tso-extract/android/libbbrecomp.so
           test -s out/aot-tso-extract/android/bundle/libbbcpu-stub.so
           readelf -h out/aot-tso-extract/android/libbbrecomp.so | grep -E 'Machine:.*AArch64'
-          grep -aFq '4-tlou-tso-one-fence' out/aot-tso-extract/android/libbbrecomp.so
+          grep -aFq '3-tlou-string' out/aot-tso-extract/android/libbbrecomp.so
       - name: Stage exact native game runtime with pinned ARM64 compiler
         run: |
           set -euo pipefail
@@ -156,7 +156,7 @@ jobs:
           PY
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
           export TLOU_TSO_REQUIRED=1
-          export TLOU_AOT_COMPILER_ARCHIVE="$PWD/out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz"
+          export TLOU_AOT_COMPILER_ARCHIVE="$PWD/out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz"
           bash android/bionic/stage_aot_compiler.sh
           python3 android/bionic/repackage_local_aot.py "$apk"
       - name: Generate save-selection fixtures for existing Android tests
@@ -207,14 +207,12 @@ jobs:
                   assert b'--no-callee-saved' in aot_source, 'fiber-safe ARM64 recompilation flags not packaged'
                   assert b'reload_after_calls_for_fibers' in aot_source, 'fiber-safe compiler metadata not packaged'
                   compiler=tools.read('bin/libbbrecomp.so')
-                  import pathlib
-                  expected=hashlib.sha256(pathlib.Path('out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz').read_bytes()).hexdigest().encode()
-                  assert tools.read('aot/upstream.sha256').strip()==expected, 'compiler payload checksum differs from current build'
-                  assert b'4-tlou-tso-one-fence' in compiler, 'one-fence TSO compiler missing: no APK can be published'
+                  assert tools.read('aot/upstream.sha256').strip()==b'fed33b282195034ce0da405b3ad60f513451786c6fda59767344cbedb219e7c0', 'wrong compiler archive'
+                  assert b'3-tlou-string' in compiler, 'TSO v3 compiler missing: no APK can be published'
                   assert b'--no-dirty-check' in compiler, 'AOT compiler lacks immutable-unit optimization'
                   assert b'-O2' in compiler, 'AOT compiler lacks LLVM O2'
                   assert b'tlou-111-static-llvmO2-immutable-v1' in aot_source, 'AOT fast codegen profile not packaged'
-                  assert b'4-tlou-tso-one-fence' in aot_source, 'old on-device AOT compilation adapter packaged'
+                  assert b'if version != "3-tlou-string"' in aot_source, 'AOT v3 codegen adapter missing'
               print('Verified',len(preserved),'unchanged native/runtime/driver payload files and AOT compiler')
           PY
       - name: Publish installable experimental APK

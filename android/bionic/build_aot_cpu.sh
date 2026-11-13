@@ -31,12 +31,14 @@ echo "AOT toolchain: $cc"
 echo "Compiling TLOU AOT C++ host dispatcher and fiber bridge"
 "$cc" -std=c++20 -O2 -g -Wall -Wextra -Werror -fPIC -shared \
   -fvisibility=hidden -fvisibility-inlines-hidden -fno-strict-aliasing \
-  -I "$out/src" \
+  -I "$out/src" -I "$root/gow3_pc/src" \
+  "$root/android/aot/affinity_name_interpose.cpp" \
   "$out/src/guest_cpu_aot.cpp" "$out/src/guest_cpu_native.cpp" \
   "$out/src/host_call_arm64.S" \
   -Wl,-soname,libgow3cpu.so -Wl,--no-undefined -ldl -lm \
   -v -o "$out/libgow3cpu.so"
-echo "TLOU AOT dispatcher binary produced"
+readelf --dyn-syms --wide "$out/libgow3cpu.so" | grep -F pthread_setname_np
+echo "TLOU AOT dispatcher binary produced (AOT-only affinity hook included)"
 # The generated libtlouaot.so is intentionally DT_NEEDED on
 # libbbcpu.so, which Bloodborne uses to expose bbr_* dispatcher callbacks.
 # TLOU's probe, however, is DT_NEEDED on libgow3cpu.so. Provide a linker shim:

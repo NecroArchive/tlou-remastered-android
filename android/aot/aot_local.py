@@ -42,6 +42,15 @@ TLOU_111_SWITCH_SIGNATURE_LEN = 27
 TLOU_111_SWITCH_SIGNATURE_SHA256 = "0682edaeaeb0618c6124ac1af9927f051e1cbb04de0f47ce636fe889cb2ee711"
 
 
+# A second verified 01.11 switch discovered at +0x9c7650: 4 cases.
+# Its case +0x9c7667 caused the STOP after the game reached world-military-city.
+TLOU_111_SECOND_SWITCH_PC = 0x9C7650
+TLOU_111_SECOND_SWITCH_TABLE = 0x11562B0
+TLOU_111_SECOND_SWITCH_SLOTS = 4
+TLOU_111_SECOND_SWITCH_SIGNATURE_LEN = 23
+TLOU_111_SECOND_SWITCH_SIGNATURE_SHA256 = "3e712ef08edbc99750546e5d47589b1145bf67d957605d1ffef7680c8a3d106e"
+
+
 def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
     """Find every target of the verified 1.11 switch, not just the first miss.
 
@@ -70,7 +79,23 @@ def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
     if (len(targets) != 10 or min(targets) < 0xB5A012 or
             max(targets) > 0xB5A33F or 0xB5A041 not in targets):
         raise ValueError("Unexpected 1.11 jump table targets; refuse unsafe AOT entry seeds")
-    return targets
+    second_end = TLOU_111_SECOND_SWITCH_TABLE + TLOU_111_SECOND_SWITCH_SLOTS * 4
+    if second_end > info["size"]:
+        raise ValueError("1.11 second switch table outside the linked image")
+    with boot.open("rb") as stream:
+        stream.seek(image_start + TLOU_111_SECOND_SWITCH_PC)
+        signature = stream.read(TLOU_111_SECOND_SWITCH_SIGNATURE_LEN)
+        if hashlib.sha256(signature).hexdigest() != TLOU_111_SECOND_SWITCH_SIGNATURE_SHA256:
+            raise ValueError("1.11 second verified switch signature mismatch")
+        stream.seek(image_start + TLOU_111_SECOND_SWITCH_TABLE)
+        second = stream.read(TLOU_111_SECOND_SWITCH_SLOTS * 4)
+    if len(second) != 4 * TLOU_111_SECOND_SWITCH_SLOTS:
+        raise ValueError("1.11 second verified switch table truncated")
+    second_targets = sorted(set(TLOU_111_SECOND_SWITCH_TABLE + delta
+                                for delta in struct.unpack("<4i", second)))
+    if second_targets != [0x9C7667, 0x9C769E, 0x9C76D2, 0x9C7708]:
+        raise ValueError("Unexpected 1.11 second switch targets")
+    return sorted(set(targets + second_targets))
 
 
 def verified_miss_entries(path: Path | None, image_size: int) -> list[int]:

@@ -78,9 +78,9 @@ class HostStackInterposerTests(unittest.TestCase):
             native=dict(clean)
             native["BB_AOT"]="/data/data/com.daedalus/.../libtlouaot.so"
             result=subprocess.run([str(app)],env=native,check=True,capture_output=True,text=True)
-            self.assertIn("short=2097152",result.stdout)
+            self.assertIn("short=4194304",result.stdout)
             self.assertIn("other=1048576",result.stdout)
-            self.assertIn("TLOU AOT host pthread stack: requested=327680 applied=2097152 error=0",result.stderr)
+            self.assertIn("TLOU AOT host pthread stack: requested=327680 applied=4194304 error=0",result.stderr)
 
 if __name__=="__main__":
     unittest.main()

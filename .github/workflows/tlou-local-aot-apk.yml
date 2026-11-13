@@ -43,7 +43,7 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
       - name: Check local ARM64 AOT preparation
         run: |
-          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/bionic/repackage_local_aot.py
+          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/bionic/repackage_local_aot.py android/aot/port_runtime.py
           python3 android/aot/test_aot_local.py -v
           python3 android/aot/test_aot_quality.py -v
       - name: Retrieve successful native ARM64 APK
@@ -71,6 +71,7 @@ jobs:
           PY
           readelf -h "$so" | grep -E 'Machine:.*AArch64'
           readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
+          grep -aFq 'TLOU AOT invalid target' "$so"   # ensure the current traced dispatcher is actually packaged
           mkdir -p out/android-bionic/apk-assets/runtime-aot
           cp "$so" out/android-bionic/apk-assets/runtime-aot/libgow3cpu.so
           test -s out/android-bionic/aot-backend/libbbcpu.so

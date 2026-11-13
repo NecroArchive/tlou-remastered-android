@@ -87,6 +87,11 @@ final class RuntimeAot {
         // Unpack a separate CPU engine. The FEX library in nativeLibraryDir
         // is left byte-identical, and normal gameplay continues to use it.
         stageAsset(context,"runtime-aot/libgow3cpu.so",engine);
+        // bb-recomp's output depends on SONAME libbbcpu.so. The tiny shim
+        // depends on libgow3cpu.so, ensuring bbr_* symbols resolve from
+        // the same AOT engine already used by the game executable.
+        stageAsset(context,"runtime-aot/libbbcpu.so",
+                   new File(engineDir,"libbbcpu.so"));
         return new Ready(so,engineDir);
     }
 }

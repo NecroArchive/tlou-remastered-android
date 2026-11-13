@@ -25,12 +25,12 @@ public final class TlouCpuThreadsTest {
         write(task.resolve("stat"),fakeStat(14358,"NdJobWorkerThre",3));
         write(task.resolve("comm"),"NdJobWorkerThre\n");
         write(task.resolve("schedstat"),"1000000000 100000000 500\n");
-        TlouCpuThreads.Sample old=TlouCpuThreads.read(task);
+        TlouCpuThreads.Sample old=TlouCpuThreads.read(task.toFile());
         ok(old.tid==14358 && old.core==3 && old.runtimeNs==1000000000L,
            "kernel field39 parse");
         write(task.resolve("stat"),fakeStat(14358,"NdJobWorkerThre",1));
         write(task.resolve("schedstat"),"5500000000 200000000 1000\n");
-        TlouCpuThreads.Sample curr=TlouCpuThreads.read(task);
+        TlouCpuThreads.Sample curr=TlouCpuThreads.read(task.toFile());
         Map<Integer,TlouCpuThreads.Sample> before=new HashMap<>();
         Map<Integer,TlouCpuThreads.Sample> after=new HashMap<>();
         before.put(old.tid,old);after.put(curr.tid,curr);

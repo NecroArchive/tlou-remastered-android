@@ -141,6 +141,74 @@ uint64_t guest_cpu_fiber_frame_pointer(const GuestFiberCpuState* target) {
 
 """
 
+AOT_SIGNAL_STACK = r"""
+// Native DCLoader workers can use 320 KiB host pthread stacks. A stack
+// overflow may prevent Linux from delivering SIGSEGV to the existing handler,
+// explaining exit 139 without a "TLOU AOT fault entry" line. Register an
+// alternate stack on EACH thread before its first guest execution.
+static thread_local void* tlou_signal_stack = nullptr;
+static constexpr size_t TlouSignalStackSize = 256u * 1024u;
+
+static void TlouEnsureSignalStack() {
+    stack_t previous{};
+    const int query = sigaltstack(nullptr, &previous);
+    if (query == 0 && (previous.ss_flags & SS_DISABLE)) {
+        void* memory = mmap(nullptr, TlouSignalStackSize,
+                            PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (memory != MAP_FAILED) {
+            stack_t alternate{};
+            alternate.ss_sp = memory;
+            alternate.ss_size = TlouSignalStackSize;
+            if (sigaltstack(&alternate, nullptr) == 0)
+                tlou_signal_stack = memory;
+            else
+                munmap(memory, TlouSignalStackSize);
+        }
+    }
+    // src/probe.c registers fault() after guest_cpu_init and before the
+    // first guest_cpu_call. Change its SA_ONSTACK flag, NOT the function.
+    // GPU write-watch faults still flow through the original recovery logic.
+    static std::once_flag once;
+    std::call_once(once, [] {
+        unsigned active = 0;
+        for (int signal : {SIGSEGV, SIGBUS, SIGILL}) {
+            struct sigaction action{};
+            if (sigaction(signal, nullptr, &action) != 0) continue;
+            if (!(action.sa_flags & SA_SIGINFO) || !action.sa_sigaction) continue;
+            if (action.sa_flags & SA_ONSTACK) { ++active; continue; }
+            action.sa_flags |= SA_ONSTACK;
+            if (sigaction(signal, &action, nullptr) == 0) ++active;
+        }
+        std::fprintf(stderr,
+            "TLOU AOT signal handling: SA_ONSTACK=%u/3, existing handler preserved\n",
+            active);
+        std::fflush(stderr);
+    });
+    static std::atomic<unsigned> samples{0};
+    if (samples.fetch_add(1, std::memory_order_relaxed) < 8) {
+        stack_t current{};
+        const int status = sigaltstack(nullptr, &current);
+        std::fprintf(stderr,
+            "TLOU AOT signal altstack: tid=%ld status=%d enabled=%d size=%zu owned=%d\n",
+            (long)syscall(SYS_gettid), status,
+            status == 0 && !(current.ss_flags & SS_DISABLE),
+            status == 0 ? current.ss_size : size_t(0),
+            tlou_signal_stack != nullptr);
+        std::fflush(stderr);
+    }
+}
+
+static void TlouReleaseSignalStack() {
+    if (!tlou_signal_stack) return;
+    stack_t disabled{};
+    disabled.ss_flags = SS_DISABLE;
+    if (sigaltstack(&disabled, nullptr) == 0)
+        munmap(tlou_signal_stack, TlouSignalStackSize);
+    tlou_signal_stack = nullptr;
+}
+"""
+
 FATAL_SIGNAL_PROBE = r"""
 // Runs first in src/probe.c's existing SIGSEGV/SIGBUS handler, before
 // GPU write-watch recovery. Never replace the renderer's signal handler.
@@ -388,6 +456,17 @@ def port(upstream: Path, out: Path) -> None:
                 "int guest_cpu_handle_fault(int sig, siginfo_t* info, void* ucontext) {",
                 FATAL_SIGNAL_PROBE + "int guest_cpu_handle_fault(int sig, siginfo_t* info, void* ucontext) {",
                 "AOT fault recorder definition")
+    main = once(main, "uintptr_t guest_cpu_host_function(void* fn) {",
+                AOT_SIGNAL_STACK + "uintptr_t guest_cpu_host_function(void* fn) {",
+                "per-thread alternate signal stack definition")
+    main = once(main,
+                "    Thread* t = Current();\n    GuestState& s = *t->s;",
+                "    Thread* t = Current();\n    TlouEnsureSignalStack();\n    GuestState& s = *t->s;",
+                "register altstack before AOT guest code executes")
+    main = once(main,
+                "void guest_cpu_thread_end(void) {\n    Thread* t = self;",
+                "void guest_cpu_thread_end(void) {\n    TlouReleaseSignalStack();\n    Thread* t = self;",
+                "restore signal stack at thread end")
     main = once(main,
                 "inline void HostCall(GuestState* s, void* fn, Thread* t) {",
                 FIBER_RUN_TRACE + "inline void HostCall(GuestState* s, void* fn, Thread* t) {",

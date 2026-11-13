@@ -10,7 +10,7 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 class AotCoverage(unittest.TestCase):
-    def evaluate(self, text, version="2-tlou-tso", units=75413):
+    def evaluate(self, text, version="3-tlou-string", units=75413):
         with tempfile.TemporaryDirectory() as td:
             stats = Path(td) / "compile.txt"
             stats.write_text(text)
@@ -19,6 +19,10 @@ class AotCoverage(unittest.TestCase):
     def test_reject_original_compiler_even_with_good_coverage(self):
         with self.assertRaisesRegex(ValueError, "Old bb-recomp"):
             self.evaluate("units with bbr_trap (unsupported ops): 0 (0.00%)", "1")
+
+    def test_reject_previous_tso_only_compiler(self):
+        with self.assertRaisesRegex(ValueError, "Old bb-recomp"):
+            self.evaluate("units with bbr_trap (unsupported ops): 2 (0.00%)", "2-tlou-tso")
 
     def test_reject_reported_80_percent_tso_failure(self):
         with self.assertRaisesRegex(ValueError, "refusing unusable"):

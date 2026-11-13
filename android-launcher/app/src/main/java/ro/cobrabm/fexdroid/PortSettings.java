@@ -170,6 +170,13 @@ final class PortSettings {
         // Optional, always OFF by default. Changes thread affinity, never the CPU frequency ceiling.
         // Do not enable automatically: command, draw and recorder threads could contend on two prime cores.
         env.put("TLOU_FAST_RENDER_CORES",p.getBoolean("fast_render_cores",false)?"1":"0");
+        // Optional AOT-only A/B: GPU command and draw recorder get separate
+        // PRIME cores if (and only if) the allowed CPU topology has exactly
+        // two PRIME cores. The six PS4 job workers retain the launch mask.
+        // FEX always ignores this preference to preserve the benchmark base.
+        final boolean nativeAot="aot".equals(p.getString("cpu_backend","fex"));
+        env.put("TLOU_AOT_SPLIT_PRIME",nativeAot &&
+                p.getBoolean("aot_gpu_prime_split",false) ? "1" : "0");
         env.put("GOW3_ADPF", p.getBoolean("adpf",false) ? "1" : "0");
         env.remove("TLOU_PREP_NORMAL_PRIORITY");
         env.remove("TLOU_PREP_HIT_STATS");
@@ -220,6 +227,7 @@ final class PortSettings {
         result.append("; virtual-vblank-hz=").append(env.getOrDefault("GOW3_VBLANK_HZ","?"));
         result.append("; adpf-native=").append(env.getOrDefault("GOW3_ADPF","0"));
         result.append("; fast-render-cores=").append(env.getOrDefault("TLOU_FAST_RENDER_CORES","0"));
+        result.append("; aot-split-prime=").append(env.getOrDefault("TLOU_AOT_SPLIT_PRIME","0"));
         result.append("; compute-exact-memo=").append(env.getOrDefault("GOW3_TLOU_COMPUTE_MEMO","0"));
         result.append("; guest-job-worker-wake=patched-sleep");
         return result.toString();

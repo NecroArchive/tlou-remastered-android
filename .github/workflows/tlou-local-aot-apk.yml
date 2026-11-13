@@ -194,6 +194,9 @@ jobs:
                   compiler=tools.read('bin/libbbrecomp.so')
                   assert tools.read('aot/upstream.sha256').strip()==b'fed33b282195034ce0da405b3ad60f513451786c6fda59767344cbedb219e7c0', 'wrong compiler archive'
                   assert b'3-tlou-string' in compiler, 'VPCMPISTRX compiler missing: no APK can be published'
+                  assert b'--no-dirty-check' in compiler, 'AOT compiler lacks immutable-unit optimization'
+                  assert b'-O2' in compiler, 'AOT compiler lacks LLVM O2'
+                  assert b'tlou-111-static-llvmO2-immutable-v1' in aot_source, 'AOT fast codegen profile not packaged'
               print('Verified',len(preserved),'unchanged native/runtime/driver payload files and AOT compiler')
           PY
       - name: Publish installable experimental APK

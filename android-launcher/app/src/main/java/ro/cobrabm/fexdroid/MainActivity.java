@@ -288,10 +288,14 @@ public final class MainActivity extends Activity {
             toggleSetting(cpu,"fast_render_cores","Priorizar núcleos rápidos (experimental)",false);
             cpu.addView(text("Não força o clock. Limita as threads críticas aos núcleos mais rápidos; reinicie o jogo para aplicar. Pode aumentar a disputa entre threads.",12,MUTED));
             toggleSetting(cpu,"adpf","ADPF — ajuste dinâmico de desempenho",false);
+            choice(cpu,"cpu_backend","Processador do jogo",
+                new String[]{"ARM64 recompilado (AOT experimental)","FEX (estável)"},
+                new String[]{"aot","fex"},"fex");
             add(cpu,"Compilar CPU ARM64 no aparelho (AOT experimental)",false,
                 ()->withAccess(this::buildSelectedAot));
-            cpu.addView(text("Gera uma biblioteca ARM64 local, com cache e retomada. "
-                +"Ainda não substitui o FEX durante o jogo; não altera seus saves.",12,MUTED));
+            cpu.addView(text("ARM64 AOT executa o código recompilado diretamente. "
+                +"FEX continua disponível; funções não cobertas pelo AOT são registradas "
+                +"nos logs para recompilação incremental. Ainda é experimental.",12,MUTED));
             LinearLayout app=card(root,"IDIOMA E INTERFACE");
             languageChoice(app);
             app.addView(text("O idioma do jogo é escolhido no próprio The Last of Us.",12,MUTED));
@@ -509,9 +513,9 @@ public final class MainActivity extends Activity {
             File prepared=tools.prepare(base,updateFolder,this::update);
             update("Compilando código do jogo para ARM64 no aparelho…");
             File result=tools.buildExperimentalAot(prepared,this::update);
-            RunLog.write(this,"AOT gerado (ainda não usado pelo runtime): "+result);
-            update("Biblioteca ARM64 gerada. O jogo continua usando FEX até "
-                +"validarmos o backend AOT.");
+            prefs.edit().putString("cpu_backend","aot").apply();
+            RunLog.write(this,"AOT ARM64 gerado; modo ARM64 ativado para a próxima execução: "+result);
+            update("Biblioteca ARM64 gerada. Modo AOT ativado; toque em JOGAR para testar.");
         });
     }
 

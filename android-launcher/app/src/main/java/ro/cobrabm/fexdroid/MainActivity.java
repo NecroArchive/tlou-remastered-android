@@ -513,9 +513,17 @@ public final class MainActivity extends Activity {
             File prepared=tools.prepare(base,updateFolder,this::update);
             update("Compilando código do jogo para ARM64 no aparelho…");
             File result=tools.buildExperimentalAot(prepared,this::update);
+            File coverageFile=new File(getFilesDir(),"tlou-aot-work/aot-report.json");
+            org.json.JSONObject coverageReport=new org.json.JSONObject(
+                new String(Files.readAllBytes(coverageFile.toPath()),java.nio.charset.StandardCharsets.UTF_8));
+            org.json.JSONObject coverage=coverageReport.getJSONObject("coverage");
+            int valid=coverage.getInt("estimated_usable_units");
+            int unsupported=coverage.getInt("unsupported_units");
             prefs.edit().putString("cpu_backend","aot").apply();
-            RunLog.write(this,"AOT ARM64 gerado; modo ARM64 ativado para a próxima execução: "+result);
-            update("Biblioteca ARM64 gerada. Modo AOT ativado; toque em JOGAR para testar.");
+            String message="ARM64 AOT: "+valid+" unidades válidas, "+unsupported
+                +" ainda não suportadas. Modo nativo ativado; toque em JOGAR.";
+            RunLog.write(this,"CPU AOT recompilada, cobertura validada: "+message+" arquivo="+result);
+            update(message);
         });
     }
 

@@ -148,6 +148,44 @@ def port(upstream: Path, out: Path) -> None:
     main = once(main, host_return, HOST_RETURN, "host callback continuation")
     main = once(main, 'void guest_cpu_set_panic_text(', FIBER_IMPL + 'void guest_cpu_set_panic_text(',
                 "fiber implementation")
+    # PS4 fibers can resume at the guest address following a CALL. The
+    # --resume-entries units expose that address via GuestState::_pad1.
+    # Bloodborne's strict CPU currently recognizes granular *jump* entries
+    # only. Extend its dispatcher to recognize compiler-provided resume
+    # entries as well, without interpreting arbitrary x86 instructions.
+    main = once(main, "    const uint8_t* flags = nullptr;    // bbr_func_granular[]",
+                "    const uint8_t* flags = nullptr;    // bbr_func_granular[]\\n    bool resume = false;       // bbr_abi_flags bit 0",
+                "resume capability")
+    main = once(main, "    if (!G.flags) return false;",
+                "    if (!G.flags && !G.resume) return false;",
+                "resume dispatch prerequisite")
+    main = once(main, "    if (offset >= f->end || !G.flags[f - G.funcs]) return false;",
+                "    if (offset >= f->end || !(G.resume || (G.flags && G.flags[f - G.funcs]))) return false;",
+                "resume range check")
+    original_loader = '''    if (abi_flags && (*abi_flags & 1))
+        std::fprintf(stderr, "AOT: %s has resume entries (bbr_abi_flags bit 0); this runtime does not use them\\n", path);
+    if (abi_flags && (*abi_flags & 16)) {   // granular entries: bbr_func_granular[] says which functions of bbr_funcs[] have them
+        G.funcs = static_cast<const GranRec*>(dlsym(so, "bbr_funcs"));
+        const auto* nf = static_cast<const uint64_t*>(dlsym(so, "bbr_func_count"));
+        G.flags = static_cast<const uint8_t*>(dlsym(so, "bbr_func_granular"));
+        G.nfuncs = nf ? *nf : 0;
+        if (!G.funcs || !G.flags || !G.nfuncs) { G.flags = nullptr; std::fprintf(stderr, "AOT: %s: granular entries declared but their tables are missing\\n", path); }
+    }'''
+    adapted_loader = '''    G.resume = abi_flags && (*abi_flags & 1);
+    if (G.resume || (abi_flags && (*abi_flags & 16))) {
+        G.funcs = static_cast<const GranRec*>(dlsym(so, "bbr_funcs"));
+        const auto* nf = static_cast<const uint64_t*>(dlsym(so, "bbr_func_count"));
+        G.flags = (abi_flags && (*abi_flags & 16))
+            ? static_cast<const uint8_t*>(dlsym(so, "bbr_func_granular")) : nullptr;
+        G.nfuncs = nf ? *nf : 0;
+        if (!G.funcs || !G.nfuncs || ((abi_flags && (*abi_flags & 16)) && !G.flags)) {
+            G.resume = false;
+            G.flags = nullptr;
+            std::fprintf(stderr, "AOT: %s: resume/granular function tables unavailable\\n", path);
+        }
+    }
+    if (G.resume) std::printf("TLOU AOT: guest CALL return sites enabled for PS4 fiber resumes\\n");'''
+    main = once(main, original_loader, adapted_loader, "PS4 fiber resume dispatch")
     (out / "guest_cpu_aot.cpp").write_text(main)
     print(f"TLOU AOT backend: upstream {UPSTREAM}, PS4 fiber ABI ported; source generated at {out}")
 

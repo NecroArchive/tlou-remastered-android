@@ -53,6 +53,9 @@ jobs:
           python3 android/aot/test_aot_quality.py -v
           python3 android/aot/test_fiber_tls.py -v
           python3 android/aot/test_aot_fault_probe.py -v
+          mkdir -p out/aot-java-test
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouApp0Assets.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouApp0AssetsTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouApp0AssetsTest
       - name: Retrieve successful native ARM64 APK
         uses: actions/download-artifact@v4
         with:

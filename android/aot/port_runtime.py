@@ -190,11 +190,15 @@ AOT_SIGNAL_STACK = r"""
 static thread_local void* tlou_signal_stack = nullptr;
 static constexpr size_t TlouSignalStackSize = 256u * 1024u;
 static thread_local bool tlou_host_stack_sampled = false;
+// Avoid a kernel sigaltstack query and atomic counter on EVERY reentry from HLE.
+// This flag is per-thread and set only after the original signal stack is ready.
+static thread_local bool tlou_signal_stack_ready = false;
 static thread_local uintptr_t tlou_host_stack_low = 0;
 static thread_local uintptr_t tlou_host_stack_high = 0;
 static thread_local size_t tlou_host_stack_guard = 0;
 
 static void TlouEnsureSignalStack() {
+    if (tlou_signal_stack_ready) return;
     if (!tlou_host_stack_sampled) {
         tlou_host_stack_sampled = true;
         pthread_attr_t attributes{};
@@ -211,6 +215,7 @@ static void TlouEnsureSignalStack() {
     }
     stack_t previous{};
     const int query = sigaltstack(nullptr, &previous);
+    bool signal_stack_active = query == 0 && !(previous.ss_flags & SS_DISABLE);
     if (query == 0 && (previous.ss_flags & SS_DISABLE)) {
         void* memory = mmap(nullptr, TlouSignalStackSize,
                             PROT_READ | PROT_WRITE,
@@ -219,8 +224,10 @@ static void TlouEnsureSignalStack() {
             stack_t alternate{};
             alternate.ss_sp = memory;
             alternate.ss_size = TlouSignalStackSize;
-            if (sigaltstack(&alternate, nullptr) == 0)
+            if (sigaltstack(&alternate, nullptr) == 0) {
                 tlou_signal_stack = memory;
+                signal_stack_active = true;
+            }
             else
                 munmap(memory, TlouSignalStackSize);
         }
@@ -256,9 +263,13 @@ static void TlouEnsureSignalStack() {
             tlou_signal_stack != nullptr);
         std::fflush(stderr);
     }
+    // If mmap/sigaltstack failed, preserve original retry-on-next-entry path.
+    // Never suppress retries or remove the installed GPU fault handler.
+    tlou_signal_stack_ready = signal_stack_active;
 }
 
 static void TlouReleaseSignalStack() {
+    tlou_signal_stack_ready = false;
     if (!tlou_signal_stack) return;
     stack_t disabled{};
     disabled.ss_flags = SS_DISABLE;

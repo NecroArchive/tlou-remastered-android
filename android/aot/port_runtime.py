@@ -115,6 +115,52 @@ uint64_t guest_cpu_fiber_frame_pointer(const GuestFiberCpuState* target) {
 
 """
 
+TARGET_PROVENANCE = r"""
+// An all-ones indirect target is NOT the AOT guest return sentinel.
+// Keep the strict failure but report its ARM64 caller and guest registers.
+static void TlouTraceInvalidDispatch(GuestState* s, uint64_t target,
+                                     uintptr_t return_pc, const char* dispatch_kind) {
+    if (target != ~uint64_t{0}) return;
+    uint64_t from_unit = ~uint64_t{0};
+    uintptr_t from_host = 0;
+    auto at = std::upper_bound(E.by_address.begin(), E.by_address.end(), return_pc,
+        [](uintptr_t address, const Engine::Where& w) { return address < w.fn; });
+    if (at != E.by_address.begin()) {
+        --at;
+        from_unit = at->vaddr;
+        from_host = at->fn;
+    }
+    std::fprintf(stderr,
+        "TLOU AOT invalid target: via=%s target=%#llx rip=%#llx arm64_return=%#llx arm64_unit=%#llx guest_unit=%#llx rsp=%#llx rbp=%#llx\n",
+        dispatch_kind, (unsigned long long)target, (unsigned long long)s->rip,
+        (unsigned long long)return_pc, (unsigned long long)from_host,
+        (unsigned long long)from_unit, (unsigned long long)s->gregs[RSP],
+        (unsigned long long)s->gregs[RBP]);
+    for (unsigned i = 0; i < 16; ++i)
+        std::fprintf(stderr, "TLOU AOT gpr[%02u]=%#llx%s",
+                     i, (unsigned long long)s->gregs[i], i % 4 == 3 ? "\n" : " ");
+    for (unsigned i = 0; i < 8; ++i)
+        std::fprintf(stderr, "TLOU AOT stack[%u] @%#llx = %#llx\n",
+                     i, (unsigned long long)(s->gregs[RSP] + i * 8),
+                     (unsigned long long)ReadGuest(s->gregs[RSP] + i * 8));
+    if (Thread* t = self) {
+        std::fprintf(stderr, "TLOU AOT depth=%u host_depth=%u trace_n=%u\n",
+                     t->depth, t->host_depth, t->trace_n);
+        const unsigned first = t->trace_n > Thread::TraceSize
+            ? t->trace_n - Thread::TraceSize : 0;
+        for (unsigned i = first; i < t->trace_n; ++i) {
+            const auto& e = t->trace[i % Thread::TraceSize];
+            std::fprintf(stderr,
+                "TLOU AOT trace[%u] kind=%u a=%#llx b=%#llx c=%#llx\n",
+                i, e.kind, (unsigned long long)e.a,
+                (unsigned long long)e.b, (unsigned long long)e.c);
+        }
+    }
+    std::fflush(stderr);
+}
+
+"""
+
 def once(source: str, before: str, after: str, name: str) -> str:
     if source.count(before) != 1:
         raise ValueError(f"{name}: expected exactly one upstream ABI patch site; found {source.count(before)}")
@@ -186,6 +232,15 @@ def port(upstream: Path, out: Path) -> None:
     }
     if (G.resume) std::printf("TLOU AOT: guest CALL return sites enabled for PS4 fiber resumes\\n");'''
     main = once(main, original_loader, adapted_loader, "PS4 fiber resume dispatch")
+    main = once(main, "BBR_EXPORT void bbr_dispatch(GuestState* s, uint64_t target) {",
+                TARGET_PROVENANCE + """BBR_EXPORT void bbr_dispatch(GuestState* s, uint64_t target) {
+    if (target == ~uint64_t{0}) TlouTraceInvalidDispatch(s, target, (uintptr_t)__builtin_return_address(0), "call");""",
+                "invalid indirect call provenance")
+    main = once(main, "BBR_EXPORT void bbr_dispatch_tail(GuestState* s) {\n    const uint64_t target = s->rip;",
+                """BBR_EXPORT void bbr_dispatch_tail(GuestState* s) {
+    const uint64_t target = s->rip;
+    if (target == ~uint64_t{0}) TlouTraceInvalidDispatch(s, target, (uintptr_t)__builtin_return_address(0), "tail");""",
+                "invalid indirect tail provenance")
     (out / "guest_cpu_aot.cpp").write_text(main)
     print(f"TLOU AOT backend: upstream {UPSTREAM}, PS4 fiber ABI ported; source generated at {out}")
 

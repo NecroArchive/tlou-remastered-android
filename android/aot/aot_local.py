@@ -29,6 +29,86 @@ KNOWN_EBOOTS = {
 }
 
 
+# CUSA00552 01.11: decoded switch at +0xb59ff7, table at +0x117d550.
+# The 11 indexed cases (0..10, with two aliases) include +0xb5a041,
+# which was reached on-device after fixing the worker's FS/GS TLS.
+# Never apply these offsets to an unverified game executable.
+TLOU_111_SWITCH_SHA256 = "3cfa475f88ca68485b6b9230e62b84e195cdbe19e6f7295c110b8dcf8f20884e"
+TLOU_111_SWITCH_PC = 0xB59FF7
+TLOU_111_SWITCH_TABLE = 0x117D550
+TLOU_111_SWITCH_SLOTS = 11
+TLOU_111_SWITCH_SIGNATURE = bytes.fromhex(
+    "ffcb83fb0a0f872e030000488d054735620048630c984801c1ffe1")
+
+
+def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
+    """Find every target of the verified 1.11 switch, not just the first miss.
+
+    The compiler builds *one* 64-shard unit table. Adding a later case changes
+    that table and invalidates the whole existing --resume cache. Preseeding
+    all cases now avoids a separate full rebuild for every unvisited case.
+    """
+    if eboot_sha != TLOU_111_SWITCH_SHA256:
+        return []
+    info = check_boot(boot)
+    image_start = boot.stat().st_size - info["size"]
+    needed = TLOU_111_SWITCH_TABLE + TLOU_111_SWITCH_SLOTS * 4
+    if needed > info["size"]:
+        raise ValueError("1.11 jump table outside the linked image")
+    with boot.open("rb") as stream:
+        stream.seek(image_start + TLOU_111_SWITCH_PC)
+        signature = stream.read(len(TLOU_111_SWITCH_SIGNATURE))
+        if signature != TLOU_111_SWITCH_SIGNATURE:
+            raise ValueError("1.11 executable no longer matches the verified switch dispatch")
+        stream.seek(image_start + TLOU_111_SWITCH_TABLE)
+        data = stream.read(TLOU_111_SWITCH_SLOTS * 4)
+    if len(data) != TLOU_111_SWITCH_SLOTS * 4:
+        raise ValueError("1.11 jump table truncated")
+    offsets = struct.unpack("<11i", data)
+    targets = sorted(set(TLOU_111_SWITCH_TABLE + delta for delta in offsets))
+    if (len(targets) != 10 or min(targets) < 0xB5A012 or
+            max(targets) > 0xB5A33F or 0xB5A041 not in targets):
+        raise ValueError("Unexpected 1.11 jump table targets; refuse unsafe AOT entry seeds")
+    return targets
+
+
+def verified_miss_entries(path: Path | None, image_size: int) -> list[int]:
+    """Read only the compiler's genuine 'miss +hex' entries.
+
+    Older logs contain 'outside 0xffffffffffffffff', which is not code and
+    cannot be fixed by adding a unit. Leave those lines out of the build set.
+    """
+    import re
+    if not path or not path.is_file():
+        return []
+    found = set()
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            match = re.match(r"^\s*miss\s+\+(?:0x)?([0-9a-fA-F]+)\b", line)
+            if not match:
+                continue
+            entry = int(match.group(1), 16)
+            if 0x1000 <= entry < image_size:
+                found.add(entry)
+    return sorted(found)
+
+
+def prepare_extra_entries(boot: Path, eboot_sha: str, misses: Path | None,
+                          destination: Path) -> tuple[list[int], list[int]]:
+    known = known_switch_entries(boot, eboot_sha)
+    missed = verified_miss_entries(misses, check_boot(boot)["size"])
+    entries = sorted(set(known + missed))
+    if entries:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("".join(f"+0x{value:x}\n" for value in entries),
+                               encoding="ascii")
+    else:
+        destination.unlink(missing_ok=True)
+    return known, entries
+
+
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -258,14 +338,26 @@ def main(argv=None):
                    "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]
-        if args.misses and args.misses.is_file() and args.misses.stat().st_size:
-            command += ["--extra-entries", str(args.misses.resolve(strict=True))]
+        # All 11 entries of the verified 1.11 scheduler switch are seeded at
+        # once. This avoids repeated full recompilation as new cases execute.
+        seed_file = aot / "verified-extra-entries.txt"
+        seed_targets, added_entries = prepare_extra_entries(
+            staged, sha256(game / "eboot.bin"), args.misses, seed_file)
+        if added_entries:
+            command += ["--extra-entries", str(seed_file)]
+        if seed_targets:
+            # The compiler checks coverage during discovery, BEFORE expensive
+            # LLVM optimisation and code generation. Exit 3 if not covered.
+            command += ["--check-entries",
+                        ",".join(f"{target:x}" for target in seed_targets)]
         report = {"version": version, "original_game": str(original_game),
                   "effective_game": str(game), "eboot_sha256": sha256(game / "eboot.bin"),
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),
                   "verified_executable_bytes": verified_code_bytes,
                   "input_boot": check_boot(boot), "translation_command": command,
                   "runtime_integrated": False, "status": "staged",
+                  "verified_switch_targets": [f"+0x{x:x}" for x in seed_targets],
+                  "extra_entry_count": len(added_entries),
                   "guest_memory_model": "conservative_TSO",
                   "fiber_resume_entries": True,
                   "callee_saved_policy": "reload_after_calls_for_fibers",

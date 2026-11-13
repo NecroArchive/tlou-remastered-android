@@ -38,7 +38,7 @@ jobs:
           gradle-version: '8.14.3'
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
       - name: Check local ARM64 AOT preparation
         run: |
           python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/bionic/repackage_local_aot.py
@@ -51,17 +51,14 @@ jobs:
           path: out/aot-source-apk
           run-id: '43315820944'
           github-token: ${{ github.token }}
-      - name: Download newly compiled ARM64 AOT runtime with TLOU fibers
-        uses: actions/download-artifact@v4
-        with:
-          name: TLOU-AOT-CPU-ARM64-Fiber-Backend
-          path: out/aot-native-backend
-          run-id: '43337524803'
-          github-token: ${{ github.token }}
+      - name: Build ARM64 AOT CPU from the current source, including TLOU fiber changes
+        env:
+          TLOU_NDK: /usr/local/lib/android/sdk/ndk/29.0.14206865
+        run: bash android/bionic/build_aot_cpu.sh
       - name: Stage verified alternative AOT CPU, leave production FEX intact
         run: |
           set -euo pipefail
-          so=out/aot-native-backend/libgow3cpu.so
+          so=out/android-bionic/aot-backend/libgow3cpu.so
           test -s "$so"
           python3 - "$so" <<'PY'
           import hashlib,sys
@@ -74,9 +71,9 @@ jobs:
           readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
           mkdir -p out/android-bionic/apk-assets/runtime-aot
           cp "$so" out/android-bionic/apk-assets/runtime-aot/libgow3cpu.so
-          test -s out/aot-native-backend/libbbcpu.so
-          readelf -d out/aot-native-backend/libbbcpu.so | grep -F '[libgow3cpu.so]'
-          cp out/aot-native-backend/libbbcpu.so out/android-bionic/apk-assets/runtime-aot/libbbcpu.so
+          test -s out/android-bionic/aot-backend/libbbcpu.so
+          readelf -d out/android-bionic/aot-backend/libbbcpu.so | grep -F '[libgow3cpu.so]'
+          cp out/android-bionic/aot-backend/libbbcpu.so out/android-bionic/apk-assets/runtime-aot/libbbcpu.so
       - name: Retrieve fixed Android AOT compiler (TSO lowering included)
         uses: actions/download-artifact@v4
         with:

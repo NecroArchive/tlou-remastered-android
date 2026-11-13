@@ -105,12 +105,33 @@ final class RuntimeAot {
         // and the unpatched path may dereference a bogus output pointer.
         File runtimeBoot=boot;
         if("1.11".equals(source.optString("version"))) {
-            if(!"tlou-111-animation-guard-v1".equals(source.optString("native_patch_profile")) ||
-               !"invalid-animation-output-pointer".equals(
-                   source.optJSONArray("native_patches")!=null ?
-                   source.getJSONArray("native_patches").optString(0) : ""))
+            JSONArray nativePatches=source.optJSONArray("native_patches");
+            boolean hasAnimationGuard=false,hasTimeout=false;
+            if(nativePatches!=null)for(int i=0;i<nativePatches.length();i++) {
+                String patch=nativePatches.optString(i);
+                if("invalid-animation-output-pointer".equals(patch))hasAnimationGuard=true;
+                if("frame-timeout".equals(patch))hasTimeout=true;
+            }
+            if(!"tlou-111-static-v2".equals(source.optString("native_patch_profile")) ||
+                    !hasAnimationGuard || !hasTimeout)
                 throw new java.io.IOException(
-                    "O ARM64 1.11 ainda não contém a correção de animação. Recompile em Ajustes → CPU.");
+                    "O ARM64 1.11 não contém os patches nativos de estabilidade. Recompile em Ajustes → CPU.");
+            JSONObject expected=source.optJSONObject("native_patch_options");
+            JSONObject actual=new JSONObject(new String(Files.readAllBytes(
+                    PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
+            if(expected==null || !expected.optString("resolution","?").equals(
+                    actual.optString("resolution","!")) ||
+                    expected.optBoolean("job_sleep",false)!=actual.optBoolean("job_sleep",false))
+                throw new java.io.IOException(
+                    "Configuração AOT mudou desde a compilação (resolução/workers). Recompile a CPU ARM64.");
+            for(String effect:PortSettings.EFFECTS) {
+                if(!expected.has(effect) ||
+                        expected.optBoolean(effect)!=actual.optBoolean(effect))
+                    throw new java.io.IOException(
+                        "Efeitos AOT alterados após a compilação: "+effect+". Recompile a CPU ARM64.");
+            }
+            RunLog.write(context,"TLOU AOT patches ARM64 compilados: "+nativePatches+
+                    " • resolução="+expected.optString("resolution")+" • FEX original preservado.");
             runtimeBoot=new File(work,"native-boot-linked.bin");
             String expectedNative=source.optString("native_boot_sha256");
             if(!runtimeBoot.isFile() || expectedNative.length()!=64 ||

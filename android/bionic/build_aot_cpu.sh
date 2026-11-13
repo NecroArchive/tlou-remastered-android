@@ -37,6 +37,12 @@ echo "Compiling TLOU AOT C++ host dispatcher and fiber bridge"
   -Wl,-soname,libgow3cpu.so -Wl,--no-undefined -ldl -lm \
   -v -o "$out/libgow3cpu.so"
 echo "TLOU AOT dispatcher binary produced"
+# The generated libtlouaot.so is intentionally DT_NEEDED on
+# libbbcpu.so, which Bloodborne uses to expose bbr_* dispatcher callbacks.
+# TLOU's probe, however, is DT_NEEDED on libgow3cpu.so. Provide a linker shim:
+# libtlouaot.so -> libbbcpu.so -> libgow3cpu.so (same running CPU engine).
+"$llvm/aarch64-linux-android${api}-clang" -shared -nostdlib   -Wl,-soname,libbbcpu.so -Wl,--no-as-needed   -L "$out" -lgow3cpu -o "$out/libbbcpu.so"
+"$readelf" -d "$out/libbbcpu.so" | grep -F '[libgow3cpu.so]'
 "$readelf" -h "$out/libgow3cpu.so" | grep -Eq 'Machine:.*AArch64'
 "$readelf" -d "$out/libgow3cpu.so" | grep -F '[libc.so]'
 "$readelf" --dyn-syms --wide "$out/libgow3cpu.so" > "$out/symbols.txt"
@@ -52,5 +58,7 @@ for symbol in guest_cpu_init guest_cpu_code guest_cpu_call \
 done
 mkdir -p "$root/out/android-bionic/apk-assets/runtime-aot"
 cp "$out/libgow3cpu.so" "$root/out/android-bionic/apk-assets/runtime-aot/libgow3cpu.so"
+cp "$out/libbbcpu.so" "$root/out/android-bionic/apk-assets/runtime-aot/libbbcpu.so"
 sha256sum "$out/libgow3cpu.so" > "$out/libgow3cpu.so.sha256"
+sha256sum "$out/libbbcpu.so" > "$out/libbbcpu.so.sha256"
 echo "TLOU native AOT engine built, with PS4 fibers. FEX production binary unchanged."

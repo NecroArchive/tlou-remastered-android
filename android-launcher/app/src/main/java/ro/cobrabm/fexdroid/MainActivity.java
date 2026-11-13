@@ -295,6 +295,11 @@ public final class MainActivity extends Activity {
                 new String[]{"aot","fex"},"fex");
             add(cpu,"Compilar CPU ARM64 no aparelho (AOT experimental)",false,
                 ()->withAccess(this::buildSelectedAot));
+            toggleSetting(cpu,"aot_detailed_diagnostics",
+                "Diagnóstico aprofundado AOT (reduz FPS)",false);
+            cpu.addView(text("Desligado por padrão: evita cronometrar milhões de chamadas ARM64; "
+                +"a coleta de CPU das seis threads, as falhas e os endereços AOT ausentes continuam ativos. "
+                +"Ligue somente para investigar um problema específico.",12,MUTED));
             cpu.addView(text("ARM64 AOT executa o código recompilado diretamente. "
                 +"FEX continua disponível; funções não cobertas pelo AOT são registradas "
                 +"nos logs para recompilação incremental. Ainda é experimental.",12,MUTED));

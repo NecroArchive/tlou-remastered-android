@@ -11,6 +11,7 @@ on:
       - 'android/aot/test_aot_local.py'
       - 'android/aot/test_aot_quality.py'
       - 'android/aot/test_fiber_tls.py'
+      - 'android/aot/test_aot_fault_probe.py'
       - 'android/bionic/build_aot_cpu.sh'
       - 'android/bionic/repackage_local_aot.py'
       - 'android/bionic/stage_aot_compiler.sh'
@@ -51,6 +52,7 @@ jobs:
           python3 android/aot/test_aot_local.py -v
           python3 android/aot/test_aot_quality.py -v
           python3 android/aot/test_fiber_tls.py -v
+          python3 android/aot/test_aot_fault_probe.py -v
       - name: Retrieve successful native ARM64 APK
         uses: actions/download-artifact@v4
         with:
@@ -78,6 +80,7 @@ jobs:
           readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
           grep -aFq 'TLOU AOT invalid target' "$so"   # ensure the current traced dispatcher is actually packaged
           grep -aFq 'TLOU AOT fiber TLS preserved' "$so" # ensure cross-thread TLS fix is linked
+          grep -aFq 'TLOU AOT fault entry' "$so" # fatal signal provenance without overriding GPU signal handler
           grep -aFq 'TLOU AOT sceFiberRun' "$so" # require fiber return-code provenance in packaged CPU engine
           grep -aFq 'TLOU AOT job thread entry' "$so" # thread-type and actual TLS provenance
           grep -aFq 'TLOU AOT queue lane' "$so" # confirm the failing queue record is captured

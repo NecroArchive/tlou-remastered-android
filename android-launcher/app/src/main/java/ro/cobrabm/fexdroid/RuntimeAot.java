@@ -2,6 +2,7 @@ package ro.cobrabm.fexdroid;
 
 import android.content.Context;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -77,6 +78,20 @@ final class RuntimeAot {
         if(!"3-tlou-string".equals(meta.optString("compiler_version")) ||
                 !"aarch64_generated_native_ready".equals(source.optString("status")))
             throw new java.io.IOException("Biblioteca AOT antiga ou sem suporte a TSO. Recompile em Ajustes → CPU.");
+        // Guest PS4 fibers can replace RBX/RBP/R12-R15 in HostCall. Old native
+        // libraries trusted SysV callee-saved registers and are not safe here.
+        JSONArray command=source.optJSONArray("translation_command");
+        boolean reloadAfterCall=false, nativeTso=false, fiberResumes=false;
+        if(command!=null)for(int i=0;i<command.length();i++) {
+            String flag=command.optString(i);
+            if("--no-callee-saved".equals(flag))reloadAfterCall=true;
+            if("--tso".equals(flag))nativeTso=true;
+            if("--resume-entries".equals(flag))fiberResumes=true;
+        }
+        if(!reloadAfterCall || !nativeTso || !fiberResumes ||
+           !"reload_after_calls_for_fibers".equals(source.optString("callee_saved_policy")))
+            throw new java.io.IOException(
+                "Biblioteca AOT anterior incompatível com fibers do TLOU. Recompile em Ajustes → CPU.");
         JSONObject quality=source.optJSONObject("coverage");
         if(quality==null || quality.optDouble("unsupported_percent",100)>0.25)
             throw new java.io.IOException("Biblioteca AOT incompleta; recompile com o compilador TSO corrigido");

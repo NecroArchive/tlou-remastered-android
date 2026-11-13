@@ -59,7 +59,7 @@ jobs:
           python3 android/aot/test_aot_fault_probe.py -v
           python3 android/aot/test_aot_signal_stack.py -v
           python3 android/aot/test_aot_host_stack.py -v
-          cc -std=gnu11 -O2 -D_GNU_SOURCE -pthread -Wall -Wextra -Werror gow3_pc/tests/test_android_cpu_policy.c -o /tmp/tlou-test-cpu-placement
+          cc -std=gnu11 -O2 -pthread -Wall -Wextra -Werror gow3_pc/tests/test_android_cpu_policy.c -o /tmp/tlou-test-cpu-placement
           /tmp/tlou-test-cpu-placement
           mkdir -p out/aot-java-test
           javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouApp0Assets.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouApp0AssetsTest.java

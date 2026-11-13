@@ -10,7 +10,7 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 class AotCoverage(unittest.TestCase):
-    def evaluate(self, text, version="3-tlou-string", units=75413):
+    def evaluate(self, text, version="4-tlou-tso-one-fence", units=75413):
         with tempfile.TemporaryDirectory() as td:
             stats = Path(td) / "compile.txt"
             stats.write_text(text)

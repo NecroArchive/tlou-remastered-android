@@ -194,7 +194,7 @@ final class PortSettings {
     static String experimentReport(Context context,Map<String,String> env) {
         StringBuilder result=new StringBuilder("TLOU launch settings: resolution=")
             .append(prefs(context).getString("resolution","original"));
-        result.append("; renderer=Vulkan; CPU=FEX ARM64");
+        result.append("; renderer=Vulkan; CPU=").append("aot".equals(prefs(context).getString("cpu_backend","fex"))?"native AOT ARM64 (experimental)":"FEX ARM64");
         result.append("; shader-scan-diagnostic=on");
         result.append("; shader-scan-method=")
               .append(prefs(context).getBoolean("shader_scan_scalar",false)?"original":"NEON");

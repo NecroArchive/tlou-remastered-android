@@ -52,6 +52,40 @@ public final class TlouApp0AssetsTest {
             check(!Files.isSymbolicLink(directView.resolve("build")),"overwrote existing root");
             check(read(directView.resolve("build/ps4/main/core-textures.psarc")).equals("root-priority"),"overwrote direct content");
 
+            // A common real-world layout: game/build is a symlink to the
+            // original game folder, while 1.11 archives are under dvdroot_ps4.
+            // The previous fix skipped this because /app0/build already existed.
+            Path source=tmp.resolve("original-game/build/ps4/main");
+            Files.createDirectories(source);
+            write(source.resolve("common-textures.psarc"),"original-priority");
+            Path mixed=tmp.resolve("mixed/tlou-view");
+            Files.createDirectories(mixed);
+            Files.createSymbolicLink(mixed.resolve("build"),
+                tmp.resolve("original-game/build").toRealPath());
+            Path secondary=mixed.resolve("dvdroot_ps4/build/ps4/main");
+            Files.createDirectories(secondary);
+            write(secondary.resolve("common-textures.psarc"),"nested-loses");
+            write(secondary.resolve("core-textures.psarc"),"nested-core");
+            Files.createDirectories(secondary.resolve("lut0"));
+            write(secondary.resolve("lut0/default-color-gray.dds"),"nested-lut");
+            String merged=TlouApp0Assets.ensure(mixed.toFile());
+            check(merged.contains("mapping=root+dvdroot_ps4"),"existing root was not merged");
+            check(merged.contains("common-textures.psarc=true"),"existing archive missing");
+            check(merged.contains("core-textures.psarc=true"),"missing core archive not added");
+            check(merged.contains("default-color-gray.dds=true"),"missing LUT not added");
+            check(!Files.isSymbolicLink(mixed.resolve("build")),"build is still original symlink");
+            check(read(mixed.resolve("build/ps4/main/common-textures.psarc"))
+                  .equals("original-priority"),"base archive precedence broken");
+            check(read(mixed.resolve("build/ps4/main/core-textures.psarc"))
+                  .equals("nested-core"),"fallback archive not visible");
+            check(!Files.exists(source.resolve("core-textures.psarc")),
+                  "modified original game directory through symlink");
+            check(!Files.exists(source.resolve("lut0")),
+                  "modified original game assets through symlink");
+            TlouApp0Assets.ensure(mixed.toFile()); // idempotent after detaching links
+            check(read(mixed.resolve("build/ps4/main/core-textures.psarc"))
+                  .equals("nested-core"),"relaunch changed merged data");
+
             Path missing=tmp.resolve("missing");
             Files.createDirectories(missing);
             String absent=TlouApp0Assets.ensure(missing.toFile());

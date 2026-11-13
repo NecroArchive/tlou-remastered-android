@@ -115,27 +115,20 @@ uint64_t guest_cpu_fiber_frame_pointer(const GuestFiberCpuState* target) {
 
 """
 
-WORKER_TLS_BOOTSTRAP = r"""
-    // CUSA00552 01.11 job-worker thread entry: c6a0a0 calls c89c10
-    // to tag the 16-bit thread ID (0x8000|id) in static TLS at FS:-0x88.
-    // The ARM64 startup can reach c89bd0 with this slot still unset,
-    // which returns -1 and makes the scheduler index task slot -1.
-    // Prime only a known worker entry with a valid 0..5 argument, before
-    // running guest instructions. The guest's original setter still runs.
-    if (count == 1 && args && fn == E.base + 0xc6a0a0 && args[0] < 6 &&
-        s.gs_cached >= 0x88 && s.gs_cached < (uint64_t{1} << 40)) {
-        const uintptr_t tls_slot = s.gs_cached - 0x88;
-        const uint64_t prior = ReadGuest(tls_slot);
-        const uint64_t wanted = 0x8000 | args[0];
-        if ((prior & 0x8000) == 0) {
-            *reinterpret_cast<uint64_t*>(tls_slot) = wanted;
-        }
+WORKER_ENTRY_TRACE = r"""
+    // The 1.11 binary has two distinct job-loop entrypoints: 0xc6a0a0
+    // explicitly registers a numbered worker in TLS, while 0xc6a050 does not.
+    // Do NOT assign an invented ID: record which one runs and its real TLS.
+    if (count == 1 && args &&
+        (fn == E.base + 0xc6a050 || fn == E.base + 0xc6a0a0)) {
+        const uint64_t raw_id = s.gs_cached >= 0x88
+            ? ReadGuest(s.gs_cached - 0x88) : 0;
         std::fprintf(stderr,
-            "TLOU AOT worker TLS: id=%llu fs=%#llx gs=%#llx slot=%#llx before=%#llx after=%#llx\n",
-            (unsigned long long)args[0],
-            (unsigned long long)s.fs_cached, (unsigned long long)s.gs_cached,
-            (unsigned long long)tls_slot, (unsigned long long)prior,
-            (unsigned long long)ReadGuest(tls_slot));
+            "TLOU AOT job thread entry: tid=%ld entry=%#llx arg=%#llx gs=%#llx tls_raw=%#llx\n",
+            (long)syscall(SYS_gettid), (unsigned long long)(fn - E.base),
+            (unsigned long long)args[0], (unsigned long long)s.gs_cached,
+            (unsigned long long)raw_id);
+        std::fflush(stderr);
     }
 """
 
@@ -160,6 +153,22 @@ static void TlouTraceInvalidDispatch(GuestState* s, uint64_t target,
         (unsigned long long)return_pc, (unsigned long long)from_host,
         (unsigned long long)from_unit, (unsigned long long)s->gregs[RSP],
         (unsigned long long)s->gregs[RBP]);
+    // The crashing CALL reads its callback from the job queue. The original
+    // x86-64 code at c88375 reads [scheduler + (worker_id<<7) + 0x780];
+    // print the actual queued values, including the dedicated id=-1 lane.
+    const uint64_t scheduler = ReadGuest(E.base + 0x1aa4780);
+    if (scheduler > 0x10000 && scheduler < (uint64_t{1} << 44)) {
+        std::fprintf(stderr, "TLOU AOT queue state: scheduler=%#llx flag58=%#llx active4f50=%#llx\n",
+            (unsigned long long)scheduler,
+            (unsigned long long)ReadGuest(scheduler + 0x58),
+            (unsigned long long)ReadGuest(scheduler + 0x4f50));
+        for (int idx = -1; idx <= 7; ++idx) {
+            const uint64_t lane = scheduler + 0x780 + intptr_t(idx) * 0x80;
+            std::fprintf(stderr, "TLOU AOT queue lane[%d] addr=%#llx callback=%#llx arg=%#llx\n",
+                idx, (unsigned long long)lane, (unsigned long long)ReadGuest(lane),
+                (unsigned long long)ReadGuest(lane + 8));
+        }
+    }
     for (unsigned i = 0; i < 16; ++i)
         std::fprintf(stderr, "TLOU AOT gpr[%02u]=%#llx%s",
                      i, (unsigned long long)s->gregs[i], i % 4 == 3 ? "\n" : " ");
@@ -273,8 +282,8 @@ def port(upstream: Path, out: Path) -> None:
     if (target == ~uint64_t{0}) TlouTraceInvalidDispatch(s, target, (uintptr_t)__builtin_return_address(0), "tail");""",
                 "invalid indirect tail provenance")
     main = once(main, "    s.rip = fn;\n    bbr_dispatch(&s, fn);",
-                "    s.rip = fn;\n" + WORKER_TLS_BOOTSTRAP + "    bbr_dispatch(&s, fn);",
-                "TLOU 1.11 AOT job worker TLS bootstrap")
+                "    s.rip = fn;\n" + WORKER_ENTRY_TRACE + "    bbr_dispatch(&s, fn);",
+                "TLOU 1.11 AOT job worker entry provenance")
     (out / "guest_cpu_aot.cpp").write_text(main)
     print(f"TLOU AOT backend: upstream {UPSTREAM}, PS4 fiber ABI ported; source generated at {out}")
 

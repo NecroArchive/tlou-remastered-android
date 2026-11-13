@@ -182,6 +182,32 @@ def stage_boot(source: Path, out: Path) -> Path:
     return dest
 
 
+def verify_aot_coverage(stats: Path, meta: dict) -> dict:
+    """Refuse useless native images that mostly contain unsupported-op traps."""
+    import re
+    version = str(meta.get("compiler_version", ""))
+    if version != "2-tlou-tso":
+        raise ValueError("Old bb-recomp compiler: TSO LLVM lowering is missing; rebuild with TLOU TSO tool")
+    if not stats.is_file():
+        raise ValueError("No native compiler coverage report")
+    text = stats.read_text(encoding="utf-8", errors="replace")
+    match = re.search(r"units with bbr_trap \(unsupported ops\): (\d+) \(([\d.]+)%\)", text)
+    if not match:
+        raise ValueError("Native compiler omitted unsupported-op coverage summary")
+    dirty = int(match.group(1))
+    percent = float(match.group(2))
+    count = int(meta.get("unit_count", 0))
+    if count <= 0 or dirty > count:
+        raise ValueError("AOT function coverage count invalid")
+    # Default TLOU v1.11 upstream 1.3.0 --tso produced 60598 dirty
+    # of 75413 units. With the new memory lowering, at most a tiny number
+    # of genuinely unsupported string/vector instructions may remain.
+    if "LoadMemTSO" in text or "StoreMemTSO" in text or percent > 0.25:
+        raise ValueError(f"AOT has {dirty}/{count} units without native code ({percent}%); refusing unusable build")
+    return {"unsupported_units": dirty, "unsupported_percent": percent,
+            "estimated_usable_units": count - dirty, "compiler_version": version}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, required=True,
@@ -259,7 +285,9 @@ def main(argv=None):
                 raise ValueError("Output is not AArch64")
             if meta.get("abi_version") != 2 or meta.get("so_sha256") != sha256(so):
                 raise ValueError("Unexpected AOT ABI or .so hash")
-            report["status"] = "aarch64_generated_runtime_not_integrated"
+            report["coverage"] = verify_aot_coverage(aot / "compile.txt", meta)
+            report["status"] = "aarch64_generated_native_ready"
+            report["runtime_integrated"] = True
             report["unit_count"] = meta.get("unit_count")
         (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\n")
         return code

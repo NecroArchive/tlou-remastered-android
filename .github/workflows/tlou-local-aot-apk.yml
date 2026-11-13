@@ -26,6 +26,9 @@ on:
       - 'android/bionic/repackage_local_aot.py'
       - 'android/bionic/stage_aot_compiler.sh'
       - 'android-launcher/**'
+      - 'gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_compute_drain_policy.h'
+      - 'gow3_pc/tests/test_tlou_compute_drain_policy.cpp'
       - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp'
       - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.h'
       - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/tlou_readback_watch_gate.h'
@@ -55,10 +58,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Test readback watcher exact submission ordering and CPU work removed
+      - name: Test readback watcher and restored compute memory-wait deferral
         run: |
-          c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_readback_watch_gate.cpp -o /tmp/tlou-test-readback-gate
+          set -euo pipefail
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror gow3_pc/tests/test_tlou_readback_watch_gate.cpp -o /tmp/tlou-test-readback-gate
           /tmp/tlou-test-readback-gate
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_compute_drain_policy.cpp -o /tmp/tlou-test-compute-wait-defer
+          /tmp/tlou-test-compute-wait-defer
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
@@ -98,6 +104,7 @@ jobs:
           mkdir -p out/native-gpu
           cp out/android-bionic/lib/libgow3gpu.so out/native-gpu/libgow3gpu.so
           readelf -h out/native-gpu/libgow3gpu.so | grep -E 'Machine:.*AArch64'
+          grep -aF 'memory-waits-deferred=' out/native-gpu/libgow3gpu.so
           readelf -d out/native-gpu/libgow3gpu.so | grep NEEDED
           (cd out/native-gpu && sha256sum libgow3gpu.so > libgow3gpu.so.sha256 && sha256sum -c libgow3gpu.so.sha256)
           test $(stat -c %s out/native-gpu/libgow3gpu.so) -gt 100000
@@ -152,6 +159,8 @@ jobs:
           /tmp/tlou-test-cpu-placement
           c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_readback_watch_gate.cpp -o /tmp/tlou-test-readback-gate
           /tmp/tlou-test-readback-gate
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_compute_drain_policy.cpp -o /tmp/tlou-test-compute-wait-defer
+          /tmp/tlou-test-compute-wait-defer
           mkdir -p out/aot-java-test
           javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouApp0Assets.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouApp0AssetsTest.java
           java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouApp0AssetsTest
@@ -262,6 +271,7 @@ jobs:
           print('Verified changed Bionic GPU:', hashlib.sha256(old).hexdigest()[:16], '->',hashlib.sha256(new).hexdigest()[:16])
           PY
           readelf -h out/native-gpu/libgow3gpu.so | grep -E 'Machine:.*AArch64'
+          grep -aF 'memory-waits-deferred=' out/native-gpu/libgow3gpu.so
           cp out/native-gpu/libgow3gpu.so out/android-bionic/apk-jni/arm64-v8a/libgow3gpu.so
       - name: Generate save-selection fixtures for existing Android tests
         run: python3 gow3_pc/tests/test_android_save_choice.py
@@ -303,6 +313,7 @@ jobs:
               new_gpu=b.read('lib/arm64-v8a/libgow3gpu.so')
               intended=open('out/native-gpu/libgow3gpu.so','rb').read()
               assert new_gpu==intended, 'new GPU not packaged: refusing old renderer'
+              assert b'memory-waits-deferred=' in new_gpu, 'Compute memory-wait regression is still in APK'
               assert new_gpu!=a.read('lib/arm64-v8a/libgow3gpu.so'), 'old native GPU still packaged'
               for n in preserved:
                   if n=='lib/arm64-v8a/libgow3gpu.so': continue
@@ -327,7 +338,7 @@ jobs:
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-ARM64-AOT-GPU-Readback-WatchFix-APK
+          name: TLOU-v011-ARM64-AOT-GPU-ComputeWait-Readback-Fix-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

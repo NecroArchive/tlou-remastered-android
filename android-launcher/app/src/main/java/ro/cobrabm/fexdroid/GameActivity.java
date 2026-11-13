@@ -404,7 +404,7 @@ public final class GameActivity extends Activity {
             // Previously TLOU CPU critical counted only the Vulkan threads.
             // This 5-second /proc sampling runs in the Java launcher, NOT in
             // any game worker or renderer hot path, and works for both modes.
-            final TlouCpuThreads threadCpu=new TlouCpuThreads(game.pid(),backend,
+            final TlouCpuThreads threadCpu=new TlouCpuThreads(runtimePidFile,backend,
                     line->RunLog.write(this,line));
             threadCpu.start();
             final int result;

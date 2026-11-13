@@ -10,7 +10,7 @@ tool="$root/.local-deps/bb-recomp-tlou"
 ndk="${ANDROID_NDK_HOME:-${ANDROID_HOME:-/usr/local/lib/android/sdk}/ndk/29.0.14206865}"
 export BB_NDK="$ndk"
 export BB_JOBS="${TLOU_AOT_BUILD_JOBS:-4}"
-export BB_RECOMP_VERSION=1.3.0-tlou-tso1
+export BB_RECOMP_VERSION=1.3.0-tlou-str1
 export BB_X86_DEPS="$tool/.local-deps"
 export BB_FEX_TREE="$tool/out/recomp-fex"
 test -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
@@ -23,6 +23,7 @@ git -C "$tool" fetch --depth=1 origin "$pin"
 git -C "$tool" checkout --detach -f FETCH_HEAD
 test "$(git -C "$tool" rev-parse HEAD)" = "$pin"
 python3 "$root/android/aot/patch_recompiler_tso.py" "$tool"
+python3 "$root/android/aot/patch_recompiler_vpcmpistrx.py" "$tool"
 
 ver=23.1.3
 deps="$tool/.local-deps"
@@ -68,15 +69,17 @@ tarball="$tool/out/dist/bb-recomp-android-aarch64.tar.xz"
 test -s "$compiler" && test -s "$tarball"
 readelf -h "$compiler" | grep -Eq 'Machine:.*AArch64'
 readelf -l "$compiler" | grep -F '/system/bin/linker64'
-grep -q 'BBR_COMPILER_VERSION "2-tlou-tso"' "$tool/src/version.h"
+grep -q 'BBR_COMPILER_VERSION "3-tlou-string"' "$tool/src/version.h"
 grep -q 'case OP_LOADMEMTSO:' "$tool/src/lower_ops.cpp"
 grep -q 'case OP_STOREMEMTSO:' "$tool/src/lower_ops.cpp"
+grep -q 'case OP_VPCMPISTRX:' "$tool/src/lower_vector.cpp"
+grep -q 'uint32_t bbr_vpcmpistrx(' "$tool/helpers/bbr_x87_all.c"
 mkdir -p "$root/out/android-bionic/aot-tso-compiler"
 cp "$tarball" "$root/out/android-bionic/aot-tso-compiler/"
 (cd "$root/out/android-bionic/aot-tso-compiler" && sha256sum bb-recomp-android-aarch64.tar.xz > bb-recomp-android-aarch64.tar.xz.sha256)
 printf '%s\n' "Upstream bb-recomp: $pin" \
-  "Compiler shard version: 2-tlou-tso" \
+  "Compiler shard version: 3-tlou-string" \
   "TSO lowering: seq-cst fences around aligned/unaligned x86 accesses" \
-  "Support: GPR up to 64-bit / FPR up to 128-bit; unsupported widths stay dirty" \
+  "Support: GPR up to 64-bit / FPR up to 128-bit; SSE4.2 PCMPISTRX helper bundled" \
   "No game files included" > "$root/out/android-bionic/aot-tso-compiler/README-TLOU-TSO.txt"
 echo "Finished patched AArch64 compiler archive: $tarball"

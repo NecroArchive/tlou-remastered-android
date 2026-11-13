@@ -1,0 +1,79 @@
+name: TLOU patched TSO AOT compiler ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - 'android/aot/patch_recompiler_tso.py'
+      - 'android/aot/build_recompiler_tso.sh'
+      - '.github/workflows/tlou-build-tso-recompiler.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compile-tso-lowering:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    env:
+      TLOU_AOT_BUILD_JOBS: '4'
+      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/29.0.14206865
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 ndk;29.0.14206865'
+      - name: Install cross-compilation prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zstd ninja-build cmake clang lld xz-utils
+      - name: Python/Bash syntax check before downloading dependencies
+        run: |
+          python3 -m py_compile android/aot/patch_recompiler_tso.py
+          bash -n android/aot/build_recompiler_tso.sh
+      - name: Preserve reconstructed LLVM / FEX dependencies between builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            .local-deps/bb-recomp-tlou/.local-deps/llvm/x
+            .local-deps/bb-recomp-tlou/.local-deps/llvm/src
+            .local-deps/bb-recomp-tlou/.local-deps/llvm/build-android
+            .local-deps/bb-recomp-tlou/.local-deps/deps
+            .local-deps/bb-recomp-tlou/.local-deps/mimalloc
+            .local-deps/bb-recomp-tlou/out/recomp-fex
+          key: tlou-llvm23-android-fex2609-tso1
+      - name: Cross-compile patched Android-native bb-recomp 1.3.0 (TSO)
+        run: bash android/aot/build_recompiler_tso.sh
+      - name: Verify Android library format and compiler shard version
+        run: |
+          set -euo pipefail
+          c=.local-deps/bb-recomp-tlou/out/android/libbbrecomp.so
+          test -s "$c"
+          readelf -h "$c" | grep -F AArch64
+          grep -q 'BBR_COMPILER_VERSION "2-tlou-tso"' .local-deps/bb-recomp-tlou/src/version.h
+          readelf -d "$c" | grep -E 'libc.so|libm.so|libdl.so'
+          mkdir -p /tmp/tlou-aot-verify
+          tar -xf out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz -C /tmp/tlou-aot-verify
+          test -s /tmp/tlou-aot-verify/android/libbbrecomp.so
+          test -s /tmp/tlou-aot-verify/android/bundle/helpers-aarch64.o
+          test -s /tmp/tlou-aot-verify/android/bundle/libbbcpu-stub.so
+          (cd out/android-bionic/aot-tso-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-bb-recomp-1.3.0-TSO-ARM64
+          path: |
+            out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
+            out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz.sha256
+            out/android-bionic/aot-tso-compiler/README-TLOU-TSO.txt
+          if-no-files-found: error
+      - name: Upload concise diagnostics if build fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-TSO-compiler-fail-diagnostics
+          path: |
+            .local-deps/bb-recomp-tlou/out/llvm-android-cfg.log
+            .local-deps/bb-recomp-tlou/out/llvm-android-build.log
+            .local-deps/bb-recomp-tlou/out/android-ndk.cfg.log
+          if-no-files-found: ignore

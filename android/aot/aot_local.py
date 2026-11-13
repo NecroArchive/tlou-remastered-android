@@ -292,6 +292,16 @@ def main(argv=None):
         (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\n")
         return code
     except (OSError, ValueError, subprocess.CalledProcessError) as e:
+        # Persist the actual failure in the exported diagnostic ZIP. Never
+        # accidentally reuse a previously generated .so after quality gates
+        # rejected the newer compiler or an excessive number of trap units.
+        if "report" in locals() and "out" in locals():
+            report["status"] = "validation_failed"
+            report["failure_reason"] = str(e)
+            try:
+                (out / "aot-report.json").write_text(json.dumps(report, indent=2) + "\\n")
+            except OSError:
+                pass
         print(f"TLOU local AOT: {e}", file=sys.stderr)
         return 1
 

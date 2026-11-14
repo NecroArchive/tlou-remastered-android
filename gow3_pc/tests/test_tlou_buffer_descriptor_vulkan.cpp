@@ -17,6 +17,8 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 static void Check(VkResult r) { if(r!=VK_SUCCESS) { std::fprintf(stderr,"VkResult=%d\n",r); std::abort(); } }
 #include "tlou_graphics_descriptor_check.h"
 int main(int argc, char** argv) {
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+  std::setvbuf(stderr, nullptr, _IONBF, 0);
   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO}; app.apiVersion=VK_API_VERSION_1_1;
   VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO}; ici.pApplicationInfo=&app;
   VkInstance instance; Check(vkCreateInstance(&ici,nullptr,&instance));
@@ -89,6 +91,7 @@ int main(int argc, char** argv) {
       VkQueue queue;vkGetDeviceQueue(device,family,0,&queue);
       for(unsigned j=0;j<n*65536/4;++j)words[j]=j*17u+31u;
       for(unsigned mode=0;mode<3;++mode) {
+        std::fprintf(stderr, "GPU FUSED TRACE before n=%u mode=%u\\n", n, mode);
         Check(vkResetCommandPool(device,pool,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};Check(vkBeginCommandBuffer(cmd,&begin));
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
         for(unsigned k=0;k<128;++k) {
@@ -108,6 +111,7 @@ int main(int argc, char** argv) {
         }
         VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};host.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host,0,nullptr,0,nullptr);
+        std::fprintf(stderr, "GPU FUSED TRACE recorded n=%u mode=%u\\n", n, mode);
         Check(vkEndCommandBuffer(cmd));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;Check(vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE));Check(vkQueueWaitIdle(queue));
         for(unsigned k=0;k<128;++k) {
           uint32_t expected=0;for(unsigned j=0;j<n-1;++j)expected+=words[(j*65536+(k%3)*4096)/4+k];

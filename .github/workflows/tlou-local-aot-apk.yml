@@ -2,7 +2,7 @@ name: TLOU Experimental Local AOT APK
 
 on:
   push:
-    branches: [experiment/tlou-local-aot-20261112, perf/tlou-aot-next-20261113, perf/tlou-buffer-template-20261114, experiment/tlou-compute-descriptor-reuse-20261114]
+    branches: [experiment/tlou-local-aot-20261112, perf/tlou-aot-next-20261113, perf/tlou-buffer-template-20261114]
     paths:
       # Only release a new APK when its actual patched compiler artifact is
       # pinned below; source edits/tests must not publish an unusable image.
@@ -66,8 +66,6 @@ jobs:
           mkdir -p out/descriptor-proof
           c++ -std=c++20 -O1 -g -UNDEBUG -Wall -Wextra -Werror -fsanitize=address,undefined -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_buffer_descriptor_template.cpp -o out/descriptor-proof/guards
           out/descriptor-proof/guards
-          c++ -std=c++20 -O1 -g -UNDEBUG -Wall -Wextra -Werror -fsanitize=address,undefined -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_compute_descriptor_reuse.cpp -o out/descriptor-proof/reuse-guards
-          out/descriptor-proof/reuse-guards
           c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-value -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_buffer_descriptor_hpp.cpp -o out/descriptor-proof/hpp
           out/descriptor-proof/hpp
           python3 gow3_pc/tests/build_tlou_buffer_descriptor_shaders.py out/descriptor-proof/shaders
@@ -80,8 +78,7 @@ jobs:
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT out/descriptor-proof/vulkan-test out/descriptor-proof/shaders --correctness-only > out/descriptor-proof/validation.txt 2>&1
           cat out/descriptor-proof/validation.txt
           if grep -E 'Validation Error|VUID-|SYNC-HAZARD' out/descriptor-proof/validation.txt; then exit 1; fi
-          out/descriptor-proof/vulkan-test out/descriptor-proof/shaders --reuse-only | tee out/descriptor-proof/cost.txt
-          grep -q 'COMPUTE REUSE real Vulkan' out/descriptor-proof/cost.txt
+          out/descriptor-proof/vulkan-test out/descriptor-proof/shaders | tee out/descriptor-proof/cost.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:

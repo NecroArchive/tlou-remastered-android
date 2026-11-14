@@ -88,23 +88,33 @@ int main(int argc, char** argv) {
       VkPipeline pipeline;Check(vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&pipeline_ci,nullptr,&pipeline));
       VkQueue queue;vkGetDeviceQueue(device,family,0,&queue);
       for(unsigned j=0;j<n*65536/4;++j)words[j]=j*17u+31u;
-      for(unsigned mode=0;mode<2;++mode) {
+      for(unsigned mode=0;mode<3;++mode) {
         Check(vkResetCommandPool(device,pool,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};Check(vkBeginCommandBuffer(cmd,&begin));
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
         for(unsigned k=0;k<128;++k) {
-          for(unsigned j=0;j<n;++j)infos[j]={buffer,j*65536u+(j==n-1?mode*16384u:(k%3)*4096u),(k%2?12288u:8192u)};
-          if(mode)push_production_template(cmd,update,layout,infos.data(),n);else push(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,n,writes.data());
-          vkCmdPushConstants(cmd,layout,VK_SHADER_STAGE_COMPUTE_BIT,0,4,&k);vkCmdDispatch(cmd,1,1,1);
+          for(unsigned j=0;j<n;++j)infos[j]={buffer,j*65536u+(j==n-1?(mode==2?32768u:mode*16384u):(k%3)*4096u),(k%2?12288u:8192u)};
+          if(mode==2) {
+            // Exact production helper: both commands inside a single recorder closure.
+            Vulkan::Detail::PushConstantsAndBufferDescriptorTemplate(
+              vk::CommandBuffer{cmd},vk::PipelineLayout{layout},
+              vk::ShaderStageFlagBits::eCompute,k,vk::DescriptorUpdateTemplate{update},
+              std::span<const VkDescriptorBufferInfo>{infos.data(),n});
+          } else {
+            if(mode)push_production_template(cmd,update,layout,infos.data(),n);
+            else push(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,n,writes.data());
+            vkCmdPushConstants(cmd,layout,VK_SHADER_STAGE_COMPUTE_BIT,0,4,&k);
+          }
+          vkCmdDispatch(cmd,1,1,1);
         }
         VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};host.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host,0,nullptr,0,nullptr);
         Check(vkEndCommandBuffer(cmd));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;Check(vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE));Check(vkQueueWaitIdle(queue));
         for(unsigned k=0;k<128;++k) {
           uint32_t expected=0;for(unsigned j=0;j<n-1;++j)expected+=words[(j*65536+(k%3)*4096)/4+k];
-          assert(words[((n-1)*65536+mode*16384)/4+k]==expected);
+          assert(words[((n-1)*65536+(mode==2?32768u:mode*16384u))/4+k]==expected);
         }
       }
-      std::printf("GPU EXACT buffers=%u: 128 changing offsets/ranges, legacy/template outputs PASS\n",n);
+      std::printf("GPU EXACT buffers=%u: 128 changing offsets/ranges, legacy/template/fused outputs PASS\n",n);
       vkDestroyPipeline(device,pipeline,nullptr);vkDestroyShaderModule(device,shader,nullptr);
     }
     if(argc<=2) {

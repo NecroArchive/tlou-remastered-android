@@ -121,14 +121,14 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
         const vk::DescriptorUpdateTemplate update = *buffer_descriptor_template;
         scheduler.Record([update, layout, stage_flags, push_data, buffers](
                              vk::CommandBuffer cmdbuf) {
-            cmdbuf.pushConstants(layout, stage_flags, 0u, sizeof(push_data), &push_data);
-            Detail::PushBufferDescriptorTemplate(cmdbuf, update, layout, buffers);
+            Detail::PushConstantsAndBufferDescriptorTemplate(
+                cmdbuf, layout, stage_flags, push_data, update, buffers);
         });
 
         // Diagnostic at most once per ~524k calls; no per-call clock or hash.
         static thread_local u64 fused_count = 0;
         if ((++fused_count & 524287u) == 0) {
-            std::printf("TLOU fused push+descriptor: calls=%llu (exact buffer-only Vulkan sequence)\\n",
+            std::printf("TLOU fused push+descriptor: calls=%llu (exact buffer-only Vulkan sequence)\n",
                         static_cast<unsigned long long>(fused_count));
             std::fflush(stdout);
         }

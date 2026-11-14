@@ -1,6 +1,10 @@
 name: TLOU AOT TSO v4 APK - Original Verified Signer
 
 on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - '.github/workflows/tlou-aot-tso-v4-original-signer-apk.yml'
   workflow_dispatch:
 
 permissions:
@@ -11,7 +15,7 @@ permissions:
 # the exact existing debug keystore. No new key is generated.
 # Baseline GPU is pinned to successful prior 5e702ad, no descriptor-reuse regression.
 # Original signing cache stays in the original branch, no private keys uploaded.
-# Compiler v4 is from separately gated run 43611614645.
+# Compiler v4 is from SUCCESSFUL gated run 43615358066 (artifact 14122462438).
 concurrency:
   group: tlou-tso-aligned-ar-v4-original-signer
   cancel-in-progress: false
@@ -127,7 +131,7 @@ jobs:
         with:
           name: TLOU-LLVM23-AOT-TSO-ALIGNED-AR-v4-COMPILER-ONLY
           path: out/aot-tso-compiler
-          run-id: '43611614645'
+          run-id: '43615358066'
           github-token: ${{ github.token }}
       - name: Verify tested v4 compiler archive and ARM64 ABI
         run: |

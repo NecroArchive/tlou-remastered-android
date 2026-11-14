@@ -19,6 +19,7 @@
 #include <vector>
 #include <mutex>
 #include <thread>
+#include <cstdio>
 #include <queue>
 
 #include "gow3_toggles.h"
@@ -924,7 +925,7 @@ public:
         ++items;
         commands += (mode == 1);
         if ((items & 65535u) == 0) {
-            std::printf("TLOU host-copy command batching: items=65536 commands=%llu appended=%llu\\n",
+            std::printf("TLOU host-copy command batching: items=65536 commands=%llu appended=%llu\n",
                         static_cast<unsigned long long>(commands),
                         static_cast<unsigned long long>(items - commands));
             items = commands = 0;

@@ -1,0 +1,40 @@
+name: TLOU AOT TSO Aligned Scalar Screen
+on:
+  push:
+    branches: [experiment/tlou-aot-tso-acquire-release-screen-20261114]
+    paths:
+      - '.github/workflows/tlou-aot-tso-scalar-screen.yml'
+      - 'gow3_pc/tests/test_tlou_aot_tso_scalar_screen.cpp'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scalar-screen:
+    name: ARM64 aligned scalar TSO implementation benchmark (NO APK)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate ARM64 assembler and identify memory ordering instructions
+        run: |
+          set -euo pipefail
+          mkdir -p out/tlou-tso-scalar-screen
+          c++ -std=c++20 -O2 -UNDEBUG -S gow3_pc/tests/test_tlou_aot_tso_scalar_screen.cpp -o out/tlou-tso-scalar-screen/bench.s
+          grep -E '\\b(dmb|ldar|stlr)\\b' out/tlou-tso-scalar-screen/bench.s | head -24
+          grep -q 'dmb' out/tlou-tso-scalar-screen/bench.s
+          grep -q 'ldar' out/tlou-tso-scalar-screen/bench.s
+          grep -q 'stlr' out/tlou-tso-scalar-screen/bench.s
+      - name: Measure alternating 1.2 million load+store pairs with identical values
+        run: |
+          set -euo pipefail
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror gow3_pc/tests/test_tlou_aot_tso_scalar_screen.cpp -o out/tlou-tso-scalar-screen/bench
+          out/tlou-tso-scalar-screen/bench | tee out/tlou-tso-scalar-screen/results.txt
+          grep -q 'TLOU AOT TSO SCALAR SCREEN ARM64' out/tlou-tso-scalar-screen/results.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: TLOU-AOT-TSO-Scalar-Screen-ARM64
+          path: |
+            out/tlou-tso-scalar-screen/results.txt
+            out/tlou-tso-scalar-screen/bench.s
+          if-no-files-found: warn

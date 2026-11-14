@@ -108,7 +108,7 @@ static inline void tlou_cpu_publish_native_pid(void) {
     if (!path || !*path) return;
     FILE *file=fopen(path,"w");
     if (!file) return;
-    fprintf(file,"%ld\\n",(long)getpid());
+    fprintf(file,"%ld\n",(long)getpid());
     fclose(file);
 }
 static inline void tlou_cpu_policy_prepare(void) {

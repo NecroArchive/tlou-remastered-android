@@ -327,6 +327,12 @@ public final class GameActivity extends Activity {
                 String originalPreload=env.get("LD_PRELOAD");
                 String aotPreload=new File(nativeAot.engineDirectory,"libgow3cpu.so").getAbsolutePath();
                 env.put("LD_PRELOAD",aotPreload+(originalPreload==null||originalPreload.isEmpty()?"":" "+originalPreload));
+                // AOT frees CPU cycles on command/draw workers, but still submits
+                // thousands of adjacent small guest uploads. Coalesce only
+                // consecutive recorder copy commands, never across Vulkan ops.
+                // Keep FEX unchanged for a comparable baseline.
+                env.put("GOW3_TLOU_HOST_COPY_BATCH","1");
+                RunLog.write(this,"TLOU AOT host-copy command batching: ON (FEX baseline unchanged)");
                 RunLog.write(this,"AOT pthread stack policy preload: "+aotPreload+" (320 KiB → 2 MiB)");
                 env.put("BB_AOT_MISS_LOG",new File(state,"aot-misses.log").getAbsolutePath());
                 // The AOT backend counts EACH dispatched unit and samples

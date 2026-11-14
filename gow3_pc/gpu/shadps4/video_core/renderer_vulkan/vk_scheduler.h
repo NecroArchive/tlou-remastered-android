@@ -622,28 +622,29 @@ public:
     // Only the current unpublished chunk can receive new copy items.
     // Command headers and items are placed directly in RecordChunk::storage:
     // 1 item costs only sizeof(Item), not a reserved 16-item array.
-    [[nodiscard]] bool PushHostCopy(const Gow3Copy::Item& item, u64 sequence,
-                                    std::atomic<u64>& completed) {
+    // 0 = full, 1 = new batch command, 2 = appended to previous batch.
+    [[nodiscard]] int PushHostCopy(const Gow3Copy::Item& item, u64 sequence,
+                                   std::atomic<u64>& completed) {
         static_assert(std::is_trivially_destructible_v<Gow3Copy::Item>);
         if (last_host_batch) {
             const size_t at = (used + alignof(Gow3Copy::Item) - 1) &
                               ~(alignof(Gow3Copy::Item) - 1);
             if (at + sizeof(Gow3Copy::Item) > Capacity) {
-                return false;
+                return 0;
             }
             auto* next = new (storage + at) Gow3Copy::Item(item);
             const bool appended = last_host_batch->batch.Append(next, sequence);
             ASSERT(appended);
             used = at + sizeof(Gow3Copy::Item);
             PrefetchAhead();
-            return true;
+            return 2;
         }
         using Command = HostCopyBatchCommand;
         const size_t offset = (used + alignof(Command) - 1) & ~(alignof(Command) - 1);
         const size_t item_offset = (offset + sizeof(Command) + alignof(Gow3Copy::Item) - 1) &
                                    ~(alignof(Gow3Copy::Item) - 1);
         if (item_offset + sizeof(Gow3Copy::Item) > Capacity) {
-            return false;
+            return 0;
         }
         auto* first_item = new (storage + item_offset) Gow3Copy::Item(item);
         auto* command = new (storage + offset) Command(completed, first_item, sequence);
@@ -656,7 +657,7 @@ public:
         last_host_batch = command;
         used = item_offset + sizeof(Gow3Copy::Item);
         PrefetchAhead();
-        return true;
+        return 1;
     }
 
     /// Raw storage in the chunk for a command's variable-length data; null when full.
@@ -909,11 +910,24 @@ public:
         ASSERT(IsRecordingDeferred());
         ++record_serial;
         const u64 sequence = ++host_copies_issued;
-        if (!record_chunk->PushHostCopy(item, sequence, host_copies_done)) {
+        int mode = record_chunk->PushHostCopy(item, sequence, host_copies_done);
+        if (mode == 0) {
             full_chunks.push_back(std::move(record_chunk));
             record_chunk = AcquireChunk();
-            const bool pushed = record_chunk->PushHostCopy(item, sequence, host_copies_done);
-            ASSERT(pushed);
+            mode = record_chunk->PushHostCopy(item, sequence, host_copies_done);
+            ASSERT(mode == 1);
+        }
+        // Only this experimental AOT path calls RecordHostCopyItem. A once-
+        // per-65536 summary measures real adjacency without per-copy clocks.
+        static thread_local u64 items = 0;
+        static thread_local u64 commands = 0;
+        ++items;
+        commands += (mode == 1);
+        if ((items & 65535u) == 0) {
+            std::printf("TLOU host-copy command batching: items=65536 commands=%llu appended=%llu\\n",
+                        static_cast<unsigned long long>(commands),
+                        static_cast<unsigned long long>(items - commands));
+            items = commands = 0;
         }
     }
 

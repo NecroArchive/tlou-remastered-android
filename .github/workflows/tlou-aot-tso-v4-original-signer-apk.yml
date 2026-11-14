@@ -1,0 +1,252 @@
+name: TLOU AOT TSO v4 APK - Original Verified Signer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+# This workflow runs in the ORIGINAL SIGNING CACHE branch, so it can restore
+# the exact existing debug keystore. No new key is generated.
+# Baseline GPU is pinned to successful prior 5e702ad, no descriptor-reuse regression.
+# Original signing cache stays in the original branch, no private keys uploaded.
+# Compiler v4 is from separately gated run 43611614645.
+concurrency:
+  group: tlou-tso-aligned-ar-v4-original-signer
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: '38352876a98e59594935dcce1441511511c537d4'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Restore pinned AOT v2 signing key (reused on future APKs)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-development-signing-v1
+          fail-on-cache-miss: true
+      - name: Verify pinned AOT v2 certificate before build
+        run: |
+          set -euo pipefail
+          test -s "$HOME/.android/debug.keystore"
+          expected=adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c
+          actual=$(keytool -exportcert -alias androiddebugkey \
+            -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | sha256sum | cut -d' ' -f1)
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Debug signer mismatch: this APK would NOT update the AOT v2 experimental app. Refusing build. Found $actual" >&2
+            exit 1
+          fi
+          echo "Pinned AOT signer verified: $actual"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
+      - name: Check local ARM64 AOT preparation
+        run: |
+          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/bionic/repackage_local_aot.py android/aot/port_runtime.py
+          python3 android/aot/test_aot_local.py -v
+          python3 android/aot/test_aot_quality.py -v
+          python3 android/aot/test_fiber_tls.py -v
+          python3 android/aot/test_aot_fault_probe.py -v
+          python3 android/aot/test_aot_signal_stack.py -v
+          python3 android/aot/test_aot_host_stack.py -v
+          python3 android/aot/test_affinity_preload.py -v
+          python3 android/aot/test_affinity_balance_model.py -v
+          python3 android/aot/test_tso_one_fence.py -v
+          cc -std=gnu11 -O2 -pthread -Wall -Wextra -Werror gow3_pc/tests/test_android_cpu_policy.c -o /tmp/tlou-test-cpu-placement
+          /tmp/tlou-test-cpu-placement
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_readback_watch_gate.cpp -o /tmp/tlou-test-readback-gate
+          /tmp/tlou-test-readback-gate
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_compute_drain_policy.cpp -o /tmp/tlou-test-compute-wait-defer
+          /tmp/tlou-test-compute-wait-defer
+          mkdir -p out/aot-java-test
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouApp0Assets.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouApp0AssetsTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouApp0AssetsTest
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/UpdateInPlace.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/UpdateInPlaceTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.UpdateInPlaceTest
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeProcess.java android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouCpuThreads.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouCpuThreadsTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouCpuThreadsTest
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/AotInstrumentation.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/AotInstrumentationTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.AotInstrumentationTest
+      - name: Retrieve successful native ARM64 APK
+        uses: actions/download-artifact@v4
+        with:
+          name: TheLastOfUsRemastered-Android-v0.1.1-arm64
+          path: out/aot-source-apk
+          run-id: '43315820944'
+          github-token: ${{ github.token }}
+      - name: Build ARM64 AOT CPU from the current source, including TLOU fiber changes
+        env:
+          TLOU_NDK: /usr/local/lib/android/sdk/ndk/29.0.14206865
+        run: bash android/bionic/build_aot_cpu.sh
+      - name: Stage verified alternative AOT CPU, leave production FEX intact
+        run: |
+          set -euo pipefail
+          so=out/android-bionic/aot-backend/libgow3cpu.so
+          test -s "$so"
+          python3 - "$so" <<'PY'
+          import hashlib,sys
+          from pathlib import Path
+          path=Path(sys.argv[1])
+          expected=Path(str(path)+'.sha256').read_text().split()[0]
+          assert hashlib.file_digest(path.open('rb'),'sha256').hexdigest()==expected
+          PY
+          readelf -h "$so" | grep -E 'Machine:.*AArch64'
+          readelf --dyn-syms --wide "$so" | grep -F 'pthread_attr_setstacksize'
+          grep -aFq 'TLOU AOT host pthread stack' "$so"
+          readelf --dyn-syms --wide "$so" | grep -F pthread_setname_np
+          grep -aFq 'TLOU CPU placement:' "$so"
+          readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
+          grep -aFq 'TLOU AOT invalid target' "$so"   # ensure the current traced dispatcher is actually packaged
+          grep -aFq 'TLOU AOT fiber TLS preserved' "$so" # ensure cross-thread TLS fix is linked
+          readelf -Ws "$so" | grep -Fq 'TlouAotProbeFault' # the compiler may fold the write(2) string
+          grep -aFq 'TLOU AOT sceFiberRun' "$so" # require fiber return-code provenance in packaged CPU engine
+          grep -aFq 'TLOU AOT job thread entry' "$so" # thread-type and actual TLS provenance
+          grep -aFq 'TLOU AOT queue lane' "$so" # confirm the failing queue record is captured
+          mkdir -p out/android-bionic/apk-assets/runtime-aot
+          cp "$so" out/android-bionic/apk-assets/runtime-aot/libgow3cpu.so
+          test -s out/android-bionic/aot-backend/libbbcpu.so
+          readelf -d out/android-bionic/aot-backend/libbbcpu.so | grep -F '[libgow3cpu.so]'
+          cp out/android-bionic/aot-backend/libbbcpu.so out/android-bionic/apk-assets/runtime-aot/libbbcpu.so
+      - name: Retrieve tested experimental v4 TSO AOT compiler
+        uses: actions/download-artifact@v4
+        with:
+          name: TLOU-LLVM23-AOT-TSO-ALIGNED-AR-v4-COMPILER-ONLY
+          path: out/aot-tso-compiler
+          run-id: '43611614645'
+          github-token: ${{ github.token }}
+      - name: Verify tested v4 compiler archive and ARM64 ABI
+        run: |
+          set -euo pipefail
+          archive=out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
+          test -s "$archive"
+          (cd out/aot-tso-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
+          mkdir -p out/aot-tso-extract
+          tar -xJf "$archive" -C out/aot-tso-extract
+          test -s out/aot-tso-extract/android/libbbrecomp.so
+          test -s out/aot-tso-extract/android/bundle/libbbcpu-stub.so
+          readelf -h out/aot-tso-extract/android/libbbrecomp.so | grep -E 'Machine:.*AArch64'
+          grep -aFq '4-tlou-tso-aligned-ar-v1' out/aot-tso-extract/android/libbbrecomp.so
+          grep -Fq '"4-tlou-tso-aligned-ar-v1".equals(meta.optString("compiler_version"))' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java
+      - name: Stage exact native game runtime with pinned ARM64 compiler
+        run: |
+          set -euo pipefail
+          apk=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+          test -s "$apk"
+          python3 - "$apk" <<'PY'
+          import hashlib,sys
+          from pathlib import Path
+          path=Path(sys.argv[1])
+          expected=Path(str(path)+'.sha256').read_text().split()[0].lower()
+          with path.open('rb') as f:
+              digest=hashlib.file_digest(f,'sha256').hexdigest()
+          assert digest==expected, f'Native APK SHA mismatch: {digest} != {expected}'
+          print('Pinned native APK digest matched')
+          PY
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
+          export TLOU_TSO_REQUIRED=1
+          export TLOU_TSO_ALIGNED_AR_EXPERIMENT=1
+          export TLOU_AOT_COMPILER_ARCHIVE="$PWD/out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz"
+          bash android/bionic/stage_aot_compiler.sh
+          python3 android/bionic/repackage_local_aot.py "$apk"
+      - name: Fetch GPU library compiled from current optimized renderer
+        uses: actions/download-artifact@v4
+        with:
+          name: TLOU-AOT-Bionic-Optimized-GPU
+          path: out/native-gpu
+          run-id: '43589435245'
+          github-token: ${{ github.token }}
+      - name: Replace old pinned libgow3gpu.so in AOT APK staging (keep same package and signing key)
+        run: |
+          set -euo pipefail
+          (cd out/native-gpu && sha256sum -c libgow3gpu.so.sha256)
+          original=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+          python3 - "$original" <<'PY'
+          from pathlib import Path
+          import hashlib,sys,zipfile
+          new=Path('out/native-gpu/libgow3gpu.so').read_bytes()
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              old=archive.read('lib/arm64-v8a/libgow3gpu.so')
+          assert new[:4]==b'\x7fELF' and len(new)>100000, 'GPU is not a real ELF'
+          assert hashlib.sha256(new).digest()!=hashlib.sha256(old).digest(), 'GPU binary did not change: refuse pointless APK'
+          print('Verified changed Bionic GPU:', hashlib.sha256(old).hexdigest()[:16], '->',hashlib.sha256(new).hexdigest()[:16])
+          PY
+          readelf -h out/native-gpu/libgow3gpu.so | grep -E 'Machine:.*AArch64'
+          grep -aFq 'memory-waits-deferred=' out/native-gpu/libgow3gpu.so
+          grep -aFq 'TLOU compute buffer-only fast' out/native-gpu/libgow3gpu.so
+          grep -aFq 'TLOU pending word-hit' out/native-gpu/libgow3gpu.so
+          cp out/native-gpu/libgow3gpu.so out/android-bionic/apk-jni/arm64-v8a/libgow3gpu.so
+      - name: Generate save-selection fixtures for existing Android tests
+        run: python3 gow3_pc/tests/test_android_save_choice.py
+      - name: Build standalone signed debug APK for local AOT compiler testing
+        run: gradle -p android-launcher :app:assembleDebug :app:testDebugUnitTest --no-daemon --max-workers=2
+      - name: Verify signed APK, unchanged FEX/CPU and ACTUAL newly built GPU
+        run: |
+          set -euo pipefail
+          sdk="$ANDROID_HOME/build-tools/35.0.0"
+          apk=android-launcher/app/build/outputs/apk/debug/app-debug.apk
+          original=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+          "$sdk/apksigner" verify --verbose "$apk"
+          "$sdk/apksigner" verify --print-certs "$apk" | grep -F 'adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c'
+          "$sdk/aapt" dump badging "$apk" | grep "package: name='com.daedalus.tlou.remastered.aotnative2'"
+          python3 android/bionic/check_tools_apk.py "$apk"
+          python3 - "$original" "$apk" <<'PY'
+          import sys,zipfile,hashlib,io
+          with zipfile.ZipFile(sys.argv[1]) as a, zipfile.ZipFile(sys.argv[2]) as b:
+              preserved=[n for n in a.namelist() if n.startswith(('lib/arm64-v8a/','assets/runtime/','assets/drivers/')) and not n.endswith('/')]
+              assert preserved
+              new_gpu=b.read('lib/arm64-v8a/libgow3gpu.so')
+              intended=open('out/native-gpu/libgow3gpu.so','rb').read()
+              assert new_gpu==intended, 'new GPU not packaged: refusing old renderer'
+              assert b'memory-waits-deferred=' in new_gpu, 'Compute memory-wait regression is still in APK'
+              assert b'TLOU compute buffer-only fast' in new_gpu, 'Native compute specialization missing from APK'
+              assert b'TLOU pending word-hit' in new_gpu, 'Native pending filter missing from APK'
+              assert new_gpu!=a.read('lib/arm64-v8a/libgow3gpu.so'), 'old native GPU still packaged'
+              for n in preserved:
+                  if n=='lib/arm64-v8a/libgow3gpu.so': continue
+                  assert hashlib.sha256(a.read(n)).digest()==hashlib.sha256(b.read(n)).digest(),n
+              assert b.getinfo('assets/runtime-aot/libgow3cpu.so').file_size>4096
+              assert b.getinfo('assets/runtime-aot/libbbcpu.so').file_size>=512
+              with zipfile.ZipFile(io.BytesIO(b.read('assets/tools.zip'))) as tools:
+                  for n in ['bin/libbbrecomp.so','source/android/aot/aot_local.py','aot/upstream.sha256']:
+                      assert tools.getinfo(n).file_size>0
+                  aot_source=tools.read('source/android/aot/aot_local.py')
+                  assert b'--no-callee-saved' in aot_source, 'fiber-safe ARM64 recompilation flags not packaged'
+                  assert b'reload_after_calls_for_fibers' in aot_source, 'fiber-safe compiler metadata not packaged'
+                  compiler=tools.read('bin/libbbrecomp.so')
+                  expected_compiler_hash=hashlib.sha256(open('out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz','rb').read()).hexdigest().encode()
+                  assert tools.read('aot/upstream.sha256').strip()==expected_compiler_hash, 'wrong compiler archive'
+                  assert b'4-tlou-tso-aligned-ar-v1' in compiler, 'TSO v4 compiler missing from APK'
+                  assert b'--no-dirty-check' in compiler, 'AOT compiler lacks immutable-unit optimization'
+                  assert b'-O2' in compiler, 'AOT compiler lacks LLVM O2'
+                  assert b'tlou-111-static-llvmO2-immutable-v1' in aot_source, 'AOT fast codegen profile not packaged'
+                  assert b'if version not in {"3-tlou-string", "4-tlou-tso-aligned-ar-v1"}' in aot_source, 'AOT v4 codegen adapter missing'
+              print('Verified',len(preserved)-1,'unchanged native/runtime/driver files; new GPU rebuilt and AOT compiler pinned')
+          PY
+      - name: Publish installable experimental APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-v011-AOT-TSO-ALIGNED-AR-v4-EXPERIMENTAL-APK
+          path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Upload diagnostics when compilation fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-Local-AOT-APK-Errors
+          path: android-launcher/app/build/reports/**
+          if-no-files-found: ignore

@@ -1,27 +1,39 @@
-# Withdrawn: buffer-only compute descriptor templates
+# Log 13: descriptor payload pointer correction
 
-## Regression observed on Adreno
+## Reproduced source defect
 
-The user reported that the image disappeared with APK built from `30febfc`.
-Uploaded `TLOU-Android-Logs (13).zip` contains two runs on Adreno 840 using
-Turnip Gen8 V39 Patched. Both continue presenting roughly 100-120 flips/s,
-without a fatal Vulkan device-loss message. Those counts cannot establish
-rendering correctness or an FPS improvement when the image is missing.
+The original call in `30febfc` used:
 
-The template path is the primary regression suspect because it is the only
-renderer behavior changed from `cb8cb0c`. The precise driver/runtime mechanism
-has not been established. Software-Vulkan output tests and performance results
-were insufficient to qualify this path on the actual device.
+```cpp
+cmdbuf.pushDescriptorSetWithTemplateKHR(update, layout, 0, buffers.data());
+```
 
-Corrective change: restore `vk_pipeline_common.cpp`, `vk_pipeline_common.h` and
-`vk_compute_pipeline.cpp` byte-for-byte from `cb8cb0c`. This removes template
-creation, selection and execution from the production renderer. Every buffer
-binding again uses the previous `pushDescriptorSetKHR` path. PID/launcher fixes,
-package identity and signing certificate stay intact. No settings or game-data
-cleanup is required by this source correction.
+Vulkan-Hpp has both a raw `const void*` overload and an enhanced
+`const DataType&` overload. A typed `const DescriptorBufferInfo*` selects the
+latter. Its implementation forwards `&data`: the address of the pointer argument,
+not the array of descriptor infos. The driver therefore interprets unrelated
+stack bytes as buffer handles/offsets/ranges. This is a concrete source defect,
+not an established Turnip driver bug.
 
-The standalone tests below are retained as investigation evidence only. They
-no longer gate or qualify an APK and do not establish Turnip correctness.
+A test using the real Vulkan-Hpp header and a capture dispatch function reproduces
+the incorrect forwarded address. The shared production helper forces
+`static_cast<const void*>(buffers.data())` and verifies exact pointer and byte
+identity for 100000 changing payloads. The real software-Vulkan execution test
+now calls this same C++ helper instead of bypassing it through the C API. That
+was the missing coverage in the original tests.
+
+`477b765` temporarily withdrew the feature while the cause was investigated.
+The follow-up reinstates it with the corrected C++ call and tests on both native
+ARM64 and x86-64 before GPU compilation/APK packaging. No rendering recovery on
+the user's physical device has yet been confirmed.
+
+## User evidence
+
+`TLOU-Android-Logs (13).zip` contains two runs on Adreno 840 with Turnip Gen8 V39
+Patched, continued flips near 100-120/s and no fatal Vulkan device-loss message.
+The user reports a missing image. These flip counts are not evidence of correct
+rendering or improved FPS. The handled AOT/readback fault traces are not by
+themselves a fatal process crash; the latest launcher reports termination 143.
 
 ## Previous candidate evidence (not a device validation)
 

@@ -1,4 +1,6 @@
+#define VK_ENABLE_BETA_EXTENSIONS
 #include <vulkan/vulkan.h>
+#include "video_core/renderer_vulkan/vk_common.h"
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -9,6 +11,8 @@
 #include <string>
 #include <vector>
 #include "video_core/renderer_vulkan/tlou_buffer_descriptor_template.h"
+
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 static void Check(VkResult r) { if(r!=VK_SUCCESS) { std::fprintf(stderr,"VkResult=%d\n",r); std::abort(); } }
 int main(int argc, char** argv) {
@@ -27,6 +31,13 @@ int main(int argc, char** argv) {
   VkDevice device; Check(vkCreateDevice(physical,&dci,nullptr,&device));
   auto push=(PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(device,"vkCmdPushDescriptorSetKHR");
   auto push_template=(PFN_vkCmdPushDescriptorSetWithTemplateKHR)vkGetDeviceProcAddr(device,"vkCmdPushDescriptorSetWithTemplateKHR"); assert(push&&push_template);
+  VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdPushDescriptorSetWithTemplateKHR=push_template;
+  const auto push_production_template=[&](VkCommandBuffer commands, VkDescriptorUpdateTemplate update,
+                                         VkPipelineLayout layout, const VkDescriptorBufferInfo* buffers, unsigned n) {
+    Vulkan::Detail::PushBufferDescriptorTemplate(vk::CommandBuffer{commands},
+      vk::DescriptorUpdateTemplate{update},vk::PipelineLayout{layout},
+      std::span<const VkDescriptorBufferInfo>{buffers,n});
+  };
   VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; bci.size=1024*1024;bci.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
   VkBuffer buffer;Check(vkCreateBuffer(device,&bci,nullptr,&buffer));VkMemoryRequirements mr;vkGetBufferMemoryRequirements(device,buffer,&mr);
   VkPhysicalDeviceMemoryProperties mp;vkGetPhysicalDeviceMemoryProperties(physical,&mp);
@@ -81,7 +92,7 @@ int main(int argc, char** argv) {
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);
         for(unsigned k=0;k<128;++k) {
           for(unsigned j=0;j<n;++j)infos[j]={buffer,j*65536u+(j==n-1?mode*16384u:(k%3)*4096u),(k%2?12288u:8192u)};
-          if(mode)push_template(cmd,update,layout,0,infos.data());else push(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,n,writes.data());
+          if(mode)push_production_template(cmd,update,layout,infos.data(),n);else push(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,n,writes.data());
           vkCmdPushConstants(cmd,layout,VK_SHADER_STAGE_COMPUTE_BIT,0,4,&k);vkCmdDispatch(cmd,1,1,1);
         }
         VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};host.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
@@ -115,7 +126,7 @@ int main(int argc, char** argv) {
       auto middle=std::chrono::steady_clock::now();
       Check(vkResetCommandPool(device,pool,0));VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};Check(vkBeginCommandBuffer(cmd,&begin));
       for(unsigned k=0;k<Calls;++k) {
-        if(mode)push_template(cmd,update,layout,0,saved_infos.data()+k*n);
+        if(mode)push_production_template(cmd,update,layout,saved_infos.data()+k*n,n);
         else push(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,n,saved_writes.data()+k*n);
       }
       Check(vkEndCommandBuffer(cmd)); auto end=std::chrono::steady_clock::now();

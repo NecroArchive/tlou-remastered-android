@@ -101,6 +101,9 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                "Failed to create compute pipeline layout: {}", vk::to_string(layout_result));
     pipeline_layout = std::move(layout);
     SetObjectName(device, *pipeline_layout, "Compute PipelineLayout {}", debug_str);
+    if (info->images.empty() && info->samplers.empty()) {
+        InitializeBufferDescriptorTemplate(static_cast<u32>(info->buffers.size()));
+    }
 
     const vk::ComputePipelineCreateInfo compute_pipeline_ci = {
         .stage = shader_ci,

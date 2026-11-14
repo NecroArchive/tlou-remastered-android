@@ -5,6 +5,16 @@
 #include <span>
 
 namespace Vulkan::Detail {
+// Vulkan-Hpp also offers a const DataType& overload. A typed pointer selects
+// that overload and forwards &pointer, not the descriptor payload. Force the
+// raw void-pointer API; callers and tests share this exact wrapper.
+template <class CommandBuffer, class Update, class Layout, class BufferInfo>
+void PushBufferDescriptorTemplate(CommandBuffer command, Update update, Layout layout,
+                                  std::span<const BufferInfo> buffers) {
+    command.pushDescriptorSetWithTemplateKHR(
+        update, layout, 0, static_cast<const void*>(buffers.data()));
+}
+
 // Only the immutable descriptor layout is reused. Every invocation still
 // snapshots the current buffer handles, offsets and ranges for its dispatch.
 // Keep unusual writes (arrays, extension chains, noncanonical pointers) on

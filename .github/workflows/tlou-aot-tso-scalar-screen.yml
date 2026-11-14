@@ -20,7 +20,7 @@ jobs:
           set -euo pipefail
           mkdir -p out/tlou-tso-scalar-screen
           c++ -std=c++20 -O2 -UNDEBUG -S gow3_pc/tests/test_tlou_aot_tso_scalar_screen.cpp -o out/tlou-tso-scalar-screen/bench.s
-          grep -E '\\b(dmb|ldar|stlr)\\b' out/tlou-tso-scalar-screen/bench.s | head -24
+          grep -E '(dmb|ldar|stlr)' out/tlou-tso-scalar-screen/bench.s | head -24
           grep -q 'dmb' out/tlou-tso-scalar-screen/bench.s
           grep -q 'ldar' out/tlou-tso-scalar-screen/bench.s
           grep -q 'stlr' out/tlou-tso-scalar-screen/bench.s

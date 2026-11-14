@@ -15,6 +15,17 @@ void PushBufferDescriptorTemplate(CommandBuffer command, Update update, Layout l
         update, layout, 0, static_cast<const void*>(buffers.data()));
 }
 
+// Keep the two Vulkan commands in the same order as the original separate
+// recorder closures. Production and real Vulkan pixel tests call this helper.
+template <class CommandBuffer, class Layout, class StageFlags, class PushData,
+          class Update, class BufferInfo>
+void PushConstantsAndBufferDescriptorTemplate(
+    CommandBuffer command, Layout layout, StageFlags stages,
+    const PushData& push_data, Update update, std::span<const BufferInfo> buffers) {
+    command.pushConstants(layout, stages, 0u, sizeof(push_data), &push_data);
+    PushBufferDescriptorTemplate(command, update, layout, buffers);
+}
+
 // Only the immutable descriptor layout is reused. Every invocation still
 // snapshots the current buffer handles, offsets and ranges for its dispatch.
 // Keep unusual writes (arrays, extension chains, noncanonical pointers) on

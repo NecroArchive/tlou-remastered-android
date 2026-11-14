@@ -204,7 +204,7 @@ final class PortSettings {
         StringBuilder result=new StringBuilder("TLOU launch settings: resolution=")
             .append(prefs(context).getString("resolution","original"));
         result.append("; renderer=Vulkan; CPU=").append("aot".equals(prefs(context).getString("cpu_backend","fex"))?"native AOT ARM64 (experimental)":"FEX ARM64");
-        result.append("; shader-scan-diagnostic=on");
+        result.append("; shader-scan-diagnostic=").append(env.containsKey("TLOU_SHADER_SCAN_PROFILE")?"on":"off");
         result.append("; shader-scan-method=")
               .append(prefs(context).getBoolean("shader_scan_scalar",false)?"original":"NEON");
         result.append("; game-raster=").append(env.getOrDefault("TLOU_EXPECT_SCENE_SIZE","1920x1080"));

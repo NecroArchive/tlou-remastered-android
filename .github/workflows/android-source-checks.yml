@@ -33,7 +33,7 @@ jobs:
         run: python3 -m compileall -q android
       - name: Native PID fallback and process ownership
         run: |
-          cc -std=c11 -O2 -D_GNU_SOURCE -Wall -Wextra -Werror -pthread gow3_pc/tests/test_tlou_native_pid_publish.c -o /tmp/tlou-pid-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread gow3_pc/tests/test_tlou_native_pid_publish.c -o /tmp/tlou-pid-test
           /tmp/tlou-pid-test
       - name: Test SFO title guards and read-only update overlay
         run: |

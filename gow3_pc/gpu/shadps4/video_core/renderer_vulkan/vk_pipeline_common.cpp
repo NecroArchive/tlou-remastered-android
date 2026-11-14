@@ -3,8 +3,10 @@
 
 #include <cstdlib>
 #include <span>
+#include <vector>
 
 #include "video_core/renderer_vulkan/vk_descriptor_record.h"
+#include "video_core/renderer_vulkan/tlou_buffer_descriptor_template.h"
 
 #include <boost/container/small_vector.hpp>
 #include <boost/container/static_vector.hpp>
@@ -24,6 +26,39 @@ Pipeline::Pipeline(const Instance& instance_, Scheduler& scheduler_, DescriptorH
       is_compute{is_compute_} {}
 
 Pipeline::~Pipeline() = default;
+
+void Pipeline::InitializeBufferDescriptorTemplate(u32 buffer_count) {
+    if (!uses_push_descriptors || buffer_count < 4 ||
+        !VULKAN_HPP_DEFAULT_DISPATCHER.vkCreateDescriptorUpdateTemplate ||
+        !VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdPushDescriptorSetWithTemplateKHR) {
+        return;
+    }
+    std::vector<vk::DescriptorUpdateTemplateEntry> entries;
+    entries.reserve(buffer_count);
+    for (u32 i = 0; i < buffer_count; ++i) {
+        entries.push_back(vk::DescriptorUpdateTemplateEntry{
+            .dstBinding = i,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eStorageBuffer,
+            .offset = i * sizeof(vk::DescriptorBufferInfo),
+            .stride = sizeof(vk::DescriptorBufferInfo),
+        });
+    }
+    const vk::DescriptorUpdateTemplateCreateInfo info{
+        .descriptorUpdateEntryCount = buffer_count,
+        .pDescriptorUpdateEntries = entries.data(),
+        .templateType = vk::DescriptorUpdateTemplateType::ePushDescriptorsKHR,
+        .pipelineBindPoint = vk::PipelineBindPoint::eCompute,
+        .pipelineLayout = *pipeline_layout,
+        .set = 0,
+    };
+    auto [result, update] = instance.GetDevice().createDescriptorUpdateTemplateUnique(info);
+    if (result == vk::Result::eSuccess) {
+        buffer_descriptor_template = std::move(update);
+        buffer_descriptor_count = buffer_count;
+    }
+}
 
 // The stage layout never changes for a compiled graphics pipeline. Rechecking
 // every image mip mode and every buffer write flag for each draw repeats work
@@ -73,6 +108,22 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
     }
 
     if (uses_push_descriptors) {
+        if (buffer_descriptor_template && source_images.empty() &&
+            Detail::MatchesBufferDescriptorTemplate(
+                std::span<const vk::WriteDescriptorSet>{set_writes}, source_buffers,
+                buffer_descriptor_count, vk::DescriptorType::eStorageBuffer)) {
+            // The compact per-dispatch snapshot replaces the per-write copies
+            // and pointer fixups, plus the driver's repeated write decoding.
+            // Data and closure must stay in the same recording chunk.
+            scheduler.ReserveRecordData(source_buffers.size_bytes() +
+                                        alignof(vk::DescriptorBufferInfo) + 64);
+            const auto buffers = scheduler.RecordData(source_buffers);
+            const vk::DescriptorUpdateTemplate update = *buffer_descriptor_template;
+            scheduler.Record([update, layout, buffers](vk::CommandBuffer cmdbuf) {
+                cmdbuf.pushDescriptorSetWithTemplateKHR(update, layout, 0, buffers.data());
+            });
+            return;
+        }
         if (!scheduler.IsRecordingDeferred()) {
             scheduler.Record([&](vk::CommandBuffer cmdbuf) {
                 cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, set_writes);

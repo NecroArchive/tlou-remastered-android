@@ -2,7 +2,7 @@ name: TLOU Experimental Local AOT APK
 
 on:
   push:
-    branches: [experiment/tlou-local-aot-20261112, perf/tlou-aot-next-20261113]
+    branches: [experiment/tlou-local-aot-20261112, perf/tlou-aot-next-20261113, perf/tlou-buffer-template-20261114]
     paths:
       # Only release a new APK when its actual patched compiler artifact is
       # pinned below; source edits/tests must not publish an unusable image.
@@ -48,7 +48,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  descriptor-proof:
+    name: Exact descriptor payloads and native Vulkan cost
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real software Vulkan and shader compiler
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers glslang-tools
+      - name: Validate every fallback and changing descriptor payload
+        run: |
+          set -euo pipefail
+          mkdir -p out/descriptor-proof
+          c++ -std=c++20 -O1 -g -UNDEBUG -Wall -Wextra -Werror -fsanitize=address,undefined -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_buffer_descriptor_template.cpp -o out/descriptor-proof/guards
+          out/descriptor-proof/guards
+          python3 gow3_pc/tests/build_tlou_buffer_descriptor_shaders.py out/descriptor-proof/shaders
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -Wno-missing-field-initializers -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_buffer_descriptor_vulkan.cpp -lvulkan -o out/descriptor-proof/vulkan-test
+      - name: GPU output equality with validation and alternating benchmark
+        run: |
+          set -euo pipefail
+          export VK_ICD_FILENAMES=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$VK_ICD_FILENAMES"
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation out/descriptor-proof/vulkan-test out/descriptor-proof/shaders --correctness-only > out/descriptor-proof/validation.txt 2>&1
+          cat out/descriptor-proof/validation.txt
+          if grep -E 'Validation Error|VUID-' out/descriptor-proof/validation.txt; then exit 1; fi
+          out/descriptor-proof/vulkan-test out/descriptor-proof/shaders | tee out/descriptor-proof/cost.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: TLOU-buffer-template-proof-${{ matrix.runner }}
+          path: out/descriptor-proof/*.txt
+          if-no-files-found: warn
   gpu:
+    needs: descriptor-proof
     name: Cross-compile optimized Bionic TLOU Vulkan renderer
     runs-on: ubuntu-24.04
     timeout-minutes: 180

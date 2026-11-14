@@ -15,6 +15,7 @@
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 static void Check(VkResult r) { if(r!=VK_SUCCESS) { std::fprintf(stderr,"VkResult=%d\n",r); std::abort(); } }
+#include "tlou_graphics_descriptor_check.h"
 int main(int argc, char** argv) {
   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO}; app.apiVersion=VK_API_VERSION_1_1;
   VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO}; ici.pApplicationInfo=&app;
@@ -38,7 +39,7 @@ int main(int argc, char** argv) {
       vk::DescriptorUpdateTemplate{update},vk::PipelineLayout{layout},
       std::span<const VkDescriptorBufferInfo>{buffers,n});
   };
-  VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; bci.size=1024*1024;bci.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+  VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; bci.size=1024*1024;bci.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT;
   VkBuffer buffer;Check(vkCreateBuffer(device,&bci,nullptr,&buffer));VkMemoryRequirements mr;vkGetBufferMemoryRequirements(device,buffer,&mr);
   VkPhysicalDeviceMemoryProperties mp;vkGetPhysicalDeviceMemoryProperties(physical,&mp);
   unsigned memory_type=0;
@@ -140,6 +141,7 @@ int main(int argc, char** argv) {
     if(n==16) assert(producer[1][20]+consumer[1][20] < 0.95*(producer[0][20]+consumer[0][20]));
     }
     vkDestroyDescriptorUpdateTemplate(device,update,nullptr);vkDestroyPipelineLayout(device,layout,nullptr);vkDestroyDescriptorSetLayout(device,set,nullptr);
+    if(argc>1)CheckGraphicsDescriptors(device,physical,buffer,words,pool,cmd,argv[1],n,argc<=2);
   }
   vkDestroyCommandPool(device,pool,nullptr);vkUnmapMemory(device,memory);vkDestroyBuffer(device,buffer,nullptr);vkFreeMemory(device,memory,nullptr);vkDestroyDevice(device,nullptr);vkDestroyInstance(instance,nullptr);
 }

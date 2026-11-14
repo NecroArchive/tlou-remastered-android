@@ -49,7 +49,8 @@ void Pipeline::InitializeBufferDescriptorTemplate(u32 buffer_count) {
         .descriptorUpdateEntryCount = buffer_count,
         .pDescriptorUpdateEntries = entries.data(),
         .templateType = vk::DescriptorUpdateTemplateType::ePushDescriptorsKHR,
-        .pipelineBindPoint = vk::PipelineBindPoint::eCompute,
+        .pipelineBindPoint = IsCompute() ? vk::PipelineBindPoint::eCompute
+                                         : vk::PipelineBindPoint::eGraphics,
         .pipelineLayout = *pipeline_layout,
         .set = 0,
     };

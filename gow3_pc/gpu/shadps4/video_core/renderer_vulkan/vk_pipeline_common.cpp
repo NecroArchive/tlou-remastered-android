@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstdlib>
-#include <chrono>
-#include <cstdio>
 #include <span>
 #include <vector>
 
@@ -107,7 +105,6 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
 
     // Bind descriptor set.
     if (set_writes.empty()) {
-        if (IsCompute()) scheduler.InvalidateComputeDescriptorReuse();
         return;
     }
 
@@ -116,39 +113,6 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
             Detail::MatchesBufferDescriptorTemplate(
                 std::span<const vk::WriteDescriptorSet>{set_writes}, source_buffers,
                 buffer_descriptor_count, vk::DescriptorType::eStorageBuffer)) {
-            // A second push of BIT-IDENTICAL compute descriptors in the same
-            // command buffer is redundant. The pipeline layout, submission tick,
-            // direct Vulkan mutation epoch, every handle, offset and range are
-            // checked. Push constants and dispatch commands are NOT skipped.
-            if (IsCompute()) {
-                const bool identical =
-                    scheduler.ComputeBufferDescriptorsIdentical(layout, source_buffers);
-                // At most one diagnostic line per five seconds in hot gameplay.
-                // The comparison itself has no timer or atomic operations.
-                struct ReuseStats {
-                    u64 checks = 0;
-                    u64 skipped = 0;
-                    std::chrono::steady_clock::time_point last =
-                        std::chrono::steady_clock::now();
-                };
-                static thread_local ReuseStats stats;
-                ++stats.checks;
-                stats.skipped += identical;
-                if ((stats.checks & 65535u) == 0) {
-                    const auto now = std::chrono::steady_clock::now();
-                    if (now - stats.last >= std::chrono::seconds(5)) {
-                        std::printf("TLOU compute descriptor reuse (5 s): "
-                                    "checked=%llu skipped=%llu hit-rate=%.1f%%\n",
-                                    static_cast<unsigned long long>(stats.checks),
-                                    static_cast<unsigned long long>(stats.skipped),
-                                    100.0 * double(stats.skipped) / double(stats.checks));
-                        std::fflush(stdout);
-                        stats.checks = stats.skipped = 0;
-                        stats.last = now;
-                    }
-                }
-                if (identical) return;
-            }
             // The compact per-dispatch snapshot replaces the per-write copies
             // and pointer fixups, plus the driver's repeated write decoding.
             // Data and closure must stay in the same recording chunk.
@@ -161,7 +125,6 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
             });
             return;
         }
-        if (IsCompute()) scheduler.InvalidateComputeDescriptorReuse();
         if (!scheduler.IsRecordingDeferred()) {
             scheduler.Record([&](vk::CommandBuffer cmdbuf) {
                 cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, set_writes);
@@ -267,7 +230,6 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
         return;
     }
 
-    if (IsCompute()) scheduler.InvalidateComputeDescriptorReuse();
     // Descriptor set updates are device calls: they stay on this thread.
     const auto desc_set = desc_heap.Commit(*desc_layout);
     for (auto& set_write : set_writes) {

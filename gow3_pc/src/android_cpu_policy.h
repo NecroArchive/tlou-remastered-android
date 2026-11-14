@@ -100,7 +100,19 @@ static inline uint64_t tlou_cpu_read(unsigned cpu,const char *field) {
     int valid=fscanf(file,"%llu",&value)==1;fclose(file);
     return valid ? (uint64_t)value : 0;
 }
+// The Java shell wrapper may not publish its pid on some Android builds.
+// Publish from the real native runtime as well, once at startup (never per frame).
+// The path is an app-private file supplied by GameActivity.
+static inline void tlou_cpu_publish_native_pid(void) {
+    const char *path=getenv("TLOU_NATIVE_PID_FILE");
+    if (!path || !*path) return;
+    FILE *file=fopen(path,"w");
+    if (!file) return;
+    fprintf(file,"%ld\\n",(long)getpid());
+    fclose(file);
+}
 static inline void tlou_cpu_policy_prepare(void) {
+    tlou_cpu_publish_native_pid();
     // Called once before FEX/GPU/helper threads exist. Environment is immutable afterwards.
     clockid_t clock;
     if (pthread_getcpuclockid(pthread_self(),&clock)==0) {

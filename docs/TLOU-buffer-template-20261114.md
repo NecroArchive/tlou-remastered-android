@@ -1,4 +1,30 @@
-# Buffer-only compute descriptor templates
+# Withdrawn: buffer-only compute descriptor templates
+
+## Regression observed on Adreno
+
+The user reported that the image disappeared with APK built from `30febfc`.
+Uploaded `TLOU-Android-Logs (13).zip` contains two runs on Adreno 840 using
+Turnip Gen8 V39 Patched. Both continue presenting roughly 100-120 flips/s,
+without a fatal Vulkan device-loss message. Those counts cannot establish
+rendering correctness or an FPS improvement when the image is missing.
+
+The template path is the primary regression suspect because it is the only
+renderer behavior changed from `cb8cb0c`. The precise driver/runtime mechanism
+has not been established. Software-Vulkan output tests and performance results
+were insufficient to qualify this path on the actual device.
+
+Corrective change: restore `vk_pipeline_common.cpp`, `vk_pipeline_common.h` and
+`vk_compute_pipeline.cpp` byte-for-byte from `cb8cb0c`. This removes template
+creation, selection and execution from the production renderer. Every buffer
+binding again uses the previous `pushDescriptorSetKHR` path. PID/launcher fixes,
+package identity and signing certificate stay intact. No settings or game-data
+cleanup is required by this source correction.
+
+The standalone tests below are retained as investigation evidence only. They
+no longer gate or qualify an APK and do not establish Turnip correctness.
+
+## Previous candidate evidence (not a device validation)
+
 
 Base: `cb8cb0c338a20b5b03fd562a6a464a69e6cbd5fb`
 (`fix/tlou-aot-log12-pid-20261113`).
@@ -42,11 +68,11 @@ All passed. A separate validation-layer run produced no VUID/validation errors.
 Production fallback checks and 100000 changing payloads passed ASan/UBSan
 (LeakSanitizer disabled locally because the runtime uses ptrace).
 
-## CI release gate
+## Historical CI release gate (removed after regression)
 
-The experimental AOT workflow runs guard tests, exact GPU checks with validation,
+The candidate experimental AOT workflow ran guard tests, exact GPU checks with validation,
 and the real-driver cost benchmark on x86-64 and native ARM64. The 16-buffer case
-must save at least 5% total measured time before the GPU build starts. The
+had to save at least 5% total measured time before the GPU build started. The
 ordinary Bionic renderer cross-compilation then validates the production C++.
 APK packaging retains the existing AOT package and pinned signing certificate.
 The FEX stable branch is not changed.

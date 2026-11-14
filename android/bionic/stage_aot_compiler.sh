@@ -52,7 +52,11 @@ upstream_licenses=$(find "$stage/extract" -type d -name licenses -print -quit)
 if [[ -n "$upstream_licenses" ]]; then cp -a "$upstream_licenses" "$stage/payload/licenses"; fi
 readelf -h "$stage/payload/bin/libbbrecomp.so" | grep -Eq 'Machine:.*AArch64'
 if [[ "${TLOU_TSO_REQUIRED:-0}" == "1" ]]; then
-  if ! grep -aFq '3-tlou-string' "$stage/payload/bin/libbbrecomp.so"; then
+  required_shard='3-tlou-string'
+  if [[ "${TLOU_TSO_ALIGNED_AR_EXPERIMENT:-0}" == "1" ]]; then
+    required_shard='4-tlou-tso-aligned-ar-v1'
+  fi
+  if ! grep -aFq "$required_shard" "$stage/payload/bin/libbbrecomp.so"; then
     echo "Refusing compiler without verified TSO lowering/shard version" >&2
     exit 2
   fi

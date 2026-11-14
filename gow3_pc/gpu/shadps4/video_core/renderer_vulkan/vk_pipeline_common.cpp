@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstdlib>
+#include <cstdio>
 #include <span>
 #include <vector>
 
@@ -99,32 +100,50 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
         IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
     const auto stage_flags = IsCompute() ? vk::ShaderStageFlagBits::eCompute : AllGraphicsStageBits;
     const vk::PipelineLayout layout = *pipeline_layout;
+
+    // Exact buffer-only push-descriptor layouts are the dominant TLOU compute path.
+    // Queue a SINGLE recorder closure containing the same two Vulkan calls, in the
+    // original order: push constants first, push descriptors second. No descriptor,
+    // dispatch, synchronization or guest write is skipped. Other layouts retain the
+    // original two-command recording path.
+    if (uses_push_descriptors && !set_writes.empty() && buffer_descriptor_template &&
+        source_images.empty() &&
+        Detail::MatchesBufferDescriptorTemplate(
+            std::span<const vk::WriteDescriptorSet>{set_writes}, source_buffers,
+            buffer_descriptor_count, vk::DescriptorType::eStorageBuffer)) {
+        // A single closure now owns a copy of PushData (<=128 bytes) as well as
+        // the descriptor span. Reserve space for both the snapshot AND closure
+        // before copying: the recorder must not recycle the snapshot's chunk.
+        scheduler.ReserveRecordData(source_buffers.size_bytes() +
+                                    alignof(vk::DescriptorBufferInfo) +
+                                    sizeof(push_data) + 256);
+        const auto buffers = scheduler.RecordData(source_buffers);
+        const vk::DescriptorUpdateTemplate update = *buffer_descriptor_template;
+        scheduler.Record([update, layout, stage_flags, push_data, buffers](
+                             vk::CommandBuffer cmdbuf) {
+            cmdbuf.pushConstants(layout, stage_flags, 0u, sizeof(push_data), &push_data);
+            Detail::PushBufferDescriptorTemplate(cmdbuf, update, layout, buffers);
+        });
+
+        // Diagnostic at most once per ~524k calls; no per-call clock or hash.
+        static thread_local u64 fused_count = 0;
+        if ((++fused_count & 524287u) == 0) {
+            std::printf("TLOU fused push+descriptor: calls=%llu (exact buffer-only Vulkan sequence)\\n",
+                        static_cast<unsigned long long>(fused_count));
+            std::fflush(stdout);
+        }
+        return;
+    }
+
     scheduler.Record([layout, stage_flags, push_data](vk::CommandBuffer cmdbuf) {
         cmdbuf.pushConstants(layout, stage_flags, 0u, sizeof(push_data), &push_data);
     });
 
-    // Bind descriptor set.
     if (set_writes.empty()) {
         return;
     }
 
     if (uses_push_descriptors) {
-        if (buffer_descriptor_template && source_images.empty() &&
-            Detail::MatchesBufferDescriptorTemplate(
-                std::span<const vk::WriteDescriptorSet>{set_writes}, source_buffers,
-                buffer_descriptor_count, vk::DescriptorType::eStorageBuffer)) {
-            // The compact per-dispatch snapshot replaces the per-write copies
-            // and pointer fixups, plus the driver's repeated write decoding.
-            // Data and closure must stay in the same recording chunk.
-            scheduler.ReserveRecordData(source_buffers.size_bytes() +
-                                        alignof(vk::DescriptorBufferInfo) + 64);
-            const auto buffers = scheduler.RecordData(source_buffers);
-            const vk::DescriptorUpdateTemplate update = *buffer_descriptor_template;
-            scheduler.Record([update, layout, buffers](vk::CommandBuffer cmdbuf) {
-                Detail::PushBufferDescriptorTemplate(cmdbuf, update, layout, buffers);
-            });
-            return;
-        }
         if (!scheduler.IsRecordingDeferred()) {
             scheduler.Record([&](vk::CommandBuffer cmdbuf) {
                 cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, set_writes);

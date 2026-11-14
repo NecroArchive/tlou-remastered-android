@@ -1,0 +1,84 @@
+name: TLOU AOT TSO guarded compiler - source and ARM64 multicore gate
+
+on:
+  push:
+    branches: [experiment/tlou-aot-tso-acquire-release-screen-20261114]
+    paths:
+      - 'android/aot/patch_recompiler_tso_aligned_ar.py'
+      - 'android/aot/test_tso_aligned_ar.py'
+      - 'android/aot/build_recompiler_tso.sh'
+      - 'gow3_pc/tests/test_tlou_aot_tso_guarded.cpp'
+      - 'gow3_pc/tests/test_tlou_aot_tso_litmus.cpp'
+      - '.github/workflows/tlou-aot-tso-guarded-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-guard:
+    name: Compiler-source patch / strict fallbacks / upstream diff
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate source patch, alignment guards and baseline
+        run: |
+          set -euo pipefail
+          python3 -m py_compile android/aot/patch_recompiler_tso.py android/aot/patch_recompiler_tso_aligned_ar.py android/aot/test_tso_aligned_ar.py
+          python3 android/aot/test_tso_aligned_ar.py -v
+          python3 android/aot/test_tso_one_fence.py -v
+          bash -n android/aot/build_recompiler_tso.sh
+      - name: Patch ACTUAL pinned upstream compiler and verify unaffected native instruction cases
+        run: |
+          set -euo pipefail
+          mkdir -p out/tso-upstream-proof
+          cd out/tso-upstream-proof
+          git init -q upstream
+          cd upstream
+          git remote add origin https://github.com/ducvd89/Bloodborne-android-rebuild-tool.git
+          git fetch --depth=1 origin 6ebb33b0c729a3942fddaa03965360c699d7d900
+          git checkout --detach -f FETCH_HEAD
+          cd ../../..
+          python3 android/aot/patch_recompiler_tso.py out/tso-upstream-proof/upstream
+          python3 android/aot/patch_recompiler_vpcmpistrx.py out/tso-upstream-proof/upstream
+          python3 android/aot/patch_recompiler_tso_aligned_ar.py out/tso-upstream-proof/upstream
+          python3 android/aot/patch_recompiler_tso_aligned_ar.py out/tso-upstream-proof/upstream
+          grep -q '4-tlou-tso-aligned-ar-v1' out/tso-upstream-proof/upstream/src/version.h
+          grep -q 'ld->setAtomic(AtomicOrdering::Acquire)' out/tso-upstream-proof/upstream/src/lower_ops.cpp
+          grep -q 'st->setAtomic(AtomicOrdering::Release)' out/tso-upstream-proof/upstream/src/lower_ops.cpp
+          grep -q 'tso.acquire.unaligned' out/tso-upstream-proof/upstream/src/lower_ops.cpp
+          grep -q 'tso.release.unaligned' out/tso-upstream-proof/upstream/src/lower_ops.cpp
+          (cd out/tso-upstream-proof/upstream && git diff --check && git diff --stat)
+  arm64-runtime:
+    name: ARM64 aligned and unaligned exact-value / MP LB SB IRIW
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Benchmark guarded 8/16/32/64-bit accesses with actual unaligned fallback
+        run: |
+          set -euo pipefail
+          mkdir -p out/tso-arm64-proof
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror gow3_pc/tests/test_tlou_aot_tso_guarded.cpp -o out/tso-arm64-proof/guarded
+          out/tso-arm64-proof/guarded | tee out/tso-arm64-proof/guarded.txt
+          test "$(grep -c '^TLOU ARM64 TSO GUARDED' out/tso-arm64-proof/guarded.txt)" -eq 12
+          grep -q 'size=8 unaligned=50%' out/tso-arm64-proof/guarded.txt
+      - name: Verify ARM64 atomic instructions and run multiple concurrent guest-like threads
+        run: |
+          set -euo pipefail
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread gow3_pc/tests/test_tlou_aot_tso_litmus.cpp -o out/tso-arm64-proof/litmus
+          c++ -std=c++20 -O2 -S gow3_pc/tests/test_tlou_aot_tso_guarded.cpp -o out/tso-arm64-proof/guarded.s
+          grep -q 'ldar' out/tso-arm64-proof/guarded.s
+          grep -q 'stlr' out/tso-arm64-proof/guarded.s
+          grep -q 'dmb' out/tso-arm64-proof/guarded.s
+          out/tso-arm64-proof/litmus | tee out/tso-arm64-proof/litmus.txt
+          grep -q '^TLOU TSO MP ARM64.*PASS' out/tso-arm64-proof/litmus.txt
+          grep -q '^TLOU TSO LB ARM64.*PASS' out/tso-arm64-proof/litmus.txt
+          grep -q '^TLOU TSO IRIW ARM64.*PASS' out/tso-arm64-proof/litmus.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: TLOU-AOT-TSO-Guarded-ARM64-Proof
+          path: out/tso-arm64-proof/*.txt
+          if-no-files-found: warn

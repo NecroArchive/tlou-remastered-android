@@ -362,6 +362,11 @@ public final class GameActivity extends Activity {
             env.put("GOW3_FSR1","0");
             env.put("GOW3_RCAS","0");
             PortSettings.environment(this,env);
+            // Repair Android 16 shell-wrapper PID publication failures without
+            // polling /proc from the renderer or game workers.
+            if (nativeAot!=null) {
+                env.put("TLOU_NATIVE_PID_FILE",runtimePidFile.getAbsolutePath());
+            }
             // The guest interprets 5056 MiB as a devkit (and requests an extra
             // 768 MiB "Game Debug" arena). This was correctly fixed for 01.11,
             // but 01.00 CUSA00557 still reported 5056 and hit AllocateMemory

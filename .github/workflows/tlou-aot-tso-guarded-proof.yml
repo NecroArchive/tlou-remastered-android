@@ -128,32 +128,10 @@ jobs:
           grep -q 'BBR_COMPILER_VERSION "4-tlou-tso-aligned-ar-v1"' .local-deps/bb-recomp-tlou/src/version.h
           grep -q 'tso.acquire.unaligned' .local-deps/bb-recomp-tlou/src/lower_ops.cpp
           grep -q 'tso.release.unaligned' .local-deps/bb-recomp-tlou/src/lower_ops.cpp
-          # Don't pipe tar into grep -q under pipefail: grep closes early,
-          # making tar fail with SIGPIPE (exit code 2) on an otherwise valid archive.
+          # Consume the archive listing in full, without grep closing the tar pipe early.
           archive=out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
           tar -tf "$archive" > out/android-bionic/aot-tso-compiler/archive-contents.txt
-          grep -Eq '(^|/)libbbrecomp[.]so
-          (cd out/android-bionic/aot-tso-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
-      - name: Publish separate compiler binary WITHOUT altering production APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: TLOU-LLVM23-AOT-TSO-ALIGNED-AR-v4-COMPILER-ONLY
-          path: |
-            out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
-            out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz.sha256
-            out/android-bionic/aot-tso-compiler/README-TLOU-TSO.txt
-          if-no-files-found: error
-      - name: Upload compiler diagnostics on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: TLOU-AOT-TSO-v4-compiler-build-logs
-          path: |
-            .local-deps/bb-recomp-tlou/out/llvm-android-cfg.log
-            .local-deps/bb-recomp-tlou/out/llvm-android-build.log
-            .local-deps/bb-recomp-tlou/out/android-ndk.cfg.log
-          if-no-files-found: ignore
- out/android-bionic/aot-tso-compiler/archive-contents.txt
+          grep -Eq '(^|/)libbbrecomp[.]so$' out/android-bionic/aot-tso-compiler/archive-contents.txt
           (cd out/android-bionic/aot-tso-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
       - name: Publish separate compiler binary WITHOUT altering production APK
         uses: actions/upload-artifact@v4

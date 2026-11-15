@@ -40,7 +40,28 @@ final class TsoProfile {
         return work(context,selected(context));
     }
     static File work(Context context,String profile) {
-        return new File(context.getFilesDir(),"tlou-aot-work-"+normalize(profile));
+        String valid=normalize(profile);
+        File destination=new File(context.getFilesDir(),"tlou-aot-work-"+valid);
+        // Previous experimental APKs stored one large AOT image at this
+        // legacy path. Rename the WHOLE cache once, only if the compiler
+        // metadata matches the selected profile. Never copy GB of shards.
+        File legacy=new File(context.getFilesDir(),"tlou-aot-work");
+        if(!destination.exists() && legacy.isDirectory()) {
+            File metadata=new File(legacy,"aot/libtlouaot.json");
+            if(metadata.isFile() && new File(legacy,"aot-report.json").isFile()) {
+                try {
+                    org.json.JSONObject info=new org.json.JSONObject(
+                        new String(java.nio.file.Files.readAllBytes(metadata.toPath()),
+                            java.nio.charset.StandardCharsets.UTF_8));
+                    if(version(valid).equals(info.optString("compiler_version")))
+                        legacy.renameTo(destination);
+                } catch(Exception ignored) {
+                    // Keep the legacy library untouched if it is incomplete.
+                    // Explicit recompilation creates the new profile directory.
+                }
+            }
+        }
+        return destination;
     }
     static String compilerRelative(String profile) {
         return "aot/compilers/"+normalize(profile)+"/libbbrecomp.so";

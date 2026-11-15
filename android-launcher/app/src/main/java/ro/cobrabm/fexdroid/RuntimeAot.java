@@ -82,6 +82,8 @@ final class RuntimeAot {
                 !"aarch64_generated_native_ready".equals(source.optString("status")))
             throw new java.io.IOException("TSO "+tsoProfile+" não compilado ou incompatível. "
                 +"Compile o perfil selecionado em Ajustes → CPU.");
+        if(TsoProfile.RELAXED.equals(tsoProfile))
+            RunLog.write(context,"AVISO: AOT TSO DESLIGADO, experimento ARM64 sem validação de estabilidade ou saves.");
         RunLog.write(context,"TSO AOT selecionado: "+tsoProfile+
             " • compilador="+meta.optString("compiler_version")+
             " • biblioteca="+so.getAbsolutePath());
@@ -95,10 +97,16 @@ final class RuntimeAot {
             if("--tso".equals(flag))nativeTso=true;
             if("--resume-entries".equals(flag))fiberResumes=true;
         }
-        if(!reloadAfterCall || !nativeTso || !fiberResumes ||
+        boolean relaxed=TsoProfile.RELAXED.equals(tsoProfile);
+        if(!reloadAfterCall || nativeTso == relaxed || !fiberResumes ||
            !"reload_after_calls_for_fibers".equals(source.optString("callee_saved_policy")))
             throw new java.io.IOException(
-                "Biblioteca AOT anterior incompatível com fibers do TLOU. Recompile em Ajustes → CPU.");
+                "AOT incompatível com perfil TSO/fibers selecionado. Recompile em Ajustes → CPU.");
+        if(relaxed && (!"off".equals(source.optString("tso_profile")) ||
+           !"relaxed_ARM64_no_TSO_UNSAFE".equals(source.optString("guest_memory_model"))))
+            throw new java.io.IOException("Biblioteca sem comprovação de compilação TSO OFF. Recompile.");
+        if(!relaxed && !"conservative_TSO".equals(source.optString("guest_memory_model")))
+            throw new java.io.IOException("AOT sem TSO, mas perfil TSO está selecionado.");
         JSONObject quality=source.optJSONObject("coverage");
         if(quality==null || quality.optDouble("unsupported_percent",100)>0.25)
             throw new java.io.IOException("Biblioteca AOT incompleta; recompile com o compilador TSO corrigido");

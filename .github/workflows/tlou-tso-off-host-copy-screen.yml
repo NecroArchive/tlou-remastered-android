@@ -6,6 +6,7 @@ on:
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_host_copy_batch.h'
       - 'gow3_pc/tests/test_tlou_host_copy_batch.cpp'
       - 'gow3_pc/tests/test_tlou_threaded_record_chunk.cpp'
+      - 'gow3_pc/tests/extract_host_copy_chunks.py'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.h'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp'
       - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp'

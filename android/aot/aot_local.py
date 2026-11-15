@@ -438,6 +438,8 @@ def main(argv=None):
     parser.add_argument("--options", type=Path, help="Current FEX-validated native patch selections")
     parser.add_argument("--jobs", type=int, default=3)
     parser.add_argument("--shards", type=int, default=64)
+    parser.add_argument("--tso-profile", choices=("v3","v4","v5","off"), default="v3",
+                        help="off is an unsafe, experimental relaxed ARM64 test")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -477,11 +479,15 @@ def main(argv=None):
             "invalid-animation-output-pointer" in native_patches and
             "frame-timeout" in native_patches)
         cpu_flags = AOT_111_PERFORMANCE_FLAGS if fast_111 else ("-O1",)
+        # --tso is a CODE GENERATION option, not a runtime switch.
+        # Fibers and resume-entry safeguards remain enabled in both modes.
+        guest_flags = tuple(f for f in NATIVE_FIBER_CPU_FLAGS
+                            if args.tso_profile != "off" or f != "--tso")
         command = [str(args.compiler or "/path/to/libbbrecomp.so"),
                    "--boot", str(staged), "--game-dir", str(game), "--so", str(so),
                    "--stats", str(aot / "compile.txt"), "--jobs", str(args.jobs),
                    "--shards", str(args.shards), "--target", "aarch64",
-                   "--host", "armv8.2", *NATIVE_FIBER_CPU_FLAGS, *cpu_flags, "--no-nice",
+                   "--host", "armv8.2", *guest_flags, *cpu_flags, "--no-nice",
                    "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]
@@ -521,7 +527,10 @@ def main(argv=None):
                   "runtime_integrated": False, "status": "staged",
                   "verified_switch_targets": [f"+0x{x:x}" for x in seed_targets],
                   "extra_entry_count": len(added_entries),
-                  "guest_memory_model": "conservative_TSO",
+                  "tso_profile": args.tso_profile,
+                  "guest_memory_model": ("relaxed_ARM64_no_TSO_UNSAFE"
+                                         if args.tso_profile == "off"
+                                         else "conservative_TSO"),
                   "fiber_resume_entries": True,
                   "callee_saved_policy": "reload_after_calls_for_fibers",
                   "x87_mode_warning": "bb-recomp uses reduced precision x87, while TLOU FEX defaults to full; do not execute without compatibility validation"}

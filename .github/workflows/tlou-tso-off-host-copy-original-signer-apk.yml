@@ -1,4 +1,4 @@
-name: TLOU TSO OFF Reduced Diagnostics and Host-Copy Rollback - Original Signer
+name: TLOU AOT Pending Patches and Worker Jump Fix - Original Signer
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: '9e580e5d55f04056e724966f0691ac0e126ddad8'
+          ref: 'a2b91ec8f4eb41b42da9846c40bcfef1bb46eb4b'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -300,7 +300,7 @@ jobs:
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-TSO-OFF-REDUCED-DIAGNOSTICS-APK
+          name: TLOU-v011-AOT-PATCH-PENDING-WORKER-JUMPS-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

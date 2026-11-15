@@ -361,7 +361,10 @@ public final class GameActivity extends Activity {
             env.put("GOW3_OBJECT_MOTION","0");
             env.put("GOW3_FSR1","0");
             env.put("GOW3_RCAS","0");
-            PortSettings.environment(this,env);
+            PortSettings.environment(this,env,nativeAot==null?null:nativeAot.compiledResolution);
+            if(nativeAot!=null && !nativeAot.pendingCodePatches.isEmpty())
+                RunLog.write(this,"AOT: configurações pendentes="+nativeAot.pendingCodePatches+
+                    "; renderizador sincronizado com o perfil ARM64 compilado.");
             // Repair Android 16 shell-wrapper PID publication failures without
             // polling /proc from the renderer or game workers.
             if (nativeAot!=null) {

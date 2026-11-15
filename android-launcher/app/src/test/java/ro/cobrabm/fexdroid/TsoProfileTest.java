@@ -84,5 +84,9 @@ public final class TsoProfileTest {
         Files.write(new File(old,"aot-report.json").toPath(),new byte[]{'{' ,'}'});
         assertNotEquals(old,TsoProfile.work(context,"v3"));
         assertTrue(old.exists());
+        assertTrue(new File(aot,"libtlouaot.json").delete());
+        assertTrue(new File(old,"aot-report.json").delete());
+        assertTrue(aot.delete());
+        assertTrue(old.delete());
     }
 }

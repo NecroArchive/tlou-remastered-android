@@ -133,7 +133,9 @@ public final class MainActivity extends Activity {
             public void onNothingSelected(AdapterView<?> parent){}
             public void onItemSelected(AdapterView<?> parent,View view,int index,long id){
                 if((Integer)spinner.getTag()==index)return;
-                spinner.setTag(index);prefs.edit().putString(key,values[index]).apply();refresh();
+                spinner.setTag(index);prefs.edit().putString(key,values[index]).apply();
+                if(TsoProfile.KEY.equals(key))buildHome();
+                else refresh();
             }
         });parent.addView(spinner,new LinearLayout.LayoutParams(-1,dp(46)));
     }

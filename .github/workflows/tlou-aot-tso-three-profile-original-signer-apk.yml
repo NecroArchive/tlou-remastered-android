@@ -1,6 +1,10 @@
 name: TLOU TSO 3 Profiles (v3 v4 v5) - Original Verified Signer
 
 on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - '.github/workflows/tlou-aot-tso-three-profile-original-signer-apk.yml'
   workflow_dispatch:
 
 permissions:
@@ -11,7 +15,7 @@ permissions:
 # the exact existing debug keystore. No new key is generated.
 # Baseline GPU is pinned to successful prior 5e702ad, no descriptor-reuse regression.
 # Original signing cache stays in the original branch, no private keys uploaded.
-# Compiler v5 is from gated run 43658666646; v3/v4 are independently pinned.
+# Compiler v5 is from successful gated run 43658666646; v3/v4 are independently pinned.
 concurrency:
   group: tlou-tso-3-profiles-original-signer
   cancel-in-progress: false
@@ -23,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 'f8f7d4cc5819623afac775fdc1f26d316b1741fb'
+          ref: '7c6025a0d864736ba3212d46a875772cb0a61e31'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

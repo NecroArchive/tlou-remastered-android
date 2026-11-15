@@ -66,6 +66,11 @@ TLOU_111_SECOND_SWITCH_SLOTS = 4
 TLOU_111_SECOND_SWITCH_SIGNATURE_LEN = 23
 TLOU_111_SECOND_SWITCH_SIGNATURE_SHA256 = "3e712ef08edbc99750546e5d47589b1145bf67d957605d1ffef7680c8a3d106e"
 
+# Observed real NdJobWorkerThre jump misses in the user's 01.11 log 24,
+# restricted to the exact verified CUSA00552 binary (3cfa... SHA).
+# Cover both 0x553cxx branches in one compilation, not one rebuild per miss.
+TLOU_111_WORKER_JUMP_TARGETS = (0x553C14, 0x553C82, 0xA2125E)
+
 
 def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
     """Find every target of the verified 1.11 switch, not just the first miss.
@@ -138,8 +143,13 @@ def verified_miss_entries(path: Path | None, image_size: int) -> list[int]:
 def prepare_extra_entries(boot: Path, eboot_sha: str, misses: Path | None,
                           destination: Path) -> tuple[list[int], list[int]]:
     known = known_switch_entries(boot, eboot_sha)
-    missed = verified_miss_entries(misses, check_boot(boot)["size"])
-    entries = sorted(set(known + missed))
+    image_size = check_boot(boot)["size"]
+    observed = (list(TLOU_111_WORKER_JUMP_TARGETS)
+                if eboot_sha == TLOU_111_SWITCH_SHA256 else [])
+    if any(target >= image_size for target in observed):
+        raise ValueError("Validated 1.11 worker entry outside the linked image")
+    missed = verified_miss_entries(misses, image_size)
+    entries = sorted(set(known + observed + missed))
     if entries:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text("".join(f"+0x{value:x}\n" for value in entries),
@@ -512,7 +522,9 @@ def main(argv=None):
                 encoding="ascii")
         if added_entries:
             command += ["--extra-entries", str(seed_file)]
-        checked_entries = sorted(set(seed_targets + patch_entries))
+        # Verify the emitted native jump table has ALL genuine runtime misses,
+        # not just the switch cases. Percent coverage alone missed this crash.
+        checked_entries = added_entries
         if checked_entries:
             command += ["--check-entries",
                         ",".join(f"{target:x}" for target in checked_entries)]

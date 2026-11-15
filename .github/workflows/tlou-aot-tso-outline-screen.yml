@@ -82,3 +82,73 @@ jobs:
             out/tso-v5/litmus.txt
             out/tso-v5/helpers.disasm.txt
           if-no-files-found: warn
+
+  compile-v5:
+    name: Build actual LLVM23 AArch64 TSO v5 compiler (no APK)
+    needs: [source, arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      TLOU_AOT_BUILD_JOBS: '4'
+      TLOU_TSO_ALIGNED_AR_EXPERIMENT: '1'
+      TLOU_TSO_OUTLINE_UNALIGNED_EXPERIMENT: '1'
+      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/29.0.14206865
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 ndk;29.0.14206865'
+      - name: Install CMake/LLVM build requirements
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zstd ninja-build cmake clang lld xz-utils
+      - name: Restore pinned toolchain build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .local-deps/bb-recomp-tlou/.local-deps/llvm/x
+            .local-deps/bb-recomp-tlou/.local-deps/llvm/src
+            .local-deps/bb-recomp-tlou/.local-deps/llvm/build-android
+            .local-deps/bb-recomp-tlou/.local-deps/deps
+            .local-deps/bb-recomp-tlou/.local-deps/mimalloc
+            .local-deps/bb-recomp-tlou/out/recomp-fex
+          key: tlou-llvm23-android-fex2609-tso1-aligned-ar-v4
+          restore-keys: |
+            tlou-llvm23-android-fex2609-tso1
+      - name: Compile real ARM64 LLVM23 TSO v5 on pinned source
+        run: |
+          set -euo pipefail
+          bash android/aot/build_recompiler_tso.sh
+      - name: Verify exact v5 generated source and Android ELF/helper symbols
+        run: |
+          set -euo pipefail
+          bin=.local-deps/bb-recomp-tlou/out/android/libbbrecomp.so
+          test -s "$bin"
+          readelf -h "$bin" | grep -F AArch64
+          grep -q 'BBR_COMPILER_VERSION "5-tlou-tso-outlined-unaligned-v1"' .local-deps/bb-recomp-tlou/src/version.h
+          grep -q 'bbr_tso_unaligned_load' .local-deps/bb-recomp-tlou/src/lower_ops.cpp
+          grep -q 'bbr_tso_unaligned_store' .local-deps/bb-recomp-tlou/src/lower_ops.cpp
+          readelf -Ws .local-deps/bb-recomp-tlou/out/android/bundle/helpers-aarch64.o | grep -F 'bbr_tso_unaligned_load'
+          readelf -Ws .local-deps/bb-recomp-tlou/out/android/bundle/helpers-aarch64.o | grep -F 'bbr_tso_unaligned_store'
+          archive=out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
+          tar -tf "$archive" > out/android-bionic/aot-tso-compiler/archive-contents.txt
+          grep -Eq '(^|/)libbbrecomp[.]so$' out/android-bionic/aot-tso-compiler/archive-contents.txt
+          (cd out/android-bionic/aot-tso-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-AOT-TSO-v5-OUTLINED-ARM64-COMPILER-ONLY
+          path: |
+            out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
+            out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz.sha256
+            out/android-bionic/aot-tso-compiler/README-TLOU-TSO.txt
+          if-no-files-found: error
+      - name: Upload relevant build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-v5-TSO-LLVM23-diagnostics
+          path: |
+            .local-deps/bb-recomp-tlou/out/llvm-android-build.log
+            .local-deps/bb-recomp-tlou/out/llvm-android-cfg.log
+            .local-deps/bb-recomp-tlou/out/android-ndk.cfg.log
+          if-no-files-found: ignore

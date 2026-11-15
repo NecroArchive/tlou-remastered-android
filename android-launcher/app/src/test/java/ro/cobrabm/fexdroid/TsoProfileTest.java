@@ -7,6 +7,7 @@ import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 import org.robolectric.RuntimeEnvironment;
 
 import java.io.File;
@@ -16,6 +17,7 @@ import java.nio.file.Files;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
+@Config(sdk=33)
 public final class TsoProfileTest {
     @Test public void versionAndNamesAreStrictlyWhitelisted() {
         assertEquals("v3",TsoProfile.normalize("unrecognized"));

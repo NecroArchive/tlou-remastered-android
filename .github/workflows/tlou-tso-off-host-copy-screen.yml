@@ -24,6 +24,13 @@ jobs:
             gow3_pc/tests/test_tlou_host_copy_batch.cpp \
             -o out/tlou-no-tso-host-copy/bench
           out/tlou-no-tso-host-copy/bench --correctness-only
+          python3 gow3_pc/tests/extract_host_copy_chunks.py out/tlou-no-tso-host-copy
+          c++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror -pthread \
+            -I out/tlou-no-tso-host-copy -I gow3_pc/gpu/shim -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_threaded_record_chunk.cpp \
+            -o out/tlou-no-tso-host-copy/threaded-bench
+          out/tlou-no-tso-host-copy/threaded-bench --correctness-only
+          out/tlou-no-tso-host-copy/threaded-bench | tee out/tlou-no-tso-host-copy/threaded-results.txt
           out/tlou-no-tso-host-copy/bench | tee out/tlou-no-tso-host-copy/result.txt
           grep -q '^HostCopyBatch: sequence order' out/tlou-no-tso-host-copy/result.txt
           python3 - <<'PY'
@@ -39,5 +46,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: TLOU-TSO-OFF-ARM64-HostCopyBatch-Benchmark
-          path: out/tlou-no-tso-host-copy/result.txt
+          path: |
+            out/tlou-no-tso-host-copy/result.txt
+            out/tlou-no-tso-host-copy/threaded-results.txt
           if-no-files-found: error

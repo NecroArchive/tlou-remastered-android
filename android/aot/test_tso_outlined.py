@@ -87,5 +87,64 @@ int main(void) {
             subprocess.run([cc,"-std=gnu11","-O2","-Wall","-Wextra","-Werror",str(source),str(root/"bbr_tso_unaligned_helpers.c"),"-o",str(exe)],check=True)
             subprocess.run([str(exe)],check=True)
 
+
+    def test_protected_page_fault_is_retryable_inside_helper(self):
+        # This is a generic Linux page-protection test, not an Android
+        # signal-handler integration proof. Full game readback watch still
+        # needs device validation.
+        cc=shutil.which("cc")
+        if not cc:self.skipTest("C compiler unavailable")
+        fixture=r"""
+#define _GNU_SOURCE
+#include <sys/mman.h>
+#include <unistd.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+uint64_t bbr_tso_unaligned_load(uint64_t,uint32_t);
+void bbr_tso_unaligned_store(uint64_t,uint64_t,uint32_t);
+static size_t page;
+static volatile sig_atomic_t trapped;
+static void fault(int signal_number, siginfo_t *info, void *ctx) {
+    (void)ctx;
+    assert(signal_number == SIGSEGV);
+    ++trapped;
+    uintptr_t base=(uintptr_t)info->si_addr & ~(page-1);
+    if(mprotect((void *)base,page,PROT_READ|PROT_WRITE)!=0) _exit(88);
+}
+int main(void) {
+    page=(size_t)sysconf(_SC_PAGESIZE);
+    assert(page && (page&(page-1))==0);
+    unsigned char *p=mmap(0,page*2,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    assert(p!=MAP_FAILED);
+    struct sigaction a={0};
+    a.sa_sigaction=fault; a.sa_flags=SA_SIGINFO;
+    sigemptyset(&a.sa_mask);
+    assert(sigaction(SIGSEGV,&a,0)==0);
+    uint64_t x=UINT64_C(0x1122334455667788);
+    memcpy(p+page-3,&x,8);
+    assert(mprotect(p+page,page,PROT_NONE)==0);
+    assert(bbr_tso_unaligned_load((uintptr_t)(p+page-3),8)==x);
+    assert(trapped==1);
+    assert(mprotect(p+page,page,PROT_NONE)==0);
+    uint64_t y=UINT64_C(0x8899aabbccddeeff);
+    bbr_tso_unaligned_store((uintptr_t)(p+page-3),y,8);
+    assert(trapped==2);
+    assert(!memcmp(p+page-3,&y,8));
+    assert(munmap(p,page*2)==0);
+    return 0;
+}
+"""
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d)/"page_fault.c"
+            exe=Path(d)/"page_fault"
+            source.write_text(fixture)
+            subprocess.run([cc,"-std=gnu11","-O2","-Wall","-Wextra","-Werror",
+                            str(source),str(root/"bbr_tso_unaligned_helpers.c"),"-o",str(exe)],
+                           check=True)
+            subprocess.run([str(exe)],check=True)
+
 if __name__ == "__main__":
     unittest.main()

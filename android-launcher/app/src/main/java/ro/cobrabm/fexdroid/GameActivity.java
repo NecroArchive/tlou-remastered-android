@@ -425,7 +425,8 @@ public final class GameActivity extends Activity {
             try {result=game.waitFor();}
             finally {threadCpu.close();}
             RunLog.write(this,"Processo "+backend+" finalizado: código "+result);
-            if(nativeAot!=null && result!=0) {
+            if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(
+                    nativeAot!=null,result,closing.get())) {
                 // Keep the explicitly selected native backend for debugging.
                 // Avoid an endless auto-launch crash loop; FEX remains a manual option.
                 PortSettings.prefs(this).edit().putBoolean("launch_direct",false).apply();

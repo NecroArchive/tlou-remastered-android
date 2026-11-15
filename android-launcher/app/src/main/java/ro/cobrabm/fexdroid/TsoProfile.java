@@ -5,8 +5,9 @@ import android.content.SharedPreferences;
 import java.io.File;
 
 /**
- * The PS4 guest TSO memory model is always enabled.
- * Only the safe AOT lowering implementation is selectable.
+ * PS4 TSO is enabled in v3/v4/v5. The opt-in 'off' mode allows
+ * controlled real-device tests of ARM relaxed guest memory semantics.
+ * It is NOT validated for gameplay stability or saving.
  *
  * Codegen happens at compilation time, not at gameplay runtime. Native units
  * and resume shards must never be shared across compiler versions.
@@ -48,7 +49,9 @@ final class TsoProfile {
         // legacy path. Rename the WHOLE cache once, only if the compiler
         // metadata matches the selected profile. Never copy GB of shards.
         File legacy=new File(context.getFilesDir(),"tlou-aot-work");
-        if(!destination.exists() && legacy.isDirectory()) {
+        // Never mistake a previously TSO-enabled v3 library for TSO OFF:
+        // the version string is identical, but generated memory semantics differ.
+        if(!RELAXED.equals(valid) && !destination.exists() && legacy.isDirectory()) {
             File metadata=new File(legacy,"aot/libtlouaot.json");
             if(metadata.isFile() && new File(legacy,"aot-report.json").isFile()) {
                 try {

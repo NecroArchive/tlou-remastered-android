@@ -65,7 +65,8 @@ final class RuntimeAot {
     }
 
     static Ready prepare(Context context,File prepared) throws Exception {
-        File work=new File(context.getFilesDir(),"tlou-aot-work");
+        String tsoProfile=TsoProfile.selected(context);
+        File work=TsoProfile.work(context,tsoProfile);
         File so=new File(work,"aot/libtlouaot.so");
         File json=new File(work,"aot/libtlouaot.json");
         File report=new File(work,"aot-report.json");
@@ -77,9 +78,13 @@ final class RuntimeAot {
         JSONObject source=new JSONObject(new String(Files.readAllBytes(report.toPath()),StandardCharsets.UTF_8));
         if(meta.optInt("abi_version",-1)!=2)
             throw new java.io.IOException("ABI da biblioteca AOT incompatível");
-        if(!"5-tlou-tso-outlined-unaligned-v1".equals(meta.optString("compiler_version")) ||
+        if(!TsoProfile.version(tsoProfile).equals(meta.optString("compiler_version")) ||
                 !"aarch64_generated_native_ready".equals(source.optString("status")))
-            throw new java.io.IOException("Biblioteca AOT antiga ou sem suporte a TSO. Recompile em Ajustes → CPU.");
+            throw new java.io.IOException("TSO "+tsoProfile+" não compilado ou incompatível. "
+                +"Compile o perfil selecionado em Ajustes → CPU.");
+        RunLog.write(context,"TSO AOT selecionado: "+tsoProfile+
+            " • compilador="+meta.optString("compiler_version")+
+            " • biblioteca="+so.getAbsolutePath());
         // Guest PS4 fibers can replace RBX/RBP/R12-R15 in HostCall. Old native
         // libraries trusted SysV callee-saved registers and are not safe here.
         JSONArray command=source.optJSONArray("translation_command");

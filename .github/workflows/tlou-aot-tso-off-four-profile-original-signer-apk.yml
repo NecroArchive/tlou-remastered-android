@@ -1,6 +1,10 @@
 name: TLOU TSO Profiles (v3 v4 v5 OFF) - Original Signer
 
 on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - '.github/workflows/tlou-aot-tso-off-four-profile-original-signer-apk.yml'
   workflow_dispatch:
 
 permissions:

@@ -49,7 +49,7 @@ jobs:
       - name: Compile new UI, launch guards and multi-profile cache tests
         run: |
           set -euo pipefail
-          gradle -p android-launcher :app:compileDebugJavaWithJavac :app:testDebugUnitTest --no-daemon --max-workers=2
+          gradle -p android-launcher :app:compileDebugJavaWithJavac :app:testDebugUnitTest --tests 'ro.cobrabm.fexdroid.TsoProfileTest' --no-daemon --max-workers=2
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

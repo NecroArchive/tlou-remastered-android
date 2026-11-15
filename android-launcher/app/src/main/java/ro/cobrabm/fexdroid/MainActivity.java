@@ -54,15 +54,12 @@ public final class MainActivity extends Activity {
             if(!prefs.contains(effect))
                 initial.putBoolean(effect,
                     !effect.equals("omni_light_shadows") && !effect.equals("spot_light_shadows"));
-        // Earlier v0.1.1 launches inherited true for EVERY new effect.
-        // That accidentally enabled experimental shadow-category patches on
-        // first launch. Reset just those two ONCE for existing installations;
-        // all six established effect preferences remain untouched.
-        if(!prefs.getBoolean("shadow_experimental_defaults_fixed_v1",false)) {
-            initial.putBoolean("omni_light_shadows",false);
-            initial.putBoolean("spot_light_shadows",false);
+        // Preserve every previously selected shadow patch on upgrades. The
+        // old one-time migration reset flags AFTER code was already compiled
+        // into ARM64, causing an AOT launch failure. Fresh installs get OFF
+        // defaults above; stored choices are never silently overwritten.
+        if(!prefs.getBoolean("shadow_experimental_defaults_fixed_v1",false))
             initial.putBoolean("shadow_experimental_defaults_fixed_v1",true);
-        }
         initial.apply();
         // Keep paths chosen in the first experimental APK.
         if (!prefs.contains("game_path")) prefs.edit().putString("game_path",getPreferences(0).getString("prepared_path","")).apply();
@@ -249,7 +246,7 @@ public final class MainActivity extends Activity {
             add(game,"Sair do aplicativo",false,this::finishAffinity);
         } else if(currentTab.equals("patches")) {
             LinearLayout box=card(root,"PATCHES");
-            box.addView(text("Patches validados para o eboot reconhecido. Reinicie para aplicar.",12,MUTED));
+            box.addView(text("FEX: efeitos aplicados ao abrir, por patches.bin, sem recompilar o jogo. AOT: efeitos e resolução ficam fixos no código ARM64 compilado. Você pode alterar as preferências sem crash; mudanças ficam pendentes até recompilar AOT. FPS, VSync e driver não precisam de recompilação.",12,MUTED));
             choice(box,"resolution","Resolução interna",
                 new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                 new String[]{"original","720","540","360"},"original");

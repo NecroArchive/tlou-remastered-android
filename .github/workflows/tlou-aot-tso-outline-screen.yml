@@ -85,6 +85,9 @@ jobs:
 
   compile-v5:
     name: Build actual LLVM23 AArch64 TSO v5 compiler (no APK)
+    # Earlier gated compiler builds are already running. Don't launch a new
+    # 20-minute LLVM build for every microbenchmark/source-only adjustment.
+    if: github.event_name == 'workflow_dispatch'
     needs: [source, arm64]
     runs-on: ubuntu-24.04
     timeout-minutes: 110

@@ -13,17 +13,19 @@ import java.io.File;
  */
 final class TsoProfile {
     static final String KEY="aot_tso_profile";
-    static final String BASELINE="v3", ALIGNED="v4", OUTLINED="v5";
-    static final String[] VALUES={BASELINE,ALIGNED,OUTLINED};
+    static final String BASELINE="v3", ALIGNED="v4", OUTLINED="v5", RELAXED="off";
+    static final String[] VALUES={BASELINE,ALIGNED,OUTLINED,RELAXED};
     static final String[] LABELS={
         "TSO v3 — conservador (DMB)",
         "TSO v4 — LDAR/STLR + fallback completo",
-        "TSO v5 — LDAR/STLR + fallback compartilhado"
+        "TSO v5 — LDAR/STLR + fallback compartilhado",
+        "TSO DESLIGADO — experimental, pode travar ou corromper saves"
     };
     private TsoProfile() {}
 
     static String normalize(String value) {
-        return ALIGNED.equals(value)?ALIGNED:OUTLINED.equals(value)?OUTLINED:BASELINE;
+        return ALIGNED.equals(value)?ALIGNED:OUTLINED.equals(value)?OUTLINED:
+            RELAXED.equals(value)?RELAXED:BASELINE;
     }
     static String selected(Context context) {
         SharedPreferences prefs=PortSettings.prefs(context);
@@ -64,9 +66,11 @@ final class TsoProfile {
         return destination;
     }
     static String compilerRelative(String profile) {
-        return "aot/compilers/"+normalize(profile)+"/libbbrecomp.so";
+        String source=RELAXED.equals(normalize(profile))?BASELINE:normalize(profile);
+        return "aot/compilers/"+source+"/libbbrecomp.so";
     }
     static String bundleRelative(String profile) {
-        return "aot/compilers/"+normalize(profile)+"/bundle";
+        String source=RELAXED.equals(normalize(profile))?BASELINE:normalize(profile);
+        return "aot/compilers/"+source+"/bundle";
     }
 }

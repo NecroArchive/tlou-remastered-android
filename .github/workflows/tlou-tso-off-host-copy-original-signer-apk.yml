@@ -1,6 +1,10 @@
 name: TLOU TSO OFF Ordered Host-Copy GPU - Original Signer
 
 on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - '.github/workflows/tlou-tso-off-host-copy-original-signer-apk.yml'
   workflow_dispatch:
 
 permissions:

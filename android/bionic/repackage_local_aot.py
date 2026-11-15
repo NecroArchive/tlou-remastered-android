@@ -66,7 +66,7 @@ def compiler_payload() -> dict[str, bytes]:
             if not binary.is_file():
                 raise ValueError(f"Missing AOT TSO profile compiler: {profile}")
             data = binary.read_bytes()
-            if (data[:4] != b"\\x7fELF" or
+            if (data[:4] != b"\x7fELF" or
                     struct.unpack_from("<H", data, 18)[0] != 183 or
                     version not in data):
                 raise ValueError(f"Wrong AOT TSO compiler ABI/version: {profile}")
@@ -76,7 +76,7 @@ def compiler_payload() -> dict[str, bytes]:
             key = f"aot/compilers/{profile}"
             result[f"{key}/libbbrecomp.so"] = data
             result[f"{key}/compiler.sha256"] = (
-                hashlib.sha256(data).hexdigest()+"\\n").encode()
+                hashlib.sha256(data).hexdigest()+"\n").encode()
             for member in sorted(bundle.rglob("*")):
                 if member.is_file() and not member.is_symlink():
                     result[f"{key}/bundle/{member.relative_to(bundle).as_posix()}"] = member.read_bytes()

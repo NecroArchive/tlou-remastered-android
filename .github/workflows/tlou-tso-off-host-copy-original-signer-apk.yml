@@ -180,7 +180,7 @@ jobs:
           grep -Fq 'TsoProfile.version(tsoProfile).equals(meta.optString("compiler_version"))' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java
           grep -Fq 'TsoProfile.KEY' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
           grep -Fq 'RELAXED="off"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TsoProfile.java
-          grep -Fq 'env.put("GOW3_TLOU_HOST_COPY_BATCH",aotTsoOff?"1":"0")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+          grep -Fq 'env.put("GOW3_TLOU_HOST_COPY_BATCH","0")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
           grep -Fq 'if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
       - name: Stage exact native game runtime with pinned ARM64 compiler
         run: |

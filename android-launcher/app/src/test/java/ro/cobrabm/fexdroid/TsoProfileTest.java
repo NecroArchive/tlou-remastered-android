@@ -25,13 +25,16 @@ public final class TsoProfileTest {
         assertEquals("v3",TsoProfile.normalize("v3"));
         assertEquals("v4",TsoProfile.normalize("v4"));
         assertEquals("v5",TsoProfile.normalize("v5"));
+        assertEquals("off",TsoProfile.normalize("off"));
         assertEquals("3-tlou-string",TsoProfile.version("v3"));
         assertEquals("4-tlou-tso-aligned-ar-v1",TsoProfile.version("v4"));
         assertEquals("5-tlou-tso-outlined-unaligned-v1",TsoProfile.version("v5"));
+        assertEquals("3-tlou-string",TsoProfile.version("off"));
         for(String p:TsoProfile.VALUES) {
-            assertEquals("aot/compilers/"+p+"/libbbrecomp.so",
+            String expected=p.equals("off")?"v3":p;
+            assertEquals("aot/compilers/"+expected+"/libbbrecomp.so",
                          TsoProfile.compilerRelative(p));
-            assertEquals("aot/compilers/"+p+"/bundle",
+            assertEquals("aot/compilers/"+expected+"/bundle",
                          TsoProfile.bundleRelative(p));
         }
     }
@@ -45,12 +48,14 @@ public final class TsoProfileTest {
                         TsoProfile.work(context,"v4"));
         assertNotEquals(TsoProfile.work(context,"v5"),
                         TsoProfile.work(context,"v4"));
+        assertNotEquals(TsoProfile.work(context,"off"),
+                        TsoProfile.work(context,"v3"));
     }
 
     @Test public void matchingLegacyLibraryMigratesWithoutCopy() throws Exception {
         Context context=RuntimeEnvironment.getApplication();
         File base=context.getFilesDir();
-        for(String p:TsoProfile.VALUES) {
+        for(String p:new String[]{"v3","v4","v5"}) {
             File old=new File(base,"tlou-aot-work");
             File dest=new File(base,"tlou-aot-work-"+p);
             // Test root is isolated per run; never remove an actual user folder.
@@ -73,6 +78,24 @@ public final class TsoProfileTest {
             assertTrue(new File(dest,"aot").delete());
             assertTrue(dest.delete());
         }
+    }
+
+    @Test public void neverMigratesOldV3TsoIntoExperimentalTsoOff() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        File old=new File(context.getFilesDir(),"tlou-aot-work");
+        File aot=new File(old,"aot");
+        assertTrue(aot.mkdirs());
+        Files.write(new File(aot,"libtlouaot.json").toPath(),
+            new JSONObject().put("compiler_version","3-tlou-string")
+                .toString().getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(old,"aot-report.json").toPath(),new byte[]{'{','}'});
+        File relaxed=TsoProfile.work(context,"off");
+        assertTrue(old.exists());
+        assertFalse(relaxed.exists());
+        assertTrue(new File(aot,"libtlouaot.json").delete());
+        assertTrue(new File(old,"aot-report.json").delete());
+        assertTrue(aot.delete());
+        assertTrue(old.delete());
     }
 
     @Test public void doesNotMigrateLegacyLibraryFromWrongCompiler() throws Exception {

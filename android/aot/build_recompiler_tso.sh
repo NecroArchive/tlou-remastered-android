@@ -27,6 +27,13 @@ python3 "$root/android/aot/patch_recompiler_vpcmpistrx.py" "$tool"
 if [[ ${TLOU_TSO_ALIGNED_AR_EXPERIMENT:-0} == 1 ]]; then
   python3 "$root/android/aot/patch_recompiler_tso_aligned_ar.py" "$tool"
 fi
+if [[ ${TLOU_TSO_OUTLINE_UNALIGNED_EXPERIMENT:-0} == 1 ]]; then
+  if [[ ${TLOU_TSO_ALIGNED_AR_EXPERIMENT:-0} != 1 ]]; then
+    echo "TSO v5 requires explicit aligned-scalar TSO v4 opt-in" >&2
+    exit 2
+  fi
+  python3 "$root/android/aot/patch_recompiler_tso_outlined.py" "$tool"
+fi
 
 ver=23.1.3
 deps="$tool/.local-deps"
@@ -72,7 +79,13 @@ tarball="$tool/out/dist/bb-recomp-android-aarch64.tar.xz"
 test -s "$compiler" && test -s "$tarball"
 readelf -h "$compiler" | grep -Eq 'Machine:.*AArch64'
 readelf -l "$compiler" | grep -F '/system/bin/linker64'
-if [[ ${TLOU_TSO_ALIGNED_AR_EXPERIMENT:-0} == 1 ]]; then
+if [[ ${TLOU_TSO_OUTLINE_UNALIGNED_EXPERIMENT:-0} == 1 ]]; then
+  grep -q 'BBR_COMPILER_VERSION "5-tlou-tso-outlined-unaligned-v1"' "$tool/src/version.h"
+  grep -q 'bbr_tso_unaligned_load' "$tool/src/lower_ops.cpp"
+  grep -q 'bbr_tso_unaligned_store' "$tool/src/lower_ops.cpp"
+  grep -q 'uint64_t bbr_tso_unaligned_load' "$tool/helpers/bbr_x87_all.c"
+  grep -q 'void bbr_tso_unaligned_store' "$tool/helpers/bbr_x87_all.c"
+elif [[ ${TLOU_TSO_ALIGNED_AR_EXPERIMENT:-0} == 1 ]]; then
   grep -q 'BBR_COMPILER_VERSION "4-tlou-tso-aligned-ar-v1"' "$tool/src/version.h"
   grep -q 'ld->setAtomic(AtomicOrdering::Acquire)' "$tool/src/lower_ops.cpp"
   grep -q 'st->setAtomic(AtomicOrdering::Release)' "$tool/src/lower_ops.cpp"
@@ -90,7 +103,7 @@ cp "$tarball" "$root/out/android-bionic/aot-tso-compiler/"
 (cd "$root/out/android-bionic/aot-tso-compiler" && sha256sum bb-recomp-android-aarch64.tar.xz > bb-recomp-android-aarch64.tar.xz.sha256)
 printf '%s\n' "Upstream bb-recomp: $pin" \
   "Compiler shard version: $(grep BBR_COMPILER_VERSION "$tool/src/version.h")" \
-  "TSO lowering: $(if [[ ${TLOU_TSO_ALIGNED_AR_EXPERIMENT:-0} == 1 ]]; then printf 'EXPERIMENTAL aligned scalar LDAR/STLR, strict SIMD/unaligned fallback'; else printf 'conservative full fences'; fi)" \
+  "TSO lowering: $(if [[ ${TLOU_TSO_OUTLINE_UNALIGNED_EXPERIMENT:-0} == 1 ]]; then printf 'EXPERIMENTAL v5 aligned scalar LDAR/STLR, rare unaligned full DMB helpers'; elif [[ ${TLOU_TSO_ALIGNED_AR_EXPERIMENT:-0} == 1 ]]; then printf 'EXPERIMENTAL v4 aligned scalar LDAR/STLR, strict SIMD/unaligned fallback'; else printf 'conservative full fences'; fi)" \
   "Support: GPR up to 64-bit / FPR up to 128-bit; SSE4.2 PCMPISTRX helper bundled" \
   "No game files included" > "$root/out/android-bionic/aot-tso-compiler/README-TLOU-TSO.txt"
 echo "Finished patched AArch64 compiler archive: $tarball"

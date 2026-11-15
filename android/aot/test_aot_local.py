@@ -241,7 +241,11 @@ class TestBridge(unittest.TestCase):
                 seed, extra = mod.prepare_extra_entries(
                     boot, mod.TLOU_111_SWITCH_SHA256, misses, out)
                 self.assertEqual(seed, targets)
-                self.assertEqual(extra, sorted(set(targets + [0xB5A111])))
+                self.assertEqual(extra, sorted(set(
+                    targets + list(mod.TLOU_111_WORKER_JUMP_TARGETS) + [0xB5A111])))
+                self.assertIn(0x553C14, extra)
+                self.assertIn(0x553C82, extra)
+                self.assertIn(0xA2125E, extra)
                 self.assertEqual(
                     out.read_text().splitlines(),
                     [f"+0x{x:x}" for x in extra])

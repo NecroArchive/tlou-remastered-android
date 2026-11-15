@@ -1,0 +1,84 @@
+name: TLOU AOT TSO v5 outlined full-fence fallback screen
+
+on:
+  push:
+    branches: [experiment/tlou-aot-tso-outlined-fallback-20261114]
+    paths:
+      - 'android/aot/patch_recompiler_tso_outlined.py'
+      - 'android/aot/bbr_tso_unaligned_helpers.c'
+      - 'android/aot/test_tso_outlined.py'
+      - 'android/aot/build_recompiler_tso.sh'
+      - 'gow3_pc/tests/test_tlou_aot_tso_outline_bench.cpp'
+      - '.github/workflows/tlou-aot-tso-outline-screen.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    name: Real pinned LLVM source patch, C helpers and full-fence tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify C helper byte ranges and exact LLVM patch
+        run: |
+          set -euo pipefail
+          python3 -m py_compile android/aot/patch_recompiler_tso_outlined.py
+          python3 android/aot/test_tso_outlined.py -v
+          bash -n android/aot/build_recompiler_tso.sh
+      - name: Patch the ACTUAL pinned bb-recomp with the unchanged v3/v4 sequence
+        run: |
+          set -euo pipefail
+          mkdir -p out/tso-v5-source
+          git -C out/tso-v5-source init -q
+          git -C out/tso-v5-source remote add origin https://github.com/ducvd89/Bloodborne-android-rebuild-tool.git
+          git -C out/tso-v5-source fetch --depth=1 origin 6ebb33b0c729a3942fddaa03965360c699d7d900
+          git -C out/tso-v5-source checkout -q --detach FETCH_HEAD
+          python3 android/aot/patch_recompiler_tso.py out/tso-v5-source
+          python3 android/aot/patch_recompiler_vpcmpistrx.py out/tso-v5-source
+          python3 android/aot/patch_recompiler_tso_aligned_ar.py out/tso-v5-source
+          python3 android/aot/patch_recompiler_tso_outlined.py out/tso-v5-source
+          python3 android/aot/patch_recompiler_tso_outlined.py out/tso-v5-source
+          grep -q 'BBR_COMPILER_VERSION "5-tlou-tso-outlined-unaligned-v1"' out/tso-v5-source/src/version.h
+          grep -q 'm.helper("bbr_tso_unaligned_load"' out/tso-v5-source/src/lower_ops.cpp
+          grep -q 'm.helper("bbr_tso_unaligned_store"' out/tso-v5-source/src/lower_ops.cpp
+          grep -q 'AtomicOrdering::Acquire' out/tso-v5-source/src/lower_ops.cpp
+          grep -q 'AtomicOrdering::Release' out/tso-v5-source/src/lower_ops.cpp
+          (cd out/tso-v5-source && git diff --check && git diff --stat)
+  arm64:
+    name: ARM64 compare inline vs outline, multicore barriers, verify helper disassembly
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and check ARM64 helper codegen preserves fences and native-size load/store
+        run: |
+          set -euo pipefail
+          mkdir -p out/tso-v5
+          cc -O2 -std=gnu11 -Wall -Wextra -Werror -fPIC -c android/aot/bbr_tso_unaligned_helpers.c -o out/tso-v5/helpers.o
+          objdump -d out/tso-v5/helpers.o > out/tso-v5/helpers.disasm.txt
+          grep -q 'dmb' out/tso-v5/helpers.disasm.txt
+          grep -E 'ldr|ldrh|str|strh' out/tso-v5/helpers.disasm.txt | head -12
+          nm out/tso-v5/helpers.o | grep 'bbr_tso_unaligned_load'
+          nm out/tso-v5/helpers.o | grep 'bbr_tso_unaligned_store'
+      - name: Run exact byte data and speed comparisons (v4 vs v5)
+        run: |
+          set -euo pipefail
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror gow3_pc/tests/test_tlou_aot_tso_outline_bench.cpp out/tso-v5/helpers.o -o out/tso-v5/bench
+          out/tso-v5/bench | tee out/tso-v5/results.txt
+          test "$(grep -c '^TSO v5 outline ARM64' out/tso-v5/results.txt)" -eq 12
+      - name: Re-run actual multicore TSO litmus screen without changing memory model
+        run: |
+          set -euo pipefail
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread gow3_pc/tests/test_tlou_aot_tso_litmus.cpp -o out/tso-v5/litmus
+          out/tso-v5/litmus | tee out/tso-v5/litmus.txt
+          grep -q '^TLOU TSO IRIW ARM64.*PASS' out/tso-v5/litmus.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: TLOU-v5-TSO-Outlined-ARM64-Results
+          path: |
+            out/tso-v5/results.txt
+            out/tso-v5/litmus.txt
+            out/tso-v5/helpers.disasm.txt
+          if-no-files-found: warn

@@ -154,6 +154,7 @@ final class InstallTools {
             "--boot",boot.getCanonicalPath(),
             "--out",output.getCanonicalPath(),
             "--compiler",compiler.getCanonicalPath(),
+            "--tso-profile",profile,
             "--bundle-dir",bundle.getCanonicalPath(),
             "--options",nativeOptions.getCanonicalPath(),
             "--jobs","3","--shards","64",

@@ -12,6 +12,15 @@ from __future__ import annotations
 # The upstream bb-recomp --resume shard key includes the calleeSaved option.
 NATIVE_FIBER_CPU_FLAGS = ("--tso", "--resume-entries", "--no-callee-saved")
 
+
+def native_guest_flags(profile: str) -> tuple[str, ...]:
+    """No-TSO is strictly opt-in; fiber and resume entry flags never change."""
+    if profile not in ("v3", "v4", "v5", "off"):
+        raise ValueError("Unrecognized TSO lowering profile")
+    return tuple(f for f in NATIVE_FIBER_CPU_FLAGS
+                 if profile != "off" or f != "--tso")
+
+
 # AOT vs FEX gameplay (logs 28/29): six workers 3.00 vs 2.52 CPU cores.
 # Keep --tso and fiber ABI safeguards. The verified PS4 1.11 native image has
 # all static patches built in, --no-game-hooks, and no runtime x86 patch writes.
@@ -481,8 +490,7 @@ def main(argv=None):
         cpu_flags = AOT_111_PERFORMANCE_FLAGS if fast_111 else ("-O1",)
         # --tso is a CODE GENERATION option, not a runtime switch.
         # Fibers and resume-entry safeguards remain enabled in both modes.
-        guest_flags = tuple(f for f in NATIVE_FIBER_CPU_FLAGS
-                            if args.tso_profile != "off" or f != "--tso")
+        guest_flags = native_guest_flags(args.tso_profile)
         command = [str(args.compiler or "/path/to/libbbrecomp.so"),
                    "--boot", str(staged), "--game-dir", str(game), "--so", str(so),
                    "--stats", str(aot / "compile.txt"), "--jobs", str(args.jobs),

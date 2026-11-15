@@ -26,10 +26,15 @@ final class RuntimeAot {
         final File library;
         final File engineDirectory;
         final File bootImage;
-        Ready(File library, File engineDirectory, File bootImage) {
+        final String compiledResolution;
+        final String pendingCodePatches;
+        Ready(File library, File engineDirectory, File bootImage,
+              String compiledResolution, String pendingCodePatches) {
             this.library=library;
             this.engineDirectory=engineDirectory;
             this.bootImage=bootImage;
+            this.compiledResolution=compiledResolution;
+            this.pendingCodePatches=pendingCodePatches;
         }
     }
 
@@ -62,6 +67,20 @@ final class RuntimeAot {
             if(target.exists()&&!target.delete())throw new java.io.IOException("Não foi possível atualizar CPU AOT");
             if(!temp.renameTo(target))throw new java.io.IOException("Não foi possível instalar CPU AOT");
         } finally {temp.delete();}
+    }
+
+    // The ARM64 image contains immutable guest code. Preference differences
+    // do not invalidate a verified library: new patches remain pending.
+    static String pendingCodePatches(JSONObject compiled, JSONObject requested) {
+        java.util.ArrayList<String> changed=new java.util.ArrayList<>();
+        if(!compiled.optString("resolution","").equals(requested.optString("resolution","")))
+            changed.add("resolution");
+        for(String effect:PortSettings.EFFECTS) {
+            if(compiled.has(effect) &&
+               compiled.optBoolean(effect)!=requested.optBoolean(effect))
+                changed.add(effect);
+        }
+        return String.join(", ",changed);
     }
 
     static Ready prepare(Context context,File prepared) throws Exception {
@@ -117,6 +136,8 @@ final class RuntimeAot {
         // pointer guard as native ARM64 instructions. Old AOT images omit it,
         // and the unpatched path may dereference a bogus output pointer.
         File runtimeBoot=boot;
+        String compiledResolution=null;
+        String pendingPatches="";
         if("1.11".equals(source.optString("version"))) {
             JSONArray nativePatches=source.optJSONArray("native_patches");
             boolean hasAnimationGuard=false,hasTimeout=false,hasIdleBackoff=false;
@@ -152,17 +173,22 @@ final class RuntimeAot {
                     "AOT 1.11 sem correção de espera ativa dos seis workers. Recompile em Ajustes → CPU.");
             JSONObject actual=new JSONObject(new String(Files.readAllBytes(
                     PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
-            if(expected==null || !expected.optString("resolution","?").equals(
-                    actual.optString("resolution","!")) ||
+            if(expected==null || !expected.has("resolution") ||
                     expected.optBoolean("job_sleep",false)!=actual.optBoolean("job_sleep",false))
                 throw new java.io.IOException(
-                    "Configuração AOT mudou desde a compilação (resolução/workers). Recompile a CPU ARM64.");
+                    "Configuração AOT incompleta ou workers alterados. Recompile a CPU ARM64.");
             for(String effect:PortSettings.EFFECTS) {
-                if(!expected.has(effect) ||
-                        expected.optBoolean(effect)!=actual.optBoolean(effect))
+                if(!expected.has(effect))
                     throw new java.io.IOException(
-                        "Efeitos AOT alterados após a compilação: "+effect+". Recompile a CPU ARM64.");
+                        "Metadados do patch ARM64 incompletos: "+effect+". Recompile a CPU ARM64.");
             }
+            compiledResolution=expected.optString("resolution","original");
+            if(!java.util.Arrays.asList("original","720","540","360").contains(compiledResolution))
+                throw new java.io.IOException("Resolução ARM64 compilada inválida.");
+            pendingPatches=pendingCodePatches(expected,actual);
+            if(!pendingPatches.isEmpty())
+                RunLog.write(context,"AOT: alterações de patches pendentes ("+pendingPatches+
+                    "); usando efeitos e resolução já COMPILADOS até gerar nova AOT.");
             RunLog.write(context,"TLOU AOT patches ARM64 compilados: "+nativePatches+
                     " • resolução="+expected.optString("resolution")+" • FEX original preservado.");
             runtimeBoot=new File(work,"native-boot-linked.bin");
@@ -185,6 +211,6 @@ final class RuntimeAot {
         // the same AOT engine already used by the game executable.
         stageAsset(context,"runtime-aot/libbbcpu.so",
                    new File(engineDir,"libbbcpu.so"),512);
-        return new Ready(so,engineDir,runtimeBoot);
+        return new Ready(so,engineDir,runtimeBoot,compiledResolution,pendingPatches);
     }
 }

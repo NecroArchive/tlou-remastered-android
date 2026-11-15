@@ -65,8 +65,14 @@ final class PortSettings {
     }
 
     static void environment(Context context,Map<String,String> env) {
+        environment(context,env,null);
+    }
+    // AOT geometry and movie paths must match the already-compiled guest
+    // resolution. New visual preferences remain pending until native rebuild.
+    static void environment(Context context,Map<String,String> env,String compiledAotResolution) {
         SharedPreferences p=prefs(context);
-        String resolution=p.getString("resolution","original");
+        String resolution=compiledAotResolution!=null?compiledAotResolution:
+                p.getString("resolution","original");
         // The proven unified path is mandatory: no legacy proxy/composite mode.
         // Keep the original movie decoder, scale scene/HUD/aim as one domain.
         final String scaledPreset=resolution.equals("720")?"1":

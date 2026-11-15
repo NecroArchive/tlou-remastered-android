@@ -6,6 +6,10 @@ on:
     paths:
       - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java'
       - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java'
+      - 'android/aot/aot_local.py'
+      - 'android/aot/test_aot_local.py'
       - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/HudTelemetry.java'
       - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAotExitPolicy.java'
       - 'android-launcher/app/src/test/java/ro/cobrabm/fexdroid/HostCopyBatchLaunchTest.java'
@@ -41,6 +45,11 @@ jobs:
             --tests 'ro.cobrabm.fexdroid.RuntimeAotExitPolicyTest' \
             --tests 'ro.cobrabm.fexdroid.TsoProfileTest' \
             --no-daemon --max-workers=2
+      - name: Verify corrected exact-binary worker entry seeds
+        run: |
+          set -euo pipefail
+          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py
+          python3 android/aot/test_aot_local.py -v
       - name: Verify GPU copy branch is isolated and no FEX changes
         run: |
           set -euo pipefail
@@ -50,6 +59,8 @@ jobs:
             android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
           grep -Fq 'if(pid>0 && detailedThreadDiagnostics)sampleHotThreads(pid,nowNanos);' \
             android-launcher/app/src/main/java/ro/cobrabm/fexdroid/HudTelemetry.java
+          grep -Fq 'environment(this,env,nativeAot==null?null:nativeAot.compiledResolution)' \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
           grep -Fq 'if(threadCpu!=null)threadCpu.start();' \
             android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
           grep -Fq 'scheduler.RecordHostCopyItem(item)' \

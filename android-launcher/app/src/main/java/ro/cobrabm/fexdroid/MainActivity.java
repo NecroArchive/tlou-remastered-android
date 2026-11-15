@@ -307,9 +307,9 @@ public final class MainActivity extends Activity {
             File selectedAot=new File(TsoProfile.work(this,selectedTso),"aot/libtlouaot.so");
             cpu.addView(text("Selecionado: "+selectedTso.toUpperCase(java.util.Locale.ROOT)
                 +" • AOT "+(selectedAot.isFile()?"já compilado":"ainda não compilado")
-                +". Todos os perfis mantêm TSO ligado. A troca não modifica a CPU em execução; "
-                +"compile cada perfil uma vez e depois reinicie o jogo para comparar. "
-                +"O histórico dos perfis é guardado separadamente (usa armazenamento).",12,MUTED));
+                +". A troca não modifica a CPU em execução; compile cada perfil uma vez "
+                +"e reinicie o jogo. TSO OFF é uma experiência sem validação de estabilidade: "
+                +"faça backup dos saves antes de usá-lo. Compilações ficam separadas.",12,MUTED));
             add(cpu,"Compilar CPU ARM64 para o perfil TSO selecionado",false,
                 ()->withAccess(this::buildSelectedAot));
             toggleSetting(cpu,"aot_detailed_diagnostics",

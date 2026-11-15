@@ -1,4 +1,4 @@
-name: TLOU TSO OFF Ordered Host-Copy GPU - Original Signer
+name: TLOU TSO OFF Host-Copy Active and Exit 143 Fix - Original Signer
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 'cc75fbcf75a538526bce5b24c9b946efada8cf75'
+          ref: 'c63afc058b2013c69a507213a6cc35082808e0f8'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -180,6 +180,8 @@ jobs:
           grep -Fq 'TsoProfile.version(tsoProfile).equals(meta.optString("compiler_version"))' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java
           grep -Fq 'TsoProfile.KEY' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
           grep -Fq 'RELAXED="off"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TsoProfile.java
+          grep -Fq 'env.put("GOW3_TLOU_HOST_COPY_BATCH",aotTsoOff?"1":"0")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+          grep -Fq 'if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
       - name: Stage exact native game runtime with pinned ARM64 compiler
         run: |
           set -euo pipefail
@@ -298,7 +300,7 @@ jobs:
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-TSO-OFF-HOST-COPY-BATCH-EXPERIMENTAL-APK
+          name: TLOU-v011-TSO-OFF-HOST-COPY-BATCH-ACTIVE-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

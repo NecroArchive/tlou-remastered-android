@@ -439,7 +439,15 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             recorder_busy = true;
         }
         // current_cmdbuf only changes after SyncRecording(), which waits for this thread.
+        // Counts are read from a fully published chunk; no per-host-copy
+        // atomics or clock reads are added to the critical producer path.
+        const u32 host_items = chunk->HostCopyItems();
+        const u32 host_groups = chunk->HostCopyGroups();
         chunk->Execute(current_cmdbuf);
+        if (host_items) {
+            recorder_host_copy_items.fetch_add(host_items, std::memory_order_relaxed);
+            recorder_host_copy_groups.fetch_add(host_groups, std::memory_order_relaxed);
+        }
         {
             std::scoped_lock lk{recorder_mutex};
             free_chunks.push_back(std::move(chunk));

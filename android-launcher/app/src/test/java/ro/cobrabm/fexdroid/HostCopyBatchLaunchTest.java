@@ -1,6 +1,7 @@
 package ro.cobrabm.fexdroid;
 
 import android.content.Context;
+import org.json.JSONObject;
 import android.content.SharedPreferences;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -45,4 +46,16 @@ public final class HostCopyBatchLaunchTest {
         assertTrue(PortSettings.experimentReport(c,env).contains(
                 "host-copy-batching=0"));
     }
+    @Test public void changingStaticVisualPatchesDoesNotInvalidateExistingAot() throws Exception {
+        JSONObject compiled=new JSONObject()
+                .put("resolution","720").put("ssao",true)
+                .put("motion_blur",true).put("omni_light_shadows",true);
+        JSONObject requested=new JSONObject()
+                .put("resolution","540").put("ssao",true)
+                .put("motion_blur",false).put("omni_light_shadows",false);
+        assertEquals("resolution, motion_blur, omni_light_shadows",
+                RuntimeAot.pendingCodePatches(compiled,requested));
+        assertEquals("",RuntimeAot.pendingCodePatches(compiled,compiled));
+    }
+
 }

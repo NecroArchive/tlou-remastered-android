@@ -49,6 +49,15 @@ unsupported ops (units containing a trap for the op):
             self.evaluate("units with bbr_trap (unsupported ops): 60598 (80.35%)",
                           "4-tlou-tso-aligned-ar-v1")
 
+    def test_v5_tso_outlined_accepts_zero_traps_and_rejects_bad_coverage(self):
+        result=self.evaluate("units with bbr_trap (unsupported ops): 0 (0.00%)",
+                             "5-tlou-tso-outlined-unaligned-v1")
+        self.assertEqual(result["unsupported_units"], 0)
+        self.assertEqual(result["compiler_version"], "5-tlou-tso-outlined-unaligned-v1")
+        with self.assertRaisesRegex(ValueError, "refusing unusable"):
+            self.evaluate("units with bbr_trap (unsupported ops): 60598 (80.35%)",
+                          "5-tlou-tso-outlined-unaligned-v1")
+
     def test_reject_tso_ops_even_with_low_reported_percent(self):
         with self.assertRaisesRegex(ValueError, "refusing unusable"):
             self.evaluate("""units with bbr_trap (unsupported ops): 1 (0.00%)

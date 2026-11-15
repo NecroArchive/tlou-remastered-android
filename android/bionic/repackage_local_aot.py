@@ -7,6 +7,8 @@ content enters CI. Do NOT change the native libraries in a launcher-only update.
 from __future__ import annotations
 
 import io
+import os
+import hashlib
 from pathlib import Path, PurePosixPath
 import struct
 import sys
@@ -45,6 +47,39 @@ def compiler_payload() -> dict[str, bytes]:
                 result[f"aot/{folder}/{p.relative_to(AOT / folder).as_posix()}"] = p.read_bytes()
     if not any(x.startswith("aot/bundle/") for x in result):
         raise ValueError("Compiler missing LLVM bundle")
+    # AOT TSO profiles are distinct compilers with distinct linker bundles:
+    # `--tso` stays enabled, but codegen selection occurs before translation.
+    # The experiment's packaging workflow supplies archived, pinned v3/v4
+    # compilers, and the staged v5 compiler. Never silently mix bundles.
+    profiles_root = os.environ.get("TLOU_TSO_MULTI_PROFILE_DIR", "").strip()
+    if profiles_root:
+        expected_versions = {
+            "v3": b"3-tlou-string",
+            "v4": b"4-tlou-tso-aligned-ar-v1",
+            "v5": b"5-tlou-tso-outlined-unaligned-v1",
+        }
+        for profile, version in expected_versions.items():
+            directory = AOT if profile == "v5" else (
+                Path(profiles_root) / profile / "android")
+            binary = directory / ("bin/libbbrecomp.so" if profile == "v5"
+                                  else "libbbrecomp.so")
+            if not binary.is_file():
+                raise ValueError(f"Missing AOT TSO profile compiler: {profile}")
+            data = binary.read_bytes()
+            if (data[:4] != b"\\x7fELF" or
+                    struct.unpack_from("<H", data, 18)[0] != 183 or
+                    version not in data):
+                raise ValueError(f"Wrong AOT TSO compiler ABI/version: {profile}")
+            bundle = directory / "bundle"
+            if not (bundle / "helpers-aarch64.o").is_file():
+                raise ValueError(f"AOT TSO profile linker bundle missing: {profile}")
+            key = f"aot/compilers/{profile}"
+            result[f"{key}/libbbrecomp.so"] = data
+            result[f"{key}/compiler.sha256"] = (
+                hashlib.sha256(data).hexdigest()+"\\n").encode()
+            for member in sorted(bundle.rglob("*")):
+                if member.is_file() and not member.is_symlink():
+                    result[f"{key}/bundle/{member.relative_to(bundle).as_posix()}"] = member.read_bytes()
     for name in SOURCE_OVERRIDES:
         result[f"source/{name}"] = (ROOT / name).read_bytes()
     for file in sorted((ROOT / "gow3_pc/scripts").glob("*.py")):

@@ -299,7 +299,16 @@ public final class MainActivity extends Activity {
             choice(cpu,"cpu_backend","Processador do jogo",
                 new String[]{"ARM64 recompilado (AOT experimental)","FEX (estável)"},
                 new String[]{"aot","fex"},"fex");
-            add(cpu,"Compilar CPU ARM64 no aparelho (AOT experimental)",false,
+            choice(cpu,TsoProfile.KEY,"Perfil TSO da CPU ARM64 (teste A/B)",
+                TsoProfile.LABELS,TsoProfile.VALUES,TsoProfile.BASELINE);
+            String selectedTso=TsoProfile.selected(this);
+            File selectedAot=new File(TsoProfile.work(this,selectedTso),"aot/libtlouaot.so");
+            cpu.addView(text("Selecionado: "+selectedTso.toUpperCase(java.util.Locale.ROOT)
+                +" • AOT "+(selectedAot.isFile()?"já compilado":"ainda não compilado")
+                +". Todos os perfis mantêm TSO ligado. A troca não modifica a CPU em execução; "
+                +"compile cada perfil uma vez e depois reinicie o jogo para comparar. "
+                +"O histórico dos perfis é guardado separadamente (usa armazenamento).",12,MUTED));
+            add(cpu,"Compilar CPU ARM64 para o perfil TSO selecionado",false,
                 ()->withAccess(this::buildSelectedAot));
             toggleSetting(cpu,"aot_detailed_diagnostics",
                 "Diagnóstico aprofundado AOT (reduz FPS)",false);
@@ -571,15 +580,16 @@ public final class MainActivity extends Activity {
             File prepared=tools.prepare(base,updateFolder,this::update);
             update("Compilando código do jogo para ARM64 no aparelho…");
             File result=tools.buildExperimentalAot(prepared,this::update);
-            File coverageFile=new File(getFilesDir(),"tlou-aot-work/aot-report.json");
+            File coverageFile=new File(TsoProfile.work(this),"aot-report.json");
             org.json.JSONObject coverageReport=new org.json.JSONObject(
                 new String(Files.readAllBytes(coverageFile.toPath()),java.nio.charset.StandardCharsets.UTF_8));
             org.json.JSONObject coverage=coverageReport.getJSONObject("coverage");
             int valid=coverage.getInt("estimated_usable_units");
             int unsupported=coverage.getInt("unsupported_units");
             prefs.edit().putString("cpu_backend","aot").apply();
-            String message="ARM64 AOT: "+valid+" unidades válidas, "+unsupported
-                +" ainda não suportadas. Modo nativo ativado; toque em JOGAR.";
+            String message="ARM64 AOT ("+TsoProfile.selected(this)+"): "
+                +valid+" unidades válidas, "+unsupported
+                +" ainda não suportadas. Perfil TSO selecionado ativado; toque em JOGAR.";
             RunLog.write(this,"CPU AOT recompilada, cobertura validada: "+message+" arquivo="+result);
             update(message);
         });

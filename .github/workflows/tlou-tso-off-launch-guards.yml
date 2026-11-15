@@ -6,6 +6,7 @@ on:
     paths:
       - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java'
       - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/HudTelemetry.java'
       - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAotExitPolicy.java'
       - 'android-launcher/app/src/test/java/ro/cobrabm/fexdroid/HostCopyBatchLaunchTest.java'
       - 'android-launcher/app/src/test/java/ro/cobrabm/fexdroid/RuntimeAotExitPolicyTest.java'
@@ -32,7 +33,7 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
-      - name: Verify AOT TSO OFF batching real launch flag and exit disposition
+      - name: Verify AOT TSO OFF safe batching rollback and exit disposition
         run: |
           set -euo pipefail
           gradle -p android-launcher :app:compileDebugJavaWithJavac :app:testDebugUnitTest \
@@ -43,9 +44,13 @@ jobs:
       - name: Verify GPU copy branch is isolated and no FEX changes
         run: |
           set -euo pipefail
-          grep -Fq 'env.put("GOW3_TLOU_HOST_COPY_BATCH",aotTsoOff?"1":"0")' \
+          grep -Fq 'env.put("GOW3_TLOU_HOST_COPY_BATCH","0")' \
             android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
           grep -Fq 'if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(' \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'if(pid>0 && detailedThreadDiagnostics)sampleHotThreads(pid,nowNanos);' \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/HudTelemetry.java
+          grep -Fq 'if(threadCpu!=null)threadCpu.start();' \
             android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
           grep -Fq 'scheduler.RecordHostCopyItem(item)' \
             gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp

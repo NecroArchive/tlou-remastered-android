@@ -102,13 +102,11 @@ final class PortSettings {
         // TLOU ZIP 30/31: exact memo saw 0 hits across >200k compute lookups/5s.
         // Retain the old stable default: avoid descriptor comparisons and memo bookkeeping.
         env.put("GOW3_TLOU_COMPUTE_MEMO","0");
-        // TLOU log 22 showed 0 recorder host-copy groups after the GPU optimization:
-        // this old launch override disabled the newly compiled Android batching.
-        // Test it ONLY with ARM64 AOT TSO OFF; FEX and TSO v3/v4/v5 keep their
-        // previous behavior to isolate the performance change.
-        final boolean aotTsoOff = "aot".equals(p.getString("cpu_backend","fex")) &&
-                TsoProfile.RELAXED.equals(TsoProfile.selected(context));
-        env.put("GOW3_TLOU_HOST_COPY_BATCH",aotTsoOff?"1":"0");
+        // Log 23: 1.09-1.12 copies/group, no host-copy wait improvement and
+        // lower FPS than the previous build. Stop forcing the experimental
+        // recording representation on in normal gameplay. The renderer still
+        // implements GOW3_TLOU_HOST_COPY_BATCH=1 for isolated A/B experiments.
+        env.put("GOW3_TLOU_HOST_COPY_BATCH","0");
         env.put("TLOU_SRT_HOT_READBACKS","1");
         env.put("TLOU_SRT_DEP_BATCH","0");
         env.put("GOW3_FETCH_NO_BLOCK","1");

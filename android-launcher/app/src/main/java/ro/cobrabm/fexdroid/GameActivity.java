@@ -339,7 +339,7 @@ public final class GameActivity extends Activity {
                 AotInstrumentation.configure(env,detailedAotStats);
                 RunLog.write(this,"AOT native: strict unit execution; misses and fault-entry logging always on; "
                         +"full per-call stats/trace="+(detailedAotStats?"ON (diagnostic, slower)":"OFF (performance)"));
-                RunLog.write(this,"TLOU AOT performance markers: all-thread monitor=ON; raw AOT stats="+detailedAotStats);
+                RunLog.write(this,"TLOU AOT performance markers: expensive thread scans="+(detailedAotStats?"ON":"OFF")+"; raw AOT stats="+detailedAotStats);
                 RunLog.write(this,"AOT native: FEX can be selected in Settings");
             }
             env.put("LD_LIBRARY_PATH",cpuLibraryPath);
@@ -414,16 +414,18 @@ public final class GameActivity extends Activity {
             if(closing.get()){game.destroyForcibly();game.waitFor();return;}
             final String backend=nativeAot!=null?"ARM64 AOT":"FEX";
             RunLog.write(this,"Processo "+backend+" criado");
-            // Include all six game workers on their actual LITTLE/BIG cores.
-            // Previously TLOU CPU critical counted only the Vulkan threads.
-            // This 5-second /proc sampling runs in the Java launcher, NOT in
-            // any game worker or renderer hot path, and works for both modes.
-            final TlouCpuThreads threadCpu=new TlouCpuThreads(runtimePidFile,RuntimeProcess.readPid(runtimePidFile),backend,
-                    line->RunLog.write(this,line));
-            threadCpu.start();
+            // Full /proc/PID/task scans are diagnostic, not part of the FPS HUD.
+            // Avoid a second competing sampler during normal gameplay. The
+            // explicit detailed-diagnostics setting restores the old data.
+            final boolean scanThreads=PortSettings.prefs(this)
+                    .getBoolean("aot_detailed_diagnostics",false);
+            final TlouCpuThreads threadCpu=scanThreads
+                    ?new TlouCpuThreads(runtimePidFile,RuntimeProcess.readPid(runtimePidFile),backend,
+                            line->RunLog.write(this,line)):null;
+            if(threadCpu!=null)threadCpu.start();
             final int result;
             try {result=game.waitFor();}
-            finally {threadCpu.close();}
+            finally {if(threadCpu!=null)threadCpu.close();}
             RunLog.write(this,"Processo "+backend+" finalizado: código "+result);
             if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(
                     nativeAot!=null,result,closing.get())) {

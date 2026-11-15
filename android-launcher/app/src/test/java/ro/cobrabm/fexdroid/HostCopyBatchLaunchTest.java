@@ -26,9 +26,9 @@ public final class HostCopyBatchLaunchTest {
         return env.get("GOW3_TLOU_HOST_COPY_BATCH");
     }
 
-    @Test public void actuallyEnableBatchOnlyForAotWithoutTso() {
+    @Test public void doNotForceUnproductiveBatchingInGameplay() {
         Context c=RuntimeEnvironment.getApplication();
-        assertEquals("1",launch(c,"aot","off"));
+        assertEquals("0",launch(c,"aot","off"));
         assertEquals("0",launch(c,"aot","v3"));
         assertEquals("0",launch(c,"aot","v4"));
         assertEquals("0",launch(c,"aot","v5"));
@@ -43,6 +43,6 @@ public final class HostCopyBatchLaunchTest {
                 .putString(TsoProfile.KEY,"off").commit();
         PortSettings.environment(c,env);
         assertTrue(PortSettings.experimentReport(c,env).contains(
-                "host-copy-batching=1"));
+                "host-copy-batching=0"));
     }
 }

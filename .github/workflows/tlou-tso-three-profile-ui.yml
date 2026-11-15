@@ -1,0 +1,60 @@
+name: TLOU AOT TSO v3 v4 v5 UI profile tests
+
+on:
+  push:
+    branches: [experiment/tlou-aot-tso-outlined-fallback-20261114]
+    paths:
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TsoProfile.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/InstallTools.java'
+      - 'android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TsoProfileTest.java'
+      - 'android/bionic/repackage_local_aot.py'
+      - 'android/bionic/test_multi_tso_packaging.py'
+      - '.github/workflows/tlou-tso-three-profile-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Verify Python packaging and three pinned compiler variants (synthetic)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run packaging unit tests, no game assets
+        run: |
+          set -euo pipefail
+          python3 -m py_compile android/bionic/repackage_local_aot.py android/bionic/test_multi_tso_packaging.py
+          python3 android/bionic/test_multi_tso_packaging.py -v
+          python3 android/aot/test_aot_quality.py -v
+  launcher:
+    name: Compile Android launcher TSO v3 v4 v5 selection and Robolectric checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - name: Compile new UI, launch guards and multi-profile cache tests
+        run: |
+          set -euo pipefail
+          gradle -p android-launcher :app:compileDebugJavaWithJavac :app:testDebugUnitTest --no-daemon --max-workers=2
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: TLOU-TSO-v3-v4-v5-UI-Compile-Errors
+          path: |
+            android-launcher/app/build/reports/tests/**
+            android-launcher/app/build/test-results/**
+          if-no-files-found: ignore

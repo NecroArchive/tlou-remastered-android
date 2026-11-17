@@ -5,6 +5,10 @@ on:
     branches: [experiment/tlou-local-aot-20261112]
     paths:
       - '.github/workflows/tlou-tso-off-host-copy-original-signer-apk.yml'
+      - 'gow3_pc/gpu/shim/vk_driver_loader.cpp'
+      - 'gow3_pc/tests/test_tlou_qualcomm_vulkan_fallback.cpp'
+      - 'android/tlou_patches.py'
+      - 'android/tests/test_tlou_111_optional_light_shadows.py'
   workflow_dispatch:
 
 permissions:
@@ -13,7 +17,7 @@ permissions:
 
 # This workflow runs in the ORIGINAL SIGNING CACHE branch, so it can restore
 # the exact existing debug keystore. No new key is generated.
-# GPU source is pinned to the verified low-instrumentation rollback commit; all other native files and signer stay pinned.
+# Builds the current signed APK branch and compiles its actual Vulkan GPU from HEAD.
 # Original signing cache stays in the original branch, no private keys uploaded.
 # Only the original proven AOT v3 backend is packaged. The frontend omits --tso.
 # Restart after GitHub Actions re-enabled on 2026-11-17; original signer required.
@@ -37,6 +41,19 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           echo "Building GPU from $GITHUB_SHA"
+      - name: Test external Qualcomm vendor fallback without masking Turnip failure
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan1
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror \
+            gow3_pc/tests/test_tlou_qualcomm_vulkan_fallback.cpp \
+            gow3_pc/gpu/shim/vk_driver_loader.cpp -ldl -o /tmp/tlou-qualcomm-fallback
+          /tmp/tlou-qualcomm-fallback vendor 2>&1 | tee /tmp/tlou-qualcomm-vendor.log
+          /tmp/tlou-qualcomm-fallback turnip 2>&1 | tee /tmp/tlou-turnip-failure.log
+          /tmp/tlou-qualcomm-fallback system 2>&1 | tee /tmp/tlou-system-vulkan.log
+          grep -Fq 'SYSTEM Qualcomm driver instead' /tmp/tlou-qualcomm-vendor.log
+          ! grep -Fq 'SYSTEM Qualcomm driver instead' /tmp/tlou-turnip-failure.log
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
@@ -72,7 +89,7 @@ jobs:
           mkdir -p out/native-gpu
           cp out/android-bionic/lib/libgow3gpu.so out/native-gpu/libgow3gpu.so
           readelf -h out/native-gpu/libgow3gpu.so | grep -E 'Machine:.*AArch64'
-          for marker in 'GOW3_STAGING_PREWARM_BLOCKS' 'GPU allocation failure:' 'host-copy items=' 'memory-waits-deferred=' 'TLOU compute buffer-only fast' 'TLOU pending word-hit'; do
+          for marker in 'GOW3_STAGING_PREWARM_BLOCKS' 'GPU allocation failure:' 'SYSTEM Qualcomm driver instead' 'host-copy items=' 'memory-waits-deferred=' 'TLOU compute buffer-only fast' 'TLOU pending word-hit'; do
             grep -aFq "$marker" out/native-gpu/libgow3gpu.so
           done
           (cd out/native-gpu && sha256sum libgow3gpu.so > libgow3gpu.so.sha256 && sha256sum -c libgow3gpu.so.sha256)
@@ -282,6 +299,7 @@ jobs:
           grep -aFq 'host-copy items=' out/native-gpu/libgow3gpu.so
           grep -aFq 'GOW3_STAGING_PREWARM_BLOCKS' out/native-gpu/libgow3gpu.so
           grep -aFq 'GPU allocation failure:' out/native-gpu/libgow3gpu.so
+          grep -aFq 'SYSTEM Qualcomm driver instead' out/native-gpu/libgow3gpu.so
           cp out/native-gpu/libgow3gpu.so out/android-bionic/apk-jni/arm64-v8a/libgow3gpu.so
       - name: Generate save-selection fixtures for existing Android tests
         run: python3 gow3_pc/tests/test_android_save_choice.py
@@ -320,6 +338,7 @@ jobs:
               assert b'host-copy items=' in new_gpu, 'Host-copy grouping diagnostics missing from APK'
               assert b'GOW3_STAGING_PREWARM_BLOCKS' in new_gpu, 'A6xx staging prewarm not built into APK'
               assert b'GPU allocation failure:' in new_gpu, 'Vulkan OOM caller diagnostics missing from APK'
+              assert b'SYSTEM Qualcomm driver instead' in new_gpu, 'Native system Qualcomm fallback missing from APK'
               assert new_gpu!=a.read('lib/arm64-v8a/libgow3gpu.so'), 'old native GPU still packaged'
               for n in preserved:
                   if n=='lib/arm64-v8a/libgow3gpu.so': continue

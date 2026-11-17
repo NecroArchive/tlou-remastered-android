@@ -59,7 +59,7 @@ class AllPatchVariants(unittest.TestCase):
                              [(0,0xA60000,True)],0x1200000)
 
     def test_all_compile_options_are_independent_of_initial_user_preferences(self):
-        self.assertEqual(mod.PROFILE,"tlou-111-variants-v2")
+        self.assertEqual(mod.PROFILE,"tlou-111-variants-v3")
         # The frontend must bake only stability fixes and hand optional groups
         # to --variants; neither +720 nor +omni may be hardcoded at build time.
         code=(ROOT/"aot_local.py").read_text()

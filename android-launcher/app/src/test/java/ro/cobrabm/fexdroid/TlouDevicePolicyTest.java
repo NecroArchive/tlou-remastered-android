@@ -61,6 +61,27 @@ public final class TlouDevicePolicyTest {
         ok("0".equals(e.get("GOW3_RESIDENCY_CHUNKS")), "speculative arena allocations");
         ok(!e.containsKey("GOW3_DMEM_MB") && !e.containsKey("GOW3_DMEM_REPORT_MB"),
             "must preserve PS4 virtual memory contract");
+        ok(!e.containsKey("GOW3_STAGING_PREWARM_BLOCKS"),
+            "normal 8 GB profile keeps its original staging prewarm");
+        e=env();
+        ok("8gb-a6xx-low-memory".equals(TlouDevicePolicy.configureMemory(
+            e,7500L<<20,"Adreno (TM) 640")), "K20 Pro profile must activate");
+        ok("256".equals(e.get("GOW3_STREAM_MB")), "A640 stream memory cap");
+        ok("64".equals(e.get("GOW3_STAGING_KEEP_MB")), "A640 staging retention");
+        ok("0".equals(e.get("GOW3_STAGING_KEEP_VRAM_MB")), "A640 idle VRAM");
+        ok("0".equals(e.get("GOW3_STAGING_LARGE_MB")), "no A640 pinned scratch");
+        ok("2".equals(e.get("GOW3_STAGING_PREWARM_BLOCKS")), "two 16 MiB prewarm blocks");
+        ok(!e.containsKey("GOW3_DMEM_MB") && !e.containsKey("GOW3_DMEM_REPORT_MB"),
+            "A640 must keep guest PS4 virtual memory unchanged");
+        for(String gpu:new String[]{"Adreno (TM) 750","Adreno (TM) 830","Mali-G720"}) {
+            e=env();
+            ok("8gb-balanced".equals(TlouDevicePolicy.configureMemory(
+                e,8L<<30,gpu)), "non-A6xx must preserve its profile: "+gpu);
+            ok("384".equals(e.get("GOW3_STREAM_MB")), gpu+" streaming unchanged");
+        }
+        e=env();
+        ok("normal".equals(TlouDevicePolicy.configureMemory(
+            e,12L<<30,"Adreno (TM) 640")), "12 GB A6xx keeps normal profile");
         e=env();
         ok("normal".equals(TlouDevicePolicy.configureMemory(e,0)),
             "unavailable RAM information must fail open");

@@ -21,6 +21,7 @@ SOURCE_OVERRIDES = (
     "android/tlou_bionic.py", "android/device_prepare.py",
     "android/tlou_patches.py", "tools/probe_tlou.py",
     "android/aot/aot_local.py",
+    "android/aot/patch_variants.py",
 )
 
 
@@ -83,7 +84,9 @@ def merge_tools(original: bytes, replacements: dict[str, bytes]) -> bytes:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         required = ("python/bin/python3.13", "bin/orbis-pkg-util",
                     "bin/libbbrecomp.so", "source/android/device_prepare.py",
-                    "source/android/aot/aot_local.py", "aot/upstream.sha256")
+                    "source/android/aot/aot_local.py",
+                    "source/android/aot/patch_variants.py",
+                    "aot/upstream.sha256")
         missing = [n for n in required if n not in archive.namelist()]
         if missing:
             raise ValueError(f"Tools ZIP missing {missing}")

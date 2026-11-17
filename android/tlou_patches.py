@@ -172,10 +172,15 @@ PERFORMANCE_EFFECTS_111 = {
     # compare both lighting and shadow projection visually on the device.
     # Original opcode guards verified on both supplied 01.11 SELF hashes.
     # The render-state base at 0xA638C4 is 0x181A770.
+    # Omni needs the same paired category fallback as spot: simply clearing
+    # shadowed omni lights drops the whole local light when the nonshadowed
+    # consumer is disabled. Override AL at the two adjacent reads only.
+    # This preserves an unshadowed omni LIGHT path; actual shadow removal
+    # still requires on-device image comparison (not a blanket lighting OFF).
     "omni_light_shadows": [
         (0xA638C4, "4c8d25a56edb00", None),  # lea r12,[rip+render-state]
         (0xA63BBA, "418a84244d010000", "30c0" + "90"*6),  # shadow category +0x14d
-        (0xA63BCA, "418a84244f010000", None),  # PRESERVE omni nonshadow +0x14f
+        (0xA63BCA, "418a84244f010000", "b001" + "90"*6),  # enable no-shadow omni LIGHT path +0x14f
     ],
     "spot_light_shadows": [
         (0xA6445F, "418a84244e010000", "30c0" + "90"*6),  # spot shadow +0x14e

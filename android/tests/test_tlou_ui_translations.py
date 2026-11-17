@@ -83,6 +83,16 @@ class UITranslationRegression(unittest.TestCase):
         self.assertIn('.setPositiveButton(TlouLanguage.t(this,"Compilar CPU ARM64")',method)
         self.assertIn('prefs.edit().putString("cpu_backend","fex").apply();',method)
         self.assertIn('putBoolean("launch_direct",false)',code)
+        # A stale .so or a compiler run that only reached 'staged' must not
+        # show "already compiled" on the launcher.
+        self.assertIn("RuntimeAot.hasCompletedVariantBuild(this)",code)
+        self.assertNotIn('selectedAot.isFile()?"já compilada"',code)
+        preflight=(JAVA/"RuntimeAot.java").read_text(encoding="utf-8")
+        quick=preflight[preflight.index("static boolean hasCompletedVariantBuild("):
+                        preflight.index("static String pendingSelectedPatches(")]
+        self.assertIn('"aarch64_generated_native_ready".equals(report.optString("status"))',quick)
+        self.assertIn('hasCompleteVariantCatalog(report)',quick)
+        self.assertIn('built.optInt("variants_skipped",-1)==0',quick)
 
     def test_game_failure_screen_uses_app_language(self):
         code=(JAVA/"GameFailureScreen.java").read_text(encoding="utf-8")

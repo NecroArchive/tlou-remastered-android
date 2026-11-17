@@ -16,6 +16,7 @@ permissions:
 # GPU source is pinned to the verified low-instrumentation rollback commit; all other native files and signer stay pinned.
 # Original signing cache stays in the original branch, no private keys uploaded.
 # Compiler v5 is from successful gated run 43658666646; v3/v4 are independently pinned.
+# Restart after GitHub Actions re-enabled on 2026-11-17; original signer required.
 concurrency:
   group: tlou-tso-off-host-copy-batch-original-signer
   cancel-in-progress: false

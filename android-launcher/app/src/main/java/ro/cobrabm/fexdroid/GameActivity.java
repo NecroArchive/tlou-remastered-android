@@ -426,11 +426,23 @@ public final class GameActivity extends Activity {
             }
             String ubwcMode=PortSettings.prefs(this)
                 .getString("turnip_ubwc_hint_mode","auto");
+            String compactMode=PortSettings.prefs(this)
+                .getString("adreno750_compact_present","auto");
             String eglRenderer="";
-            if(!"off".equals(ubwcMode) && env.containsKey("GOW3_VULKAN_DRIVER")) {
+            if(!"off".equals(ubwcMode) || !"off".equals(compactMode)) {
                 try { eglRenderer=BuiltinDrivers.renderer(); }
                 catch(Throwable e) { RunLog.write(this,"GPU renderer detection failed: "+e); }
             }
+            String effectiveRaster=nativeAot!=null && nativeAot.compiledResolution!=null
+                ? nativeAot.compiledResolution
+                : PortSettings.prefs(this).getString("resolution","720");
+            String displayBefore=env.get("GOW3_SCREEN_W")+"x"+env.get("GOW3_SCREEN_H");
+            String compactStatus=TlouDevicePolicy.configureCompactPresent(
+                env,compactMode,eglRenderer,effectiveRaster);
+            RunLog.write(this,"Vulkan AHB presentation policy="+compactStatus+
+                " • source="+effectiveRaster+" • output="+displayBefore+" -> "+
+                env.get("GOW3_SCREEN_W")+"x"+env.get("GOW3_SCREEN_H")+
+                " • Android SurfaceControl keeps physical display size");
             String ubwcStatus=TlouDevicePolicy.configureUbwcHint(
                 env,ubwcMode,eglRenderer,env.get("GOW3_VULKAN_DRIVER"),
                 PortSettings.prefs(this).getString("driver_name",""));

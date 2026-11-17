@@ -35,6 +35,8 @@ final class PortSettings {
            !prefs(context).contains("touch_mode"))
             edit.putString("touch_mode",prefs(context).getBoolean("touch_visible",true)?"auto":"off");
         edit.remove("touch_visible");
+        // Obsolete AOT profile preference must not affect the single ARM64 backend.
+        edit.remove("aot_tso_profile");
         // The proxy/compatibility renderer was retired. Ignore old saved choices.
         edit.remove("render_path");
         edit.apply();

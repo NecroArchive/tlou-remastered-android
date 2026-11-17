@@ -109,6 +109,37 @@ final class RuntimeAot {
         return true;
     }
 
+    /** Lightweight status for the launcher label only. The full hash and
+     * prepared-game checks in prepare() remain mandatory before launch.
+     * A stale .so or an interrupted compiler is never shown as completed. */
+    static boolean hasCompletedVariantBuild(Context context) {
+        File work=TsoProfile.work(context);
+        File so=new File(work,"aot/libtlouaot.so");
+        File metaFile=new File(work,"aot/libtlouaot.json");
+        File reportFile=new File(work,"aot-report.json");
+        File catalog=new File(work,"aot/tlou-111-all-variants.txt");
+        if(!so.isFile() || so.length()<4096 || !metaFile.isFile() ||
+           !reportFile.isFile() || !catalog.isFile())return false;
+        try {
+            JSONObject report=new JSONObject(new String(Files.readAllBytes(
+                reportFile.toPath()),StandardCharsets.UTF_8));
+            JSONObject meta=new JSONObject(new String(Files.readAllBytes(
+                metaFile.toPath()),StandardCharsets.UTF_8));
+            JSONObject built=report.optJSONObject("variant_build");
+            return "aarch64_generated_native_ready".equals(report.optString("status")) &&
+                "1.11".equals(report.optString("version")) &&
+                hasCompleteVariantCatalog(report) &&
+                meta.optInt("abi_version",-1)==2 &&
+                TsoProfile.version(TsoProfile.RELAXED).equals(meta.optString("compiler_version")) &&
+                built!=null && built.optInt("groups_with_code",-1)==11 &&
+                built.optInt("variants_skipped",-1)==0 &&
+                built.optInt("variants_planned",0)>=11 &&
+                built.optInt("variants_built",0)==built.optInt("variants_planned",-1);
+        } catch(Exception incomplete) {
+            return false;
+        }
+    }
+
     static String pendingSelectedPatches(Context context) throws Exception {
         File report=new File(TsoProfile.work(context),"aot-report.json");
         if(!report.isFile())return "";

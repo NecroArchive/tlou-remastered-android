@@ -79,15 +79,17 @@ TLOU_111_WORKER_JUMP_TARGETS = (
 # missed a *different* target function just 13 KiB away in ZIP 27. Sweep
 # bounded, verified 1.11 code neighborhoods so any function with an
 # instruction in these ranges becomes granular before the next gameplay.
-# 32-byte spacing intentionally covers short helper functions; the compiler
-# deduplicates function starts. No guest byte or runtime dispatch is changed.
-# Regions are exclusive at end; ~112 KiB/3584 hints total, not --granular all.
+# Every image offset in each bounded region is passed to --granular-funcs;
+# the compiler maps offsets to enclosing functions and deduplicates starts.
+# Unlike sampling every 32 bytes this also catches very short functions.
+# Regions are exclusive at end: 112 KiB/114688 selectors total, NOT the
+# whole executable. This changes code generation only, not runtime logging.
 TLOU_111_WORKER_JUMP_HOTSPOTS = (
     (0x1BC000, 0x1C6000),  # animation/job-worker jump family, logs 26/27
     (0x54F000, 0x559000),  # worker +0x553c14/+0x553c82 family
     (0xA1D000, 0xA25000),  # worker +0xa2125e family
 )
-TLOU_111_WORKER_JUMP_HOTSPOT_STEP = 0x20
+TLOU_111_WORKER_JUMP_HOTSPOT_STEP = 1
 
 # Real 1.11 AOT jump caller PCs from logs 24/26/27; a true miss log
 # additionally contributes its own callers, regardless of source version.

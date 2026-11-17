@@ -56,12 +56,12 @@ public final class HostCopyBatchLaunchTest {
         for(String effect:PortSettings.EFFECTS)
             groups.put("effect_"+effect);
         JSONObject bank=new JSONObject()
-            .put("profile","tlou-111-variants-v1")
+            .put("profile","tlou-111-variants-v2")
             .put("sha256","a".repeat(64))
             .put("groups",groups);
         JSONObject source=new JSONObject()
             .put("version","1.11")
-            .put("native_patch_profile","tlou-111-variants-v1")
+            .put("native_patch_profile","tlou-111-variants-v2")
             .put("variant_catalog",bank);
         assertTrue(RuntimeAot.hasCompleteVariantCatalog(source));
         JSONObject prefs=new JSONObject()

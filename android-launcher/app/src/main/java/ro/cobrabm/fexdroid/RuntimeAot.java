@@ -214,6 +214,16 @@ final class RuntimeAot {
                 "cbf29ce484222325".equalsIgnoreCase(compilerCatalogHash))
                 throw new java.io.IOException(
                     "Catálogo de todas as variantes ARM64 ausente ou alterado. Recompile uma vez.");
+            JSONObject builtVariants=source.optJSONObject("variant_build");
+            if(builtVariants==null ||
+                builtVariants.optInt("groups",-1)!=11 ||
+                builtVariants.optInt("groups_with_code",-1)!=11 ||
+                builtVariants.optInt("variants_planned",0)<11 ||
+                builtVariants.optInt("variants_built",0)!=
+                    builtVariants.optInt("variants_planned",-1) ||
+                builtVariants.optInt("variants_skipped",-1)!=0)
+                throw new java.io.IOException(
+                    "Algumas variantes ARM64 não foram compiladas. Recompile a CPU.");
             if(!hasAnimationGuard || !hasTimeout || !hasIdleBackoff)
                 throw new java.io.IOException(
                     "Faltam correções obrigatórias dos workers/animação no ARM64.");

@@ -201,7 +201,8 @@ bool IsExternalVendorVulkan(const char* path) {
     // replaced by the system driver on failure.
     const char* filename = std::strrchr(path, '/');
     filename = filename ? filename + 1 : path;
-    return std::strncmp(filename, "vulkan.", 7) == 0;
+    return std::strncmp(filename, "vulkan.adr", 10) == 0 ||
+           std::strncmp(filename, "vulkan.qcom", 11) == 0;
 }
 
 Gow3VkGetInstanceProcAddr Load() {

@@ -37,8 +37,8 @@ class AllPatchVariants(unittest.TestCase):
         self.assertEqual(catalog.count("\ngroup effect_"),8)
         self.assertGreater(code_count,30)
         self.assertGreater(data_count,0)
-        self.assertIn("w a63bba 30c0",catalog)  # omni
-        self.assertIn("w a6445f 30c0",catalog)  # spot
+        self.assertIn("w a63bb6 30c9",catalog)  # omni classifier
+        self.assertIn("w a6445a 4530ed",catalog)  # spot classifier
         self.assertIn("w ab0600 ",catalog)      # resolution selector
         self.assertNotIn("w 116bf10 ",catalog)  # guest data, not native function
         self.assertNotIn("w 115fb9c ",catalog)  # guest data
@@ -47,7 +47,7 @@ class AllPatchVariants(unittest.TestCase):
     def test_refuses_corrupt_or_unsupported_patch_bytes(self):
         originals,segments=fixture()
         corrupted=dict(originals)
-        corrupted[(0xA63BBA,8)]=b"\x00"*8
+        corrupted[(0xA63BB6,2)]=b"\x00"*2
         with self.assertRaisesRegex(ValueError,"guard mismatch"):
             mod.catalog_data(patches,lambda a,n:corrupted.get((a,n),b""),
                              segments,0x1200000)

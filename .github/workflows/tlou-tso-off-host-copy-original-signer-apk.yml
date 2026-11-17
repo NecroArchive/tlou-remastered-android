@@ -1,4 +1,4 @@
-name: TLOU AOT Pending Patches and Worker Jump Fix - Original Signer
+name: TLOU AOT Granular Jump Coverage and Hardware Fix Audit - Original Signer
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 'a2b91ec8f4eb41b42da9846c40bcfef1bb46eb4b'
+          ref: '9e1de8469ebd20910e219081667360392cdd62b1'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -292,6 +292,9 @@ jobs:
                   assert b'-O2' in compiler, 'AOT compiler lacks LLVM O2'
                   assert b'tlou-111-static-llvmO2-immutable-v1' in aot_source, 'AOT fast codegen profile not packaged'
                   assert b'if version not in {"3-tlou-string", "4-tlou-tso-aligned-ar-v1", "5-tlou-tso-outlined-unaligned-v1"}' in aot_source, 'AOT v5 codegen adapter missing'
+                  assert b'--granular-funcs' in aot_source, 'No preventive AOT entry coverage in APK'
+                  assert b'0x1BF55B' in aot_source, 'ZIP 26 worker jump not included'
+                  assert b'granular_risk_entries' in aot_source, 'Saved jump miss parsing not included'
                   assert b'--tso-profile' in aot_source, 'AOT relaxed TSO selection missing'
                   assert b'guest_flags = native_guest_flags(args.tso_profile)' in aot_source, 'AOT TSO switching is not wired'
                   assert b'relaxed_ARM64_no_TSO_UNSAFE' in aot_source, 'AOT relaxed memory model not identified'
@@ -300,7 +303,7 @@ jobs:
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-AOT-PATCH-PENDING-WORKER-JUMPS-APK
+          name: TLOU-v011-AOT-GRANULAR-JUMP-COVERAGE-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

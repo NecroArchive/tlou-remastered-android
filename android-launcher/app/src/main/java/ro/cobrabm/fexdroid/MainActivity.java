@@ -537,11 +537,17 @@ public final class MainActivity extends Activity {
             update("Pronto para jogar.");
             if(launch) {
                 if("aot".equals(prefs.getString("cpu_backend","fex"))) {
-                    String pending=RuntimeAot.pendingSelectedPatches(this);
-                    if(!pending.isEmpty()) {
-                        RunLog.write(this,"JOGAR impedido: patches ARM64 ainda não recompilados: "+pending);
+                    // ZIP A6xx: report status=staged, no libtlouaot.so. Check
+                    // BEFORE GameActivity creates a presenter or launches.
+                    try {
+                        RuntimeAot.Ready check=RuntimeAot.prepare(this,prepared);
+                        if(!check.pendingCodePatches.isEmpty())
+                            throw new IOException("Biblioteca ARM64 desatualizada.");
+                    } catch(Exception aotProblem) {
+                        RunLog.failure(this,"AOT não pronto; bloqueando inicialização",aotProblem);
+                        prefs.edit().putBoolean("launch_direct",false).apply();
                         runOnUiThread(()->{
-                            if(!isDestroyed())showPendingAotPatches(pending);
+                            if(!isDestroyed())showAotUnavailable(prepared,aotProblem);
                         });
                         return;
                     }
@@ -563,6 +569,24 @@ public final class MainActivity extends Activity {
                 alert("Inicialização",error.toString());
             }
         });
+    }
+
+    private void showAotUnavailable(File prepared,Exception reason) {
+        if(isFinishing()||isDestroyed())return;
+        final String message=TlouLanguage.t(this,
+            "A CPU ARM64 ainda não está pronta para este jogo. Compile a CPU uma vez, ou use FEX para iniciar sem esperar pela compilação.")+
+            "\n\n"+TlouLanguage.t(this,
+            "Motivo técnico (veja o log para detalhes):")+" "+reason.getMessage();
+        TlouDialogs.show(this,new AlertDialog.Builder(this)
+            .setTitle(TlouLanguage.t(this,"CPU ARM64 não disponível"))
+            .setMessage(message)
+            .setNegativeButton(TlouLanguage.t(this,"Cancelar"),null)
+            .setNeutralButton(TlouLanguage.t(this,"Usar FEX"),(d,w)->{
+                prefs.edit().putString("cpu_backend","fex").apply();
+                startPreparedGame(prepared);
+            })
+            .setPositiveButton(TlouLanguage.t(this,"Compilar CPU ARM64"),(d,w)->
+                withAccess(()->compileSelectedAot(true))));
     }
 
     private void showPendingAotPatches(String changed) {
@@ -587,7 +611,7 @@ public final class MainActivity extends Activity {
             File base=GameInstallState.base(selected());
             File updateFolder=updateForGame(base);
             File prepared=tools.prepare(base,updateFolder,this::update);
-            update("Compilando a CPU ARM64 com os patches selecionados…");
+            update("Compilando a CPU ARM64 com todos os patches disponíveis…");
             File result=tools.buildExperimentalAot(prepared,this::update);
             File coverageFile=new File(TsoProfile.work(this),"aot-report.json");
             org.json.JSONObject coverageReport=new org.json.JSONObject(

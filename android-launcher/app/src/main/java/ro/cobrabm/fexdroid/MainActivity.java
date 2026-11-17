@@ -518,18 +518,16 @@ public final class MainActivity extends Activity {
             // captures its launch environment, without overriding user choice.
             try { BuiltinDrivers.ensureDefault(this); }
             catch(Exception e) { android.util.Log.w("TLOU", "Default Turnip unavailable", e); }
-            // Always prepare from the original game plus the persisted update.
-            // A prepared directory is a cache, never a new base game: treating it
-            // as a base lost the 01.11 overlay after APK upgrades/migrations.
+            // Older APKs may have a previously selected update overlay; keep
+            // those installed games bootable until the user installs an update
+            // physically using the new buttons. Newly installed updates never
+            // store a separate update_path.
             File base=GameInstallState.base(selected());
             File updateFolder=updateForGame(base);
             File prepared=tools.prepare(base,updateFolder,this::update);
             SharedPreferences.Editor saved=prefs.edit()
                 .putString("game_path",base.getAbsolutePath())
                 .putString("prepared_path",prepared.getAbsolutePath());
-            if(updateFolder!=null)
-                saved.putString("update_game",base.getAbsolutePath())
-                     .putString("update_path",updateFolder.getAbsolutePath());
             saved.apply();
             update("Pronto para jogar.");
             if(launch)runOnUiThread(()->{if(!isDestroyed()){try { RunLog.write(this,"Preparação verificada. Abrindo GameActivity: "+prepared); Intent i=new Intent(this,GameActivity.class);i.putExtra("prepared_path",prepared.getAbsolutePath());startActivity(i); } catch(Throwable error) { RunLog.failure(this,"Falha ao abrir GameActivity",error);alert("Inicialização",error.toString()); }}});

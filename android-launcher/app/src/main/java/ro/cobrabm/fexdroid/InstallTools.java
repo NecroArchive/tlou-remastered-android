@@ -32,15 +32,11 @@ final class InstallTools {
         }
         for (String name:new String[]{"python/bin/python3.13","bin/orbis-pkg-util"})
             if (!new File(root,name).setExecutable(true,true)) throw new IOException("Falha ao ativar "+name);
-        // Optional AOT tool shipped only in experimental package. It is a
-        // standalone Android ARM64 executable; avoid running it as a JNI .so.
-        // All three compiler versions are present; only their lowering
-        // strategy differs. Each profile maintains its own native unit cache.
-        for(String profile:TsoProfile.VALUES) {
-            File aotCompiler=new File(root,TsoProfile.compilerRelative(profile));
-            if(!aotCompiler.isFile() || !aotCompiler.setExecutable(true,true))
-                throw new IOException("Compilador TSO "+profile+" ausente ou sem permissão");
-        }
+        // Only one AOT compiler is shipped and only one native ABI is used.
+        // The frontend omits --tso and caches code separately from older APKs.
+        File aotCompiler=new File(root,TsoProfile.compilerRelative(TsoProfile.RELAXED));
+        if(!aotCompiler.isFile() || !aotCompiler.setExecutable(true,true))
+            throw new IOException("Compilador ARM64 ausente ou sem permissão");
         Files.write(ready.toPath(),version.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
@@ -132,9 +128,8 @@ final class InstallTools {
         File bundle=new File(root,TsoProfile.bundleRelative(profile));
         File frontend=new File(root,"source/android/aot/aot_local.py");
         if(!compiler.isFile() || !bundle.isDirectory() || !frontend.isFile())
-            throw new IOException("Compilador TSO "+profile+" não incluído nesta APK experimental");
-        if(progress!=null)progress.accept("AOT TSO selecionado: "+profile+
-            " ("+TsoProfile.version(profile)+"), cache independente.");
+            throw new IOException("Compilador ARM64 não incluído nesta APK");
+        if(progress!=null)progress.accept("Preparando compilação ARM64 otimizada.");
         File game=new File(prepared,"tlou-view");
         for(String name:new String[]{"eboot.bin","sce_module/libc.prx",
                                        "sce_module/libSceFios2.prx","sce_sys/param.sfo"})

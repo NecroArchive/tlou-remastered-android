@@ -131,8 +131,7 @@ public final class MainActivity extends Activity {
             public void onItemSelected(AdapterView<?> parent,View view,int index,long id){
                 if((Integer)spinner.getTag()==index)return;
                 spinner.setTag(index);prefs.edit().putString(key,values[index]).apply();
-                if(TsoProfile.KEY.equals(key))buildHome();
-                else refresh();
+                refresh();
             }
         });parent.addView(spinner,new LinearLayout.LayoutParams(-1,dp(46)));
     }
@@ -238,11 +237,9 @@ public final class MainActivity extends Activity {
             manual.setOnClickListener(v->{if(!busy)manualPath();});game.addView(manual);
             toggleSetting(game,"launch_direct","Entrar direto no jogo",false);
             LinearLayout updates=card(root,"ATUALIZAÇÃO DO JOGO");
-            updates.addView(text("O modo padrão mantém o update separado. Também é possível instalá-lo fisicamente na pasta do jogo, substituindo os arquivos alterados.",12,MUTED));
+            updates.addView(text("Atualizações por PKG ou pasta são instaladas diretamente na pasta do jogo selecionado. Os arquivos originais substituídos não ficam disponíveis após a instalação; mantenha seu próprio backup.",12,MUTED));
             add(updates,"Atualizar por PKG",false,()->withAccess(()->pickFile(PICK_UPDATE_PKG)));
             add(updates,"Atualizar por pasta",false,()->withAccess(()->pickFolder(PICK_UPDATE_FOLDER)));
-            add(updates,"Aplicar update diretamente na pasta do jogo",false,()->withAccess(this::confirmInPlaceUpdate));
-            updates.addView(text("Substituição física opcional: preserva saves e pode recuperar uma falha, mas após concluir não permite voltar à versão anterior sem os arquivos originais.",11,MUTED));
             add(game,"Sair do aplicativo",false,this::finishAffinity);
         } else if(currentTab.equals("patches")) {
             LinearLayout box=card(root,"PATCHES");
@@ -304,16 +301,10 @@ public final class MainActivity extends Activity {
             choice(cpu,"cpu_backend","Processador do jogo",
                 new String[]{"ARM64 recompilado (AOT experimental)","FEX (estável)"},
                 new String[]{"aot","fex"},"fex");
-            choice(cpu,TsoProfile.KEY,"Perfil TSO da CPU ARM64 (teste A/B)",
-                TsoProfile.LABELS,TsoProfile.VALUES,TsoProfile.BASELINE);
-            String selectedTso=TsoProfile.selected(this);
-            File selectedAot=new File(TsoProfile.work(this,selectedTso),"aot/libtlouaot.so");
-            cpu.addView(text("Selecionado: "+selectedTso.toUpperCase(java.util.Locale.ROOT)
-                +" • AOT "+(selectedAot.isFile()?"já compilado":"ainda não compilado")
-                +". A troca não modifica a CPU em execução; compile cada perfil uma vez "
-                +"e reinicie o jogo. TSO OFF é uma experiência sem validação de estabilidade: "
-                +"faça backup dos saves antes de usá-lo. Compilações ficam separadas.",12,MUTED));
-            add(cpu,"Compilar CPU ARM64 para o perfil TSO selecionado",false,
+            File selectedAot=new File(TsoProfile.work(this),"aot/libtlouaot.so");
+            cpu.addView(text("CPU ARM64: "+(selectedAot.isFile()?"já compilada":"ainda não compilada")
+                +". Recompile após atualizar o jogo ou modificar patches que alteram o código.",12,MUTED));
+            add(cpu,"Compilar CPU ARM64",false,
                 ()->withAccess(this::buildSelectedAot));
             toggleSetting(cpu,"aot_detailed_diagnostics",
                 "Diagnóstico aprofundado AOT (reduz FPS)",false);
@@ -385,98 +376,69 @@ public final class MainActivity extends Activity {
     }
 
     private void applyGameUpdate(File chosenFolder) {
-        task("Aplicando atualização do jogo…",()->{
+        task("Instalando atualização diretamente na pasta do jogo…",()->{
             File game=baseForUpdate();
             File patch=updateFolder(chosenFolder);
-            if(game.equals(patch))throw new IOException("A pasta de atualização deve ser diferente da pasta do jogo base.");
-            File prepared=tools.prepare(game,patch,this::update);
-            // Only publish the new update after preparation and patch validation
-            // succeed; previously playable output and saves remain untouched.
-            prefs.edit().putString("update_game",game.getAbsolutePath())
-                .putString("update_path",patch.getAbsolutePath())
-                .putString("prepared_path",prepared.getAbsolutePath()).apply();
-            update("Atualização aplicada. Toque em JOGAR.");
+            installPhysicalUpdate(game,patch);
+            update("Atualização instalada na pasta do jogo. Recompile a CPU ARM64 antes de jogar.");
         });
     }
 
-    private void confirmInPlaceUpdate() {
-        if(busy)return;
-        try {
-            File game=baseForUpdate();
-            File patch=updateForGame(game);
-            if(patch==null) {alert("Atualização","Instale ou selecione primeiro uma atualização separada.");return;}
-            String message="Jogo base: "+game.getAbsolutePath()+"\\nUpdate: "+patch.getAbsolutePath()
-                +"\\n\\nA versão 1.11 substituirá fisicamente os arquivos correspondentes na pasta base. "
-                +"Os saves não serão modificados. A operação tem recuperação automática se for interrompida, "
-                +"mas após concluída os arquivos 1.00 sobrescritos não estarão mais disponíveis. "
-                +"Tenha uma cópia do seu jogo base. A alteração não garante corrigir o crash ARM64 139.";
-            TlouDialogs.show(this,new AlertDialog.Builder(this)
-                .setTitle("Instalar update na pasta base?")
-                .setMessage(message)
-                .setNegativeButton("Cancelar",null)
-                .setPositiveButton("Substituir arquivos",(d,which)->installUpdateInPlace()));
-        }catch(Exception error){alert("Atualização",error.getMessage());}
-    }
-
-    private void installUpdateInPlace() {
-        task("Instalando atualização na pasta do jogo…",()->{
-            File game=baseForUpdate();
-            File patch=updateForGame(game);
-            if(patch==null)throw new IOException("Não existe atualização selecionada para este jogo.");
-            // Validate CUSA, update version and game files through the existing
-            // PS4 preparation before modifying ANY original game file.
-            tools.prepare(game,patch,this::update);
-            try(SaveArchive.Guard guard=SaveArchive.lock(new File(getFilesDir(),"tlou/user"))) {
-                try(UpdateInPlace.Transaction transaction=UpdateInPlace.apply(game,patch,this::update)) {
-                    // Verify the new BASE as a standalone 1.11 installation.
-                    File prepared=tools.prepare(game,null,this::update);
-                    org.json.JSONObject record=GameInstallState.marker(prepared);
-                    if(record==null || !"01.11".equals(record.optString("version")))
-                        throw new IOException("A atualização física não resultou em jogo base 01.11; alterações revertidas.");
-                    transaction.commit();
-                    prefs.edit().remove("update_game").remove("update_path")
-                        .putString("game_path",game.getAbsolutePath())
-                        .putString("prepared_path",prepared.getAbsolutePath()).apply();
-                    RunLog.write(this,"Update 01.11 instalado fisicamente e validado no jogo base: "+game.getAbsolutePath());
-                }
+    /** Every update source (PKG or folder) converges on one transactional physical install.
+     * The extracted PKG is only a temporary staging source, NEVER a persisted overlay.
+     */
+    private void installPhysicalUpdate(File game,File patch) throws Exception {
+        if(game.getCanonicalFile().equals(patch.getCanonicalFile()))
+            throw new IOException("A atualização deve ser diferente da pasta do jogo.");
+        // Validate title, update and game assets BEFORE mutating the base.
+        // After copying, re-prepare using the physically updated BASE alone.
+        File preview=tools.prepare(game,patch,this::update);
+        org.json.JSONObject source=GameInstallState.marker(preview);
+        String expected=source==null?"":source.optString("update_version","");
+        if(expected.isEmpty() || "null".equals(expected))
+            throw new IOException("Atualização não reconhecida; pasta do jogo preservada.");
+        try(SaveArchive.Guard guard=SaveArchive.lock(new File(getFilesDir(),"tlou/user"))) {
+            try(UpdateInPlace.Transaction transaction=UpdateInPlace.apply(game,patch,this::update)) {
+                File prepared=tools.prepare(game,null,this::update);
+                org.json.JSONObject record=GameInstallState.marker(prepared);
+                if(record==null || !expected.equals(record.optString("version")))
+                    throw new IOException("Versão instalada não corresponde ao update; alteração revertida.");
+                // Commit only after the real on-disk game and standalone
+                // preparation are verified. No reference to the update source
+                // is retained; deleting temporary PKG extraction is safe.
+                transaction.commit();
+                prefs.edit().remove("update_game").remove("update_path")
+                    .putString("game_path",game.getAbsolutePath())
+                    .putString("prepared_path",prepared.getAbsolutePath()).commit();
+                RunLog.write(this,"Update instalado fisicamente: "+game.getAbsolutePath()
+                    +" • versão="+expected+" • sem overlay separado");
             }
-            update("Atualização instalada na pasta do jogo. Base 01.11 validada, saves preservados.");
-        });
+        }
     }
 
     private File automaticUpdateDestination(File game) throws IOException {
-        // Use the existing game library as the extraction parent: updating a
-        // game must never require a second folder-picker interaction.
+        // A large PKG may not fit the app's internal cache. Use an ephemeral
+        // sibling next to the game, where the user already has write access.
         File parent=game.getCanonicalFile().getParentFile();
-        if(parent != null && parent.isDirectory() && parent.canWrite())return parent;
-        File fallback=getExternalFilesDir("game-updates");
-        if(fallback==null || (!fallback.isDirectory()&&!fallback.mkdirs()) || !fallback.canWrite())
-            throw new IOException("Sem uma pasta gravável para extrair o PKG de atualização.");
-        return fallback.getCanonicalFile();
+        if(parent!=null && parent.isDirectory() && parent.canWrite())return parent;
+        throw new IOException("A pasta do jogo não permite extrair temporariamente o PKG. "
+            +"Conceda acesso de escrita à pasta que contém o jogo.");
     }
 
     private void installGameUpdatePkg(File pkg) {
-        task("Extraindo e aplicando atualização…",()->{
-            File parent=automaticUpdateDestination(baseForUpdate());
+        task("Extraindo PKG e atualizando diretamente o jogo…",()->{
             File game=baseForUpdate();
-            File destination=parent.getCanonicalFile();
-            File prepared=new File(getFilesDir(),"tlou-prepared").getCanonicalFile();
-            if(destination.toPath().startsWith(game.toPath()) ||
-               destination.toPath().startsWith(prepared.toPath()))
-                throw new IOException("Escolha um destino fora das pastas do jogo e da preparação.");
-            File container=new File(destination,"TLOU-Update-"+UUID.randomUUID()).getCanonicalFile();
-            if(!container.mkdir())throw new IOException("Não foi possível criar a pasta do update.");
-            boolean installed=false;
+            File parent=automaticUpdateDestination(game);
+            File container=new File(parent,".tlou-update-extract-"+UUID.randomUUID()).getCanonicalFile();
+            if(!container.mkdir())throw new IOException("Sem espaço ou permissão para extrair o PKG.");
             try {
                 File patch=tools.extractUpdate(pkg,container,this::update);
-                File updated=tools.prepare(game,patch,this::update);
-                prefs.edit().putString("update_game",game.getAbsolutePath())
-                    .putString("update_path",patch.getAbsolutePath())
-                    .putString("prepared_path",updated.getAbsolutePath()).apply();
-                installed=true;
-                update("PKG de atualização aplicado. Toque em JOGAR.");
+                installPhysicalUpdate(game,patch);
+                update("PKG integrado na pasta do jogo. Recompile a CPU ARM64 antes de jogar.");
             } finally {
-                if(!installed)InstallTools.delete(container);
+                // Temporary extraction is not the installed update. Delete it
+                // on success AND on failure; the transaction handles rollback.
+                InstallTools.delete(container);
             }
         });
     }
@@ -592,9 +554,9 @@ public final class MainActivity extends Activity {
             int valid=coverage.getInt("estimated_usable_units");
             int unsupported=coverage.getInt("unsupported_units");
             prefs.edit().putString("cpu_backend","aot").apply();
-            String message="ARM64 AOT ("+TsoProfile.selected(this)+"): "
+            String message="CPU ARM64 compilada: "
                 +valid+" unidades válidas, "+unsupported
-                +" ainda não suportadas. Perfil TSO selecionado ativado; toque em JOGAR.";
+                +" ainda não suportadas. Toque em JOGAR.";
             RunLog.write(this,"CPU AOT recompilada, cobertura validada: "+message+" arquivo="+result);
             update(message);
         });

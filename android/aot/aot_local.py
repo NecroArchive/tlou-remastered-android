@@ -69,7 +69,16 @@ TLOU_111_SECOND_SWITCH_SIGNATURE_SHA256 = "3e712ef08edbc99750546e5d47589b1145bf6
 # Observed real NdJobWorkerThre jump misses in the user's 01.11 log 24,
 # restricted to the exact verified CUSA00552 binary (3cfa... SHA).
 # Cover both 0x553cxx branches in one compilation, not one rebuild per miss.
-TLOU_111_WORKER_JUMP_TARGETS = (0x553C14, 0x553C82, 0xA2125E)
+TLOU_111_WORKER_JUMP_TARGETS = (0x1BF55B, 0x553C14, 0x553C82, 0xA2125E)
+
+# Real 01.11 AOT jump caller PCs from ZIP 24/26. Selecting the enclosing
+# functions makes unvisited sibling case destinations dispatchable too.
+TLOU_111_KNOWN_INDIRECT_CALLERS = (
+    0x1BF38A, 0xB4E33, 0xB484E, 0xCCA09, 0xCDE4D, 0x2519,
+    0x5115B3, 0x511A58, 0x487D38, 0x7E06A3, 0x7E123E,
+    0xA21A20, 0xA1EA44, 0x9DB103, 0x9DBB8C,
+)
+
 
 
 def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
@@ -140,6 +149,49 @@ def verified_miss_entries(path: Path | None, image_size: int) -> list[int]:
     return sorted(found)
 
 
+def granular_risk_entries(eboot_sha: str, misses: Path | None,
+                          image_size: int) -> list[int]:
+    """Cover entire functions implicated by saved AOT indirect jump misses.
+
+    Exact extra entries fix only the missed target. --granular-funcs emits
+    native entry points at every decoded instruction boundary inside the
+    enclosing source/target functions, protecting against unseen sibling
+    cases. The prepass is compile-time only, not runtime instrumentation.
+    """
+    import re
+    risk = set()
+    if eboot_sha == TLOU_111_SWITCH_SHA256:
+        risk.update(TLOU_111_WORKER_JUMP_TARGETS)
+        risk.update(TLOU_111_KNOWN_INDIRECT_CALLERS)
+    if misses and misses.is_file():
+        with misses.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                match = re.match(
+                    r"^\\s*miss\\s+\\+(?:0x)?([0-9a-fA-F]+)\\b.*\\bkind=jump\\b", line)
+                if not match:
+                    continue
+                risk.add(int(match.group(1), 16))
+                context = re.search(r"\\bbacktrace=([^\\s]+)", line)
+                if context:
+                    for frame in context.group(1).split(",")[:12]:
+                        match_frame = re.fullmatch(r"\\+(?:0x)?([0-9a-fA-F]+)", frame)
+                        if match_frame:
+                            risk.add(int(match_frame.group(1), 16))
+    return sorted(value for value in risk if 0x1000 <= value < image_size)
+
+
+def prepare_granular_risk_file(boot: Path, eboot_sha: str, misses: Path | None,
+                               destination: Path) -> list[int]:
+    hints = granular_risk_entries(eboot_sha, misses, check_boot(boot)["size"])
+    if hints:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("".join(f"+0x{value:x}\\n" for value in hints),
+                               encoding="ascii")
+    else:
+        destination.unlink(missing_ok=True)
+    return hints
+
+
 def prepare_extra_entries(boot: Path, eboot_sha: str, misses: Path | None,
                           destination: Path) -> tuple[list[int], list[int]]:
     known = known_switch_entries(boot, eboot_sha)
@@ -193,17 +245,6 @@ def prepare_native_animation_patch(boot: Path, self_digest: str,
     else:
         groups = module.base_patches_for(options, "01.11")
         groups.update(module.selected_options(options, "01.11", self_digest))
-        # NdJobWorkerThread 0..5: after checking the entire job queue is
-        # empty, the 1.11 worker spins up to 1000 PAUSE iterations before
-        # entering its existing blocking sleep path. The AOT's ARM64 PAUSE
-        # lowering can keep little cores busy with this unproductive polling.
-        # Only the validated AOT 1.11 image shortens this idle retry budget
-        # to 128; neither FEX nor actual queued work paths are changed.
-        # Instruction length (cmp rax,imm32) and branch displacements match.
-        if options.get("job_sleep", True):
-            groups["native-job-idle-backoff"] = [
-                (0xC87D71, "483de8030000", "483d80000000"),
-            ]
         if "invalid-animation-output-pointer" not in groups:
             raise ValueError("Required native animation guard was disabled")
     cave = groups["invalid-animation-output-pointer"]
@@ -514,6 +555,11 @@ def main(argv=None):
         seed_file = aot / "verified-extra-entries.txt"
         seed_targets, added_entries = prepare_extra_entries(
             staged, digest, args.misses, seed_file)
+        granular_file = aot / "granular-risk-functions.txt"
+        granular_hints = prepare_granular_risk_file(
+            staged, digest, args.misses, granular_file)
+        if granular_hints:
+            command += ["--granular-funcs", str(granular_file)]
         patch_entries = [0xC9FC61] if native_patches else []
         if patch_entries:
             added_entries = sorted(set(added_entries + patch_entries))
@@ -547,6 +593,8 @@ def main(argv=None):
                   "runtime_integrated": False, "status": "staged",
                   "verified_switch_targets": [f"+0x{x:x}" for x in seed_targets],
                   "extra_entry_count": len(added_entries),
+                  "granular_risk_hint_count": len(granular_hints),
+                  "granular_policy": "verified-indirect-miss-owners-and-callers",
                   "tso_profile": args.tso_profile,
                   "guest_memory_model": ("relaxed_ARM64_no_TSO_UNSAFE"
                                          if args.tso_profile == "off"

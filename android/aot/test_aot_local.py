@@ -246,9 +246,34 @@ class TestBridge(unittest.TestCase):
                 self.assertIn(0x553C14, extra)
                 self.assertIn(0x553C82, extra)
                 self.assertIn(0xA2125E, extra)
+                self.assertIn(0x1BF55B, extra)
                 self.assertEqual(
                     out.read_text().splitlines(),
                     [f"+0x{x:x}" for x in extra])
+
+    def test_granular_native_miss_hotpaths_cover_unvisited_sibling_cases(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            misses=root / "aot-misses.log"
+            misses.write_text(
+                "miss +0x1bf55b kind=jump thread=NdJobWorkerThre "
+                "backtrace=+0x1bf38a,+0xb4e33,+0xc88f73,+0xc6a088\\n"
+                "miss +0x553c82 kind=jump backtrace=+0x5115b3,+0x511a58\\n"
+                "outside 0xffffffffffffffff kind=outside\\n"
+                "miss +0xffffffffffffffff kind=jump backtrace=+0xffffffffffffffff\\n"
+                "miss +0x2bbbbb kind=call backtrace=+0x2aaaaa\\n",
+                encoding="ascii")
+            risk = mod.granular_risk_entries(mod.TLOU_111_SWITCH_SHA256,
+                                            misses, 0x2000000)
+            for target in (0x1BF55B, 0x1BF38A, 0xB4E33, 0x553C82,
+                           0x5115B3, 0x511A58, 0xC88F73, 0xC6A088):
+                self.assertIn(target, risk)
+            self.assertNotIn(0xffffffffffffffff, risk)
+            self.assertNotIn(0x2aaaaa, risk)
+            self.assertNotIn(0x2bbbbb, risk)
+            no_misses=mod.granular_risk_entries("unknown-game", None, 0x2000000)
+            self.assertEqual(no_misses, [])
+            self.assertEqual(risk, sorted(set(risk)))
 
     def test_switch_signature_mismatch_fails_early(self):
         with tempfile.TemporaryDirectory() as td:

@@ -295,3 +295,45 @@ Diagnóstico salvo no launcher	Diagnostics saved in the launcher
 VOLTAR AO LAUNCHER	RETURN TO LAUNCHER								
 Falha no usuário PS4	PS4 user initialization failed								
 Imagem preparada ausente	Prepared game image missing								
+Processador do jogo	Game CPU								
+Correção de deformações mantida sem opções que não melhoraram o FPS.	Distortion fixes are retained without options that failed to improve FPS.								
+Não muda a resolução interna nem o driver. Reinicie o jogo para comparar FPS e estabilidade.	Does not change internal resolution or the driver. Restart to compare FPS and stability.								
+Não altera o driver do sistema; A6xx fica inalterada no automático.	Does not change the system driver; A6xx devices are unchanged in Auto.								
+no primeiro teste. Não aumenta clocks e pode piorar o FPS; reinicie o jogo.	on the first test. Does not increase clocks and may lower FPS; restart the game.								
+Ligue somente para investigar um problema específico.	Enable only to investigate a specific issue.								
+nos logs para recompilação incremental. Ainda é experimental.	in logs for incremental recompilation. This is still experimental.								
+Escolha a pasta que contém eboot.bin e sce_sys, ou uma pasta já preparada.	Select the folder containing eboot.bin and sce_sys, or an already prepared folder.								
+Biblioteca ARM64 desatualizada.	Outdated ARM64 library.								
+Escolha a pasta do jogo antes de compilar.	Select the game folder before compiling.								
+A recompilação não aplicou todos os patches: 	Recompilation did not apply all patches: 								
+. Verifique o relatório antes de jogar.	. Check the report before playing.								
+Patches ARM64 continuam pendentes. Não iniciando o jogo.	ARM64 patches are still pending. The game will not start.								
+Jogo instalado e preparado. Toque em JOGAR.	Game installed and prepared. Tap PLAY.								
+Falha ao criar pasta de drivers	Failed to create drivers folder								
+Driver grande demais	Driver file is too large								
+Este driver exige uma versão mais recente do Android	This driver requires a newer Android version								
+Pacote inválido. Use um driver Vulkan Android ARM64 com meta.json e biblioteca .so.	Invalid package. Use an Android ARM64 Vulkan driver with meta.json and a .so library.								
+Volume inválido	Invalid storage volume								
+Pasta inválida	Invalid folder								
+Escolha um arquivo ou pasta local pelo armazenamento interno/USB. Para pastas, você também pode informar o caminho.	Choose a local file or folder from internal/USB storage. You can also enter a folder path manually.								
+Não foi possível abrir o destino	Unable to open destination								
+Saves exportados com sucesso.	Saves exported successfully.								
+Não foi possível abrir o ZIP	Could not open the ZIP								
+sem saves anteriores	no previous saves								
+Saves importados com sucesso.	Saves imported successfully.								
+Saves importados. Os anteriores foram preservados em backup.	Saves imported. Previous saves were preserved in a backup.								
+Falha ao criar pasta dos logs	Could not create the logs folder								
+Caminho preparado não informado	Prepared game path was not provided								
+Diretório de runtime indisponível	Runtime directory unavailable								
+Runtime TLOU inválido no APK	Invalid TLOU runtime in the APK								
+Falhou substituir runtime	Failed to replace runtime								
+CPU AOT selecionada, mas a biblioteca ARM64 não está válida. Recompile em Ajustes → CPU.	AOT CPU was selected, but the ARM64 library is invalid. Recompile under Settings → CPU.								
+Patches 1.11 não preparados; não iniciar uma sessão ARM64 com opções incompletas.	1.11 patches have not been prepared. Cannot start ARM64 with incomplete settings.								
+Driver selecionado ausente; selecione outro driver no menu	Selected driver missing; choose another driver in the menu								
+Destino indisponível	Destination unavailable								
+Iniciando TLOU x86-64 pelo FEX...	Starting TLOU x86-64 through FEX...								
+Saves importados; backup anterior: 	Saves imported; previous backup: 								
+Não foi possível encontrar o jogo	The game could not be found								
+Tipo de arquivo inválido	Invalid file type								
+Falha ao selecionar arquivo	Failed to select file								
+Os arquivos atuais foram preservados.	Existing files were preserved.								

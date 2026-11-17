@@ -243,7 +243,7 @@ public final class MainActivity extends Activity {
             add(game,"Sair do aplicativo",false,this::finishAffinity);
         } else if(currentTab.equals("patches")) {
             LinearLayout box=card(root,"PATCHES");
-            box.addView(text("FEX: efeitos aplicados ao abrir, por patches.bin, sem recompilar o jogo. AOT: efeitos e resolução ficam fixos no código ARM64 compilado. Você pode alterar as preferências sem crash; mudanças ficam pendentes até recompilar AOT. FPS, VSync e driver não precisam de recompilação.",12,MUTED));
+            box.addView(text("FEX aplica os patches ao abrir. No ARM64, resolução e efeitos são integrados à compilação: ao mudar essas opções, JOGAR oferece recompilar antes de iniciar, para não executar patches antigos. FPS, VSync e driver não exigem recompilação.",12,MUTED));
             choice(box,"resolution","Resolução interna",
                 new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                 new String[]{"original","720","540","360"},"original");
@@ -535,34 +535,88 @@ public final class MainActivity extends Activity {
                 .putString("prepared_path",prepared.getAbsolutePath());
             saved.apply();
             update("Pronto para jogar.");
-            if(launch)runOnUiThread(()->{if(!isDestroyed()){try { RunLog.write(this,"Preparação verificada. Abrindo GameActivity: "+prepared); Intent i=new Intent(this,GameActivity.class);i.putExtra("prepared_path",prepared.getAbsolutePath());startActivity(i); } catch(Throwable error) { RunLog.failure(this,"Falha ao abrir GameActivity",error);alert("Inicialização",error.toString()); }}});
+            if(launch) {
+                if("aot".equals(prefs.getString("cpu_backend","fex"))) {
+                    String pending=RuntimeAot.pendingSelectedPatches(this);
+                    if(!pending.isEmpty()) {
+                        RunLog.write(this,"JOGAR impedido: patches ARM64 ainda não recompilados: "+pending);
+                        runOnUiThread(()->{
+                            if(!isDestroyed())showPendingAotPatches(pending);
+                        });
+                        return;
+                    }
+                }
+                startPreparedGame(prepared);
+            }
         });
     }
-    private void buildSelectedAot() {
+    private void startPreparedGame(File prepared) {
+        runOnUiThread(()->{
+            if(isDestroyed())return;
+            try {
+                RunLog.write(this,"Preparação verificada. Abrindo GameActivity: "+prepared);
+                Intent i=new Intent(this,GameActivity.class);
+                i.putExtra("prepared_path",prepared.getAbsolutePath());
+                startActivity(i);
+            } catch(Throwable error) {
+                RunLog.failure(this,"Falha ao abrir GameActivity",error);
+                alert("Inicialização",error.toString());
+            }
+        });
+    }
+
+    private void showPendingAotPatches(String changed) {
+        TlouDialogs.show(this,new AlertDialog.Builder(this)
+            .setTitle("Patches ARM64 ainda não aplicados")
+            .setMessage("Estas alterações não estão na CPU ARM64 compilada: "+
+                changed+".\n\nPara usá-las é preciso recompilar o código do jogo. "+
+                "A compilação pode consumir bastante RAM e armazenamento. "+
+                "O jogo não será iniciado com patches diferentes dos escolhidos.")
+            .setNegativeButton("Cancelar",null)
+            .setPositiveButton("Compilar e jogar",(d,w)->
+                withAccess(()->compileSelectedAot(true))));
+    }
+
+    private void compileSelectedAot(boolean launchAfterCompile) {
         if(busy)return;
-        if(prefs.getString("game_path","").isEmpty()) {
-            alert("Selecione o jogo","Instale um PKG ou escolha a pasta do jogo.");
+        if(prefs.getString("game_path","").isEmpty()){
+            alert("Selecione o jogo","Escolha a pasta do jogo antes de compilar.");
             return;
         }
-        task("Preparando compilação ARM64 local…",()->{
+        task("Compilando patches e CPU ARM64…",()->{
             File base=GameInstallState.base(selected());
             File updateFolder=updateForGame(base);
             File prepared=tools.prepare(base,updateFolder,this::update);
-            update("Compilando código do jogo para ARM64 no aparelho…");
+            update("Compilando a CPU ARM64 com os patches selecionados…");
             File result=tools.buildExperimentalAot(prepared,this::update);
             File coverageFile=new File(TsoProfile.work(this),"aot-report.json");
             org.json.JSONObject coverageReport=new org.json.JSONObject(
-                new String(Files.readAllBytes(coverageFile.toPath()),java.nio.charset.StandardCharsets.UTF_8));
+                new String(Files.readAllBytes(coverageFile.toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8));
             org.json.JSONObject coverage=coverageReport.getJSONObject("coverage");
             int valid=coverage.getInt("estimated_usable_units");
             int unsupported=coverage.getInt("unsupported_units");
-            prefs.edit().putString("cpu_backend","aot").apply();
-            String message="CPU ARM64 compilada: "
-                +valid+" unidades válidas, "+unsupported
-                +" ainda não suportadas. Toque em JOGAR.";
-            RunLog.write(this,"CPU AOT recompilada, cobertura validada: "+message+" arquivo="+result);
+            // Never advertise or launch a stale library after a recompilation.
+            String pending=RuntimeAot.pendingSelectedPatches(this);
+            if(!pending.isEmpty())throw new IOException(
+                "A recompilação não aplicou todos os patches: "+pending+
+                ". Verifique o relatório antes de jogar.");
+            RuntimeAot.Ready ready=RuntimeAot.prepare(this,prepared);
+            if(!ready.pendingCodePatches.isEmpty())
+                throw new IOException("Patches ARM64 continuam pendentes. Não iniciando o jogo.");
+            prefs.edit().putString("cpu_backend","aot")
+                .putString("prepared_path",prepared.getAbsolutePath()).apply();
+            String message="CPU ARM64 atualizada: "+valid+" unidades válidas, "+
+                unsupported+" ainda não suportadas. Patches selecionados aplicados.";
+            RunLog.write(this,"CPU ARM64 recompilada e patches conferidos: "+
+                message+" biblioteca="+result);
             update(message);
+            if(launchAfterCompile)startPreparedGame(prepared);
         });
+    }
+
+    private void buildSelectedAot() {
+        compileSelectedAot(false);
     }
 
     private void manualPath() {

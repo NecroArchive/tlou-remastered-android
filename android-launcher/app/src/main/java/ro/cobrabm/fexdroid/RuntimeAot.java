@@ -204,6 +204,16 @@ final class RuntimeAot {
                     source.optString("runtime_patch_contract")))
                 throw new java.io.IOException(
                     "CPU ARM64 antiga: compile uma vez para disponibilizar todos os patches e resoluções.");
+            JSONObject allVariants=source.optJSONObject("variant_catalog");
+            File catalog=new File(work,"aot/tlou-111-all-variants.txt");
+            String expectedCatalogHash=allVariants==null?"":allVariants.optString("sha256");
+            String compilerCatalogHash=meta.optString("catalog_hash","");
+            if(!catalog.isFile() || expectedCatalogHash.length()!=64 ||
+                !expectedCatalogHash.equalsIgnoreCase(sha256(catalog)) ||
+                compilerCatalogHash.length()!=16 ||
+                "cbf29ce484222325".equalsIgnoreCase(compilerCatalogHash))
+                throw new java.io.IOException(
+                    "Catálogo de todas as variantes ARM64 ausente ou alterado. Recompile uma vez.");
             if(!hasAnimationGuard || !hasTimeout || !hasIdleBackoff)
                 throw new java.io.IOException(
                     "Faltam correções obrigatórias dos workers/animação no ARM64.");

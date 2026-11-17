@@ -89,12 +89,35 @@ final class RuntimeAot {
      * previous AOT variant after the user changed resolution or visual effects.
      * A missing AOT report is handled by the existing full prepare validator.
      */
+    static boolean hasCompleteVariantCatalog(JSONObject source) {
+        if(!"tlou-111-variants-v1".equals(source.optString("native_patch_profile")))
+            return false;
+        JSONObject variants=source.optJSONObject("variant_catalog");
+        if(variants==null || !"tlou-111-variants-v1".equals(variants.optString("profile"))
+                || variants.optString("sha256").length()!=64)
+            return false;
+        JSONArray groups=variants.optJSONArray("groups");
+        if(groups==null || groups.length()!=PortSettings.EFFECTS.length+3)
+            return false;
+        java.util.HashSet<String> all=new java.util.HashSet<>();
+        for(int i=0;i<groups.length();i++)all.add(groups.optString(i));
+        if(all.size()!=groups.length())return false;
+        for(String r:new String[]{"720","540","360"})
+            if(!all.contains("resolution_"+r))return false;
+        for(String key:PortSettings.EFFECTS)
+            if(!all.contains("effect_"+key))return false;
+        return true;
+    }
+
     static String pendingSelectedPatches(Context context) throws Exception {
         File report=new File(TsoProfile.work(context),"aot-report.json");
         if(!report.isFile())return "";
         JSONObject source=new JSONObject(new String(Files.readAllBytes(
             report.toPath()),StandardCharsets.UTF_8));
         if(!"1.11".equals(source.optString("version")))return "";
+        if(hasCompleteVariantCatalog(source))return "";
+        if("aarch64_generated_native_ready".equals(source.optString("status")))
+            return "biblioteca ARM64 antiga (precisa de uma única recompilação para ativar todos os patches)";
         JSONObject compiled=source.optJSONObject("native_patch_options");
         if(compiled==null)throw new java.io.IOException(
             "Metadados de patches ARM64 ausentes. Recompile em Ajustes → CPU.");
@@ -160,53 +183,41 @@ final class RuntimeAot {
                 if("frame-timeout".equals(patch))hasTimeout=true;
                 if("native-job-idle-backoff".equals(patch))hasIdleBackoff=true;
             }
-            JSONObject expected=source.optJSONObject("native_patch_options");
-            // Byte-verified 01.11 AOT compilation now uses LLVM -O2 and an
-            // immutable executable contract. Static patches are already
-            // present in the boot used to compile each unit, so --patches and
-            // runtime executable hooks MUST remain disabled.
-            boolean fastO2=false,noDirty=false;
-            if(command!=null)for(int i=0;i<command.length();i++) {
-                if("-O2".equals(command.optString(i)))fastO2=true;
-                if("--no-dirty-check".equals(command.optString(i)))noDirty=true;
+            // One LLVM -O2 image contains ALL verified 1.11 patches as
+            // bb-recomp function variants, not one static selected profile.
+            // Variant dispatch requires the native dirty-entry check. Old
+            // immutable libraries must be recompiled exactly once.
+            boolean fastO2=false,noDirty=false,variantFlag=false;
+            if(command!=null)for(int i=0;i<command.length();i++){
+                String flag=command.optString(i);
+                if("-O2".equals(flag))fastO2=true;
+                if("--no-dirty-check".equals(flag))noDirty=true;
+                if("--variants".equals(flag))variantFlag=true;
             }
-            if(!fastO2 || !noDirty ||
-                    !"tlou-111-static-llvmO2-immutable-v1".equals(
-                        source.optString("native_codegen_profile")) ||
-                    !source.optBoolean("runtime_code_immutable",false) ||
-                    !"static-patches;--no-game-hooks;--patches-disabled".equals(
-                        source.optString("runtime_patch_contract")))
+            long abiFlags=meta.optLong("abi_flags",0);
+            if(!fastO2 || noDirty || !variantFlag ||
+                (abiFlags&6)!=6 || !hasCompleteVariantCatalog(source) ||
+                !"tlou-111-llvmO2-native-variants-v1".equals(
+                    source.optString("native_codegen_profile")) ||
+                source.optBoolean("runtime_code_immutable",true) ||
+                !"native-variants;--no-game-hooks;--patches-at-launch".equals(
+                    source.optString("runtime_patch_contract")))
                 throw new java.io.IOException(
-                    "CPU ARM64 1.11 antiga (LLVM -O1). Recompile para ativar -O2 e o perfil estático otimizado.");
-            RunLog.write(context,"TLOU AOT 1.11 codegen: LLVM -O2, immutable code, native fiber resume enabled.");
-            if(!"tlou-111-static-v2".equals(source.optString("native_patch_profile")) ||
-                    !hasAnimationGuard || !hasTimeout || expected==null ||
-                    (expected.optBoolean("job_sleep",true) && !hasIdleBackoff))
+                    "CPU ARM64 antiga: compile uma vez para disponibilizar todos os patches e resoluções.");
+            if(!hasAnimationGuard || !hasTimeout || !hasIdleBackoff)
                 throw new java.io.IOException(
-                    "AOT 1.11 sem correção de espera ativa dos seis workers. Recompile em Ajustes → CPU.");
+                    "Faltam correções obrigatórias dos workers/animação no ARM64.");
             JSONObject actual=new JSONObject(new String(Files.readAllBytes(
-                    PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
-            if(expected==null || !expected.has("resolution") ||
-                    expected.optBoolean("job_sleep",false)!=actual.optBoolean("job_sleep",false))
-                throw new java.io.IOException(
-                    "Configuração AOT incompleta ou workers alterados. Recompile a CPU ARM64.");
-            for(String effect:PortSettings.EFFECTS) {
-                if(!expected.has(effect))
-                    throw new java.io.IOException(
-                        "Metadados do patch ARM64 incompletos: "+effect+". Recompile a CPU ARM64.");
-            }
-            compiledResolution=expected.optString("resolution","original");
+                PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
+            if(!actual.optBoolean("job_sleep",false))
+                throw new java.io.IOException("Política de workers incompatível.");
+            compiledResolution=actual.optString("resolution","original");
             if(!java.util.Arrays.asList("original","720","540","360").contains(compiledResolution))
-                throw new java.io.IOException("Resolução ARM64 compilada inválida.");
-            pendingPatches=pendingCodePatches(expected,actual);
-            if(!pendingPatches.isEmpty()) {
-                RunLog.write(context,"CPU ARM64: patches escolhidos diferentes da biblioteca ("+
-                    pendingPatches+"). A execução foi bloqueada para evitar efeitos incorretos.");
-                throw new java.io.IOException("Patches ARM64 não aplicados: "+
-                    pendingPatches+". Recompile a CPU ARM64 antes de jogar.");
-            }
-            RunLog.write(context,"TLOU AOT patches ARM64 compilados: "+nativePatches+
-                    " • resolução="+expected.optString("resolution")+" • FEX original preservado.");
+                throw new java.io.IOException("Resolução não disponível no catálogo ARM64.");
+            RunLog.write(context,"CPU ARM64: catálogo completo validado ("+
+                source.getJSONObject("variant_catalog").optJSONArray("groups").length()+
+                " grupos), efeitos e resolução escolhidos para esta sessão • "+
+                compiledResolution+" • sem recompilação.");
             runtimeBoot=new File(work,"native-boot-linked.bin");
             String expectedNative=source.optString("native_boot_sha256");
             if(!runtimeBoot.isFile() || expectedNative.length()!=64 ||

@@ -83,6 +83,26 @@ final class RuntimeAot {
         return String.join(", ",changed);
     }
 
+    /**
+     * Cheap pre-launch check: the user's currently selected patches must equal
+     * those baked into the immutable ARM64 guest image. Never silently boot a
+     * previous AOT variant after the user changed resolution or visual effects.
+     * A missing AOT report is handled by the existing full prepare validator.
+     */
+    static String pendingSelectedPatches(Context context) throws Exception {
+        File report=new File(TsoProfile.work(context),"aot-report.json");
+        if(!report.isFile())return "";
+        JSONObject source=new JSONObject(new String(Files.readAllBytes(
+            report.toPath()),StandardCharsets.UTF_8));
+        if(!"1.11".equals(source.optString("version")))return "";
+        JSONObject compiled=source.optJSONObject("native_patch_options");
+        if(compiled==null)throw new java.io.IOException(
+            "Metadados de patches ARM64 ausentes. Recompile em Ajustes → CPU.");
+        JSONObject selected=new JSONObject(new String(Files.readAllBytes(
+            PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
+        return pendingCodePatches(compiled,selected);
+    }
+
     static Ready prepare(Context context,File prepared) throws Exception {
         File work=TsoProfile.work(context);
         File so=new File(work,"aot/libtlouaot.so");
@@ -179,9 +199,12 @@ final class RuntimeAot {
             if(!java.util.Arrays.asList("original","720","540","360").contains(compiledResolution))
                 throw new java.io.IOException("Resolução ARM64 compilada inválida.");
             pendingPatches=pendingCodePatches(expected,actual);
-            if(!pendingPatches.isEmpty())
-                RunLog.write(context,"AOT: alterações de patches pendentes ("+pendingPatches+
-                    "); usando efeitos e resolução já COMPILADOS até gerar nova AOT.");
+            if(!pendingPatches.isEmpty()) {
+                RunLog.write(context,"CPU ARM64: patches escolhidos diferentes da biblioteca ("+
+                    pendingPatches+"). A execução foi bloqueada para evitar efeitos incorretos.");
+                throw new java.io.IOException("Patches ARM64 não aplicados: "+
+                    pendingPatches+". Recompile a CPU ARM64 antes de jogar.");
+            }
             RunLog.write(context,"TLOU AOT patches ARM64 compilados: "+nativePatches+
                     " • resolução="+expected.optString("resolution")+" • FEX original preservado.");
             runtimeBoot=new File(work,"native-boot-linked.bin");

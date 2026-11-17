@@ -2,6 +2,7 @@ package ro.cobrabm.fexdroid;
 
 import android.content.Context;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import android.content.SharedPreferences;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -47,6 +48,42 @@ public final class HostCopyBatchLaunchTest {
         assertTrue(PortSettings.experimentReport(c,env).contains(
                 "host-copy-batching=0"));
     }
+    @Test public void fullVariantBankPermitsAllPatchSwitchesWithoutRecompilation()
+            throws Exception {
+        JSONArray groups=new JSONArray();
+        for(String resolution:new String[]{"720","540","360"})
+            groups.put("resolution_"+resolution);
+        for(String effect:PortSettings.EFFECTS)
+            groups.put("effect_"+effect);
+        JSONObject bank=new JSONObject()
+            .put("profile","tlou-111-variants-v1")
+            .put("sha256","a".repeat(64))
+            .put("groups",groups);
+        JSONObject source=new JSONObject()
+            .put("version","1.11")
+            .put("native_patch_profile","tlou-111-variants-v1")
+            .put("variant_catalog",bank);
+        assertTrue(RuntimeAot.hasCompleteVariantCatalog(source));
+        JSONObject prefs=new JSONObject()
+            .put("resolution","original");
+        for(String effect:PortSettings.EFFECTS)prefs.put(effect,false);
+        for(String resolution:new String[]{"original","720","540","360"}) {
+            prefs.put("resolution",resolution);
+            for(String effect:PortSettings.EFFECTS) {
+                prefs.put(effect,true);
+                assertTrue("all 11 variants required for "+effect+" at "+resolution,
+                    RuntimeAot.hasCompleteVariantCatalog(source));
+                prefs.put(effect,false);
+            }
+        }
+        // Reject a library which lacks ANY optional native effect; it would
+        // silently ignore the corresponding setting in ZIP 28.
+        groups.remove(groups.length()-1);
+        assertFalse(RuntimeAot.hasCompleteVariantCatalog(source));
+        source.remove("variant_catalog");
+        assertFalse(RuntimeAot.hasCompleteVariantCatalog(source));
+    }
+
     @Test public void zip28NewShadowsCannotSilentlyRemainUnapplied() throws Exception {
         // Real ZIP 28 01.11 case: only these two switches changed after
         // the user's AOT image was compiled. Previously JOGAR silently

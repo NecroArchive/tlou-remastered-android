@@ -11,9 +11,22 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import tlou_patches as p
 
-SHADOWS={
-    "omni_light_shadows": (0xA63BBA,),
-    "spot_light_shadows": (0xA6445F,0xA652A4),
+# The old implementation overwrote the category reads with AL=0.
+# The following TEST AL / JE then skipped the ENTIRE light. Redirect the
+# shadow classification register BEFORE that check, preserving light output.
+REDIRECTS={
+    "omni_light_shadows": {0xA63BB6:("84c9","30c9")},
+    "spot_light_shadows": {
+        0xA6445A:("4584ed","4530ed"),
+        0xA652A0:("85d2","31d2"),
+    },
+}
+ORIGINAL_SHADOW_READS={
+    "omni_light_shadows": {0xA63BBA:"418a84244d010000"},
+    "spot_light_shadows": {
+        0xA6445F:"418a84244e010000",
+        0xA652A4:"418a84244e010000",
+    },
 }
 NONSHADOW_LIGHT_CONSUMERS={
     "omni_light_shadows": {0xA63BCA:"418a84244f010000"},
@@ -25,7 +38,7 @@ NONSHADOW_LIGHT_CONSUMERS={
 
 class OptionalLightShadows111(unittest.TestCase):
     def test_opt_in_and_111_only(self):
-        for name in SHADOWS:
+        for name in REDIRECTS:
             self.assertNotIn("disable-"+name,p.selected_options({name:False},"01.11"))
             self.assertNotIn("disable-"+name,p.selected_options({name:True},"01.00"))
             expected=p.PERFORMANCE_EFFECTS_111[name]
@@ -33,17 +46,20 @@ class OptionalLightShadows111(unittest.TestCase):
                 self.assertEqual(p.selected_options({name:True},"01.11",digest)["disable-"+name],expected)
             self.assertTrue(any(new is not None for _,_,new in expected))
 
-    def test_shadowed_consumer_off_and_unshadowed_light_enabled(self):
-        for name,consumers in SHADOWS.items():
+    def test_shadow_classification_reaches_unshadowed_light_path(self):
+        for name,redirects in REDIRECTS.items():
             instructions={at:(before,after) for at,before,after in p.PERFORMANCE_EFFECTS_111[name]}
-            for at in consumers:
+            for at,(original,redirect) in redirects.items():
                 old,new=instructions[at]
-                self.assertTrue(old.startswith("418a8424"))
-                self.assertEqual(new, "30c0" + "90"*6)
+                self.assertEqual(old,original)
+                self.assertEqual(new,redirect)
                 self.assertEqual(len(bytes.fromhex(old)),len(bytes.fromhex(new)))
-            # Muting only the shadowed-light category removed all local
-            # illumination in gameplay. Make the corresponding nonshadowed
-            # category active at each read, including both spotlight paths.
+            # The previous AL=0 patch was followed by TEST AL; JE skip-light,
+            # and the following unshadowed consumer was never reached.
+            # Preserve shadow read sites completely; their input classifier
+            # is now zero and bypasses them.
+            for at in ORIGINAL_SHADOW_READS[name]:
+                self.assertNotIn(at,instructions)
             for at,original in NONSHADOW_LIGHT_CONSUMERS[name].items():
                 old,new=instructions[at]
                 self.assertEqual(old,original)
@@ -51,6 +67,17 @@ class OptionalLightShadows111(unittest.TestCase):
                 self.assertEqual(len(bytes.fromhex(old)),len(bytes.fromhex(new)))
         self.assertEqual(p.PERFORMANCE_EFFECTS_111["omni_light_shadows"][0],
             (0xA638C4,"4c8d25a56edb00",None))
+
+    def test_original_control_flow_explains_dark_scene_regression(self):
+        # Omni: TEST CL; JE unshadowed; MOV AL,shadow; TEST AL; JE skip;
+        #       MOV AL,unshadow; OR AL,CL; JE skip; CALL light allocator.
+        # Spot #1: TEST R13B; JE unshadowed; MOV AL,shadow; TEST AL;
+        #          JE skip; MOV AL,unshadow; OR AL,R13B; JE skip.
+        # Spot #2: TEST EDX; JE unshadowed; MOV AL,shadow; TEST AL;
+        #          JE skip; TEST EDX; JNE output; MOV AL,unshadow; TEST AL.
+        self.assertEqual(REDIRECTS["omni_light_shadows"][0xA63BB6],("84c9","30c9"))
+        self.assertEqual(REDIRECTS["spot_light_shadows"][0xA6445A],("4584ed","4530ed"))
+        self.assertEqual(REDIRECTS["spot_light_shadows"][0xA652A0],("85d2","31d2"))
 
     def test_no_overlap_with_1_11_existing_effects_or_stability(self):
         current=[]

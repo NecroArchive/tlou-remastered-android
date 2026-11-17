@@ -47,7 +47,7 @@ class AllPatchVariants(unittest.TestCase):
     def test_refuses_corrupt_or_unsupported_patch_bytes(self):
         originals,segments=fixture()
         corrupted=dict(originals)
-        corrupted[(0xA63BBA,7)]=b"\x00"*7
+        corrupted[(0xA63BBA,8)]=b"\x00"*8
         with self.assertRaisesRegex(ValueError,"guard mismatch"):
             mod.catalog_data(patches,lambda a,n:corrupted.get((a,n),b""),
                              segments,0x1200000)

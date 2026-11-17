@@ -521,6 +521,31 @@ def verify_aot_coverage(stats: Path, meta: dict) -> dict:
             "estimated_usable_units": count - dirty, "compiler_version": version}
 
 
+def available_compile_memory_bytes() -> int:
+    """Actual Linux MemAvailable, not PS4 sparse virtual pool or zram size."""
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+            if line.startswith("MemAvailable:"):
+                parts = line.split()
+                return int(parts[1]) * 1024 if len(parts) >= 3 and parts[2] == "kB" else 0
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def select_compile_workers(requested: int, available_bytes: int) -> int:
+    """Avoid AOT codegen's ~2 GiB peak colliding with 8 GB Android LMKD.
+
+    This only changes translation throughput, not code, runtime scheduling,
+    shard count, TSO profile, or FPS. Unknown availability keeps the request.
+    """
+    if available_bytes <= 0:
+        return requested
+    gib = 1024 ** 3
+    ceiling = 1 if available_bytes < 4 * gib else 2 if available_bytes < 6 * gib else requested
+    return max(1, min(requested, ceiling))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, required=True,
@@ -574,12 +599,15 @@ def main(argv=None):
             "invalid-animation-output-pointer" in native_patches and
             "frame-timeout" in native_patches)
         cpu_flags = AOT_111_PERFORMANCE_FLAGS if fast_111 else ("-O1",)
+        available_compile_bytes = available_compile_memory_bytes()
+        compile_jobs = select_compile_workers(args.jobs, available_compile_bytes)
+
         # --tso is a CODE GENERATION option, not a runtime switch.
         # Fibers and resume-entry safeguards remain enabled in both modes.
         guest_flags = native_guest_flags(args.tso_profile)
         command = [str(args.compiler or "/path/to/libbbrecomp.so"),
                    "--boot", str(staged), "--game-dir", str(game), "--so", str(so),
-                   "--stats", str(aot / "compile.txt"), "--jobs", str(args.jobs),
+                   "--stats", str(aot / "compile.txt"), "--jobs", str(compile_jobs),
                    "--shards", str(args.shards), "--target", "aarch64",
                    "--host", "armv8.2", *guest_flags, *cpu_flags, "--no-nice",
                    "--progress", "--resume"]
@@ -624,6 +652,9 @@ def main(argv=None):
                   "native_boot_sha256": sha256(native_boot) if native_patches else "",
                   "native_patch_entries": [f"+0x{x:x}" for x in patch_entries],
                   "verified_executable_bytes": verified_code_bytes,
+                  "compile_memory_available_mib": available_compile_bytes // (1024 * 1024),
+                  "compile_workers_requested": args.jobs,
+                  "compile_workers_effective": compile_jobs,
                   "input_boot": check_boot(boot), "translation_command": command,
                   "runtime_integrated": False, "status": "staged",
                   "verified_switch_targets": [f"+0x{x:x}" for x in seed_targets],

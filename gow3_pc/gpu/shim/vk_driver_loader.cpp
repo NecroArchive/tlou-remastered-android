@@ -172,28 +172,56 @@ Gow3VkGetInstanceProcAddr OpenHal(void* hmi, const char* driver) {
     return &HalGetInstanceProcAddr;
 }
 
+// The OS Vulkan loader accesses the device's native Qualcomm ICD through the
+// correct Android vendor linker namespace. A cross-device proprietary .so may
+// need a vanished legacy QTI mapper HAL; directly dlopen'ing that file from
+// the app's default namespace cannot resolve this dependency. Never bundle an
+// invented mapper ABI or pretend the requested proprietary version was loaded.
+Gow3VkGetInstanceProcAddr LoadSystemVulkan() {
+#ifdef __ANDROID__
+    static const char* const names[] = {"libvulkan.so"};
+#else
+    static const char* const names[] = {"libvulkan.so.1", "libvulkan.so"};
+#endif
+    for (const char* name : names) {
+        if (void* lib = dlopen(name, RTLD_NOW | RTLD_LOCAL)) {
+            if (void* gipa = dlsym(lib, "vkGetInstanceProcAddr")) {
+                std::fprintf(stderr, "Vulkan: system loader %s (OS-selected GPU driver)\n", name);
+                return reinterpret_cast<Gow3VkGetInstanceProcAddr>(gipa);
+            }
+        }
+    }
+    std::fprintf(stderr, "Vulkan: no system loader (%s)\n", dlerror());
+    return nullptr;
+}
+
+bool IsExternalVendorVulkan(const char* path) {
+    // Qualcomm packages use names like vulkan.adr891.so and vulkan.adreno.so.
+    // Mesa Turnip names are libvulkan_freedreno.so and must NEVER be silently
+    // replaced by the system driver on failure.
+    const char* filename = std::strrchr(path, '/');
+    filename = filename ? filename + 1 : path;
+    return std::strncmp(filename, "vulkan.", 7) == 0;
+}
+
 Gow3VkGetInstanceProcAddr Load() {
     const char* driver = std::getenv("GOW3_VULKAN_DRIVER");
     if (!driver || !*driver) {
-#ifdef __ANDROID__
-        static const char* const names[] = {"libvulkan.so"};
-#else
-        static const char* const names[] = {"libvulkan.so.1", "libvulkan.so"};
-#endif
-        for (const char* name : names) {
-            if (void* lib = dlopen(name, RTLD_NOW | RTLD_LOCAL)) {
-                if (void* gipa = dlsym(lib, "vkGetInstanceProcAddr")) {
-                    std::fprintf(stderr, "Vulkan: system loader %s\n", name);
-                    return reinterpret_cast<Gow3VkGetInstanceProcAddr>(gipa);
-                }
-            }
-        }
-        std::fprintf(stderr, "Vulkan: no system loader (%s)\n", dlerror());
-        return nullptr;
+        return LoadSystemVulkan();
     }
     void* lib = dlopen(driver, RTLD_NOW | RTLD_LOCAL);
     if (!lib) {
-        std::fprintf(stderr, "Vulkan: cannot load driver %s: %s\n", driver, dlerror());
+        const char* error = dlerror();
+        std::fprintf(stderr, "Vulkan: cannot load driver %s: %s\n", driver,
+                     error ? error : "unknown dynamic-linker error");
+        if (IsExternalVendorVulkan(driver)) {
+            // In particular: vendor.qti.hardware.display.mapper@2.0.so not
+            // found with external v891.14 on Android 16, Redmagic 11 Pro.
+            std::fprintf(stderr,
+                         "Vulkan: external vendor driver unavailable; trying the Android "
+                         "SYSTEM Qualcomm driver instead (not the selected external version)\n");
+            return LoadSystemVulkan();
+        }
         return nullptr;
     }
     using NegotiateFn = int (*)(uint32_t*);

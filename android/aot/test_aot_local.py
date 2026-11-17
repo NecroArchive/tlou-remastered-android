@@ -271,8 +271,8 @@ class TestBridge(unittest.TestCase):
                 self.assertIn(target, risk)
             self.assertNotIn(0xffffffffffffffff, risk)
             self.assertNotIn(0x2aaaaa, risk)
-            # Dense hints preselect *other functions* inside known worker
-            # families, not just exact PCs of the crashes so far.
+            # Exhaustive bounded hints select even tiny unvisited functions
+            # inside known worker families, not just prior crash PCs.
             self.assertIn(0x1C28AD, risk)  # exact ZIP 27 crash seed
             self.assertIn(0x1C2EF6, risk)  # new ZIP 27 caller
             for address in (0x1BC000, 0x1C28A0, 0x1C5FE0,
@@ -282,8 +282,10 @@ class TestBridge(unittest.TestCase):
             for address in (0x1C6000, 0x559000, 0xA25000,
                             0x1D0000, 0x400000):
                 self.assertNotIn(address, risk)
-            self.assertGreaterEqual(len(risk), 3584)
-            self.assertLess(len(risk), 3700)
+            self.assertGreaterEqual(len(risk), 114688)
+            self.assertLess(len(risk), 114850)
+            self.assertIn(0x1C28AD + 1, risk)
+            self.assertIn(0x553C14 - 1, risk)
             truncated = mod.granular_risk_entries(
                 mod.TLOU_111_SWITCH_SHA256, None, 0x1C3000)
             self.assertTrue(all(0x1000 <= x < 0x1C3000 for x in truncated))

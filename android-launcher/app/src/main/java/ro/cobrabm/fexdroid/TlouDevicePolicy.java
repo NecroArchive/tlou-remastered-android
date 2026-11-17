@@ -79,17 +79,32 @@ final class TlouDevicePolicy {
 
     /** Reserve less *actual* GPU memory while leaving the virtual PS4 pool unchanged. */
     static String configureMemory(Map<String,String> env, long totalMemBytes) {
+        return configureMemory(env,totalMemBytes,"");
+    }
+    static String configureMemory(Map<String,String> env, long totalMemBytes,
+                                  String eglRenderer) {
         if (!isEightGiBClass(totalMemBytes)) return "normal";
-        // Streaming 512 -> 384 MiB: fewer buffers but still 3x the 128 MiB
-        // ring proven to stall under 2-frame load. Render correctness unchanged.
+        // Standard 8 GB profile: no guest memory contract changes.
         env.put("GOW3_STREAM_MB", "384");
-        // These are cache retention limits, not guest allocation limits.
         env.put("GOW3_STAGING_KEEP_MB", "128");
         env.put("GOW3_STAGING_KEEP_VRAM_MB", "16");
-        // Retain one preallocated large staging copy to limit GPU stalls.
         env.put("GOW3_STAGING_LARGE_MB", "64");
-        // Avoid speculative 64 MiB x 2 Vulkan arena chunks.
         env.put("GOW3_RESIDENCY_CHUNKS", "0");
+        // K20 Pro/Adreno 640: log 2026-11-18 03:16 reports
+        // VK_ERROR_OUT_OF_DEVICE_MEMORY during world-core bootstrap.
+        // The Turnip heap is shared with system RAM (5625 MiB reported).
+        // Shrink speculative/pinned GPU allocations, NOT guest PS4 memory,
+        // readbacks, Vulkan synchronization or patch compilation.
+        final String gpu=eglRenderer==null?"":eglRenderer.toLowerCase(Locale.ROOT);
+        final boolean a6xx=gpu.matches(".*adreno[^0-9]*6[0-9]{2}([^0-9]|$).*");
+        if(a6xx) {
+            env.put("GOW3_STREAM_MB","256");
+            env.put("GOW3_STAGING_KEEP_MB","64");
+            env.put("GOW3_STAGING_KEEP_VRAM_MB","0");
+            env.put("GOW3_STAGING_LARGE_MB","0");
+            env.put("GOW3_STAGING_PREWARM_BLOCKS","2");
+            return "8gb-a6xx-low-memory";
+        }
         return "8gb-balanced";
     }
 }

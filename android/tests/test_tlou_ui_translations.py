@@ -40,6 +40,8 @@ REQUIRED=(
     "NÃO FOI POSSÍVEL CONTINUAR",
     "VOLTAR AO LAUNCHER",
     "Falha ao exportar logs: ",
+    "Logs ZIP salvos.",
+    "VSync OFF (desbloqueio)",
 )
 
 class UITranslationRegression(unittest.TestCase):
@@ -64,6 +66,16 @@ class UITranslationRegression(unittest.TestCase):
         self.assertEqual(self.rows["CPU ARM64 não disponível"][1],"ARM64 CPU unavailable")
         self.assertEqual(self.rows["Usar FEX"][1],"Use FEX")
         self.assertEqual(self.rows["VOLTAR AO LAUNCHER"][1],"RETURN TO LAUNCHER")
+
+    def test_recent_high_visibility_strings_are_localized(self):
+        for key in ("Desativar sombras de luzes omni (1.11)",
+                    "Desativar sombras de holofotes (1.11)",
+                    "CPU ARM64 não disponível", "já compilada",
+                    "ainda não compilada", "VOLTAR AO LAUNCHER",
+                    "FALHA NO DRIVER GRÁFICO"):
+            values=self.rows[key]
+            for locale in range(2,10):
+                self.assertNotEqual(values[locale],values[1],(key,locale))
 
     def test_recent_multilingual_rows_fall_back_to_english(self):
         # TlouLanguage.t handles blank localized columns by selecting column 1.

@@ -33,6 +33,7 @@ AOT_111_PERFORMANCE_PROFILE = "tlou-111-llvmO2-native-variants-v1"
 
 import argparse
 import hashlib
+import re
 import json
 import os
 from pathlib import Path

@@ -558,8 +558,10 @@ def main(argv=None):
     parser.add_argument("--options", type=Path, help="Current FEX-validated native patch selections")
     parser.add_argument("--jobs", type=int, default=3)
     parser.add_argument("--shards", type=int, default=64)
-    parser.add_argument("--tso-profile", choices=("v3","v4","v5","off"), default="v3",
-                        help="off is an unsafe, experimental relaxed ARM64 test")
+    # Shipping Android frontend supports only the one validated build policy.
+    # Older developer TSO variants are not selectable through packaged tools.
+    parser.add_argument("--tso-profile", choices=("off",), default="off",
+                        help="Internal compatibility flag; the only Android AOT build mode")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:

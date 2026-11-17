@@ -243,7 +243,7 @@ public final class MainActivity extends Activity {
             add(game,"Sair do aplicativo",false,this::finishAffinity);
         } else if(currentTab.equals("patches")) {
             LinearLayout box=card(root,"PATCHES");
-            box.addView(text("FEX aplica os patches ao abrir. No ARM64, resolução e efeitos são integrados à compilação: ao mudar essas opções, JOGAR oferece recompilar antes de iniciar, para não executar patches antigos. FPS, VSync e driver não exigem recompilação.",12,MUTED));
+            box.addView(text("CPU ARM64: uma única compilação inclui todas as resoluções e patches validados da versão 1.11. Escolha qualquer combinação e reinicie o jogo; não é necessário recompilar. FEX também aplica os patches ao abrir. Recompile apenas ao mudar a versão do jogo ou atualizar o mecanismo AOT.",12,MUTED));
             choice(box,"resolution","Resolução interna",
                 new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                 new String[]{"original","720","540","360"},"original");
@@ -308,7 +308,7 @@ public final class MainActivity extends Activity {
                 new String[]{"aot","fex"},"fex");
             File selectedAot=new File(TsoProfile.work(this),"aot/libtlouaot.so");
             cpu.addView(text("CPU ARM64: "+(selectedAot.isFile()?"já compilada":"ainda não compilada")
-                +". Recompile após atualizar o jogo ou modificar patches que alteram o código.",12,MUTED));
+                +". A compilação inclui todos os patches e resoluções 1.11. Alterar opções não exige recompilar; atualizações do jogo ou do compilador podem exigir.",12,MUTED));
             add(cpu,"Compilar CPU ARM64",false,
                 ()->withAccess(this::buildSelectedAot));
             toggleSetting(cpu,"aot_detailed_diagnostics",
@@ -607,7 +607,7 @@ public final class MainActivity extends Activity {
             prefs.edit().putString("cpu_backend","aot")
                 .putString("prepared_path",prepared.getAbsolutePath()).apply();
             String message="CPU ARM64 atualizada: "+valid+" unidades válidas, "+
-                unsupported+" ainda não suportadas. Patches selecionados aplicados.";
+                unsupported+" ainda não suportadas. Todas as variantes de patches 1.11 disponíveis.";
             RunLog.write(this,"CPU ARM64 recompilada e patches conferidos: "+
                 message+" biblioteca="+result);
             update(message);

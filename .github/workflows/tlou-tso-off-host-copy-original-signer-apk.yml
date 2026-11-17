@@ -1,4 +1,4 @@
-name: TLOU AOT 8GB A6xx UBWC Device Compatibility - Original Signer
+name: TLOU Single ARM64 AOT and Physical Game Updates - Original Signer
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
 # the exact existing debug keystore. No new key is generated.
 # GPU source is pinned to the verified low-instrumentation rollback commit; all other native files and signer stay pinned.
 # Original signing cache stays in the original branch, no private keys uploaded.
-# Compiler v5 is from successful gated run 43658666646; v3/v4 are independently pinned.
+# Only the original proven AOT v3 backend is packaged. The frontend omits --tso.
 # Restart after GitHub Actions re-enabled on 2026-11-17; original signer required.
 concurrency:
   group: tlou-tso-off-host-copy-batch-original-signer
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: '38df4c48c027791d84018d9170ad97cfd179baf3'
+          ref: '6c00c08dde37f0bc1b60807abc9850526946ac44'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -75,6 +75,7 @@ jobs:
           python3 android/aot/test_tso_outlined.py -v
           python3 android/bionic/test_multi_tso_packaging.py -v
           python3 android/aot/test_no_tso_profile.py -v
+          python3 android/tests/test_tlou_physical_updates_single_aot.py -v
           javac -d /tmp/tlou-device-policy-test \
             android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouDevicePolicy.java \
             android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouDevicePolicyTest.java
@@ -134,56 +135,28 @@ jobs:
           test -s out/android-bionic/aot-backend/libbbcpu.so
           readelf -d out/android-bionic/aot-backend/libbbcpu.so | grep -F '[libgow3cpu.so]'
           cp out/android-bionic/aot-backend/libbbcpu.so out/android-bionic/apk-assets/runtime-aot/libbbcpu.so
-      - name: Retrieve tested experimental v5 outlined TSO AOT compiler
-        uses: actions/download-artifact@v4
-        with:
-          name: TLOU-AOT-TSO-v5-OUTLINED-ARM64-COMPILER-ONLY
-          path: out/aot-tso-compiler
-          run-id: '43658666646'
-          github-token: ${{ github.token }}
-      - name: Retrieve known-good conservative TSO v3 compiler
+      - name: Retrieve only the pinned ARM64 AOT v3 compiler
         uses: actions/download-artifact@v4
         with:
           name: TLOU-bb-recomp-1.3.0-TSO-STR-ARM64
-          path: out/tso-profile-archives/v3
+          path: out/aot-v3-compiler
           run-id: '43347558246'
           github-token: ${{ github.token }}
-      - name: Retrieve known-good aligned TSO v4 compiler
-        uses: actions/download-artifact@v4
-        with:
-          name: TLOU-LLVM23-AOT-TSO-ALIGNED-AR-v4-COMPILER-ONLY
-          path: out/tso-profile-archives/v4
-          run-id: '43615358066'
-          github-token: ${{ github.token }}
-      - name: Verify separately pinned v3/v4 archives and unpack their matching bundles
+      - name: Verify pinned ARM64 compiler and single codegen policy
         run: |
           set -euo pipefail
-          for profile in v3 v4; do
-            archive=out/tso-profile-archives/$profile/bb-recomp-android-aarch64.tar.xz
-            test -s "$archive"
-            (cd out/tso-profile-archives/$profile && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
-            mkdir -p "out/tso-profiles/$profile"
-            tar -xJf "$archive" -C "out/tso-profiles/$profile"
-            test -s "out/tso-profiles/$profile/android/libbbrecomp.so"
-            test -s "out/tso-profiles/$profile/android/bundle/helpers-aarch64.o"
-            readelf -h "out/tso-profiles/$profile/android/libbbrecomp.so" | grep -E 'Machine:.*AArch64'
-          done
-          grep -aFq '3-tlou-string' out/tso-profiles/v3/android/libbbrecomp.so
-          grep -aFq '4-tlou-tso-aligned-ar-v1' out/tso-profiles/v4/android/libbbrecomp.so
-      - name: Verify tested v5 compiler archive and ARM64 ABI
-        run: |
-          set -euo pipefail
-          archive=out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
+          archive=out/aot-v3-compiler/bb-recomp-android-aarch64.tar.xz
           test -s "$archive"
-          (cd out/aot-tso-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
-          mkdir -p out/aot-tso-extract
-          tar -xJf "$archive" -C out/aot-tso-extract
-          test -s out/aot-tso-extract/android/libbbrecomp.so
-          test -s out/aot-tso-extract/android/bundle/libbbcpu-stub.so
-          readelf -h out/aot-tso-extract/android/libbbrecomp.so | grep -E 'Machine:.*AArch64'
-          grep -aFq '5-tlou-tso-outlined-unaligned-v1' out/aot-tso-extract/android/libbbrecomp.so
-          grep -Fq 'TsoProfile.version(tsoProfile).equals(meta.optString("compiler_version"))' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java
-          grep -Fq 'TsoProfile.KEY' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          (cd out/aot-v3-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
+          mkdir -p out/aot-v3-extract
+          tar -xJf "$archive" -C out/aot-v3-extract
+          binary=out/aot-v3-extract/android/libbbrecomp.so
+          test -s "$binary"
+          test -s out/aot-v3-extract/android/bundle/helpers-aarch64.o
+          readelf -h "$binary" | grep -E 'Machine:.*AArch64'
+          grep -aFq '3-tlou-string' "$binary"
+          grep -Fq 'TsoProfile.version(TsoProfile.RELAXED).equals(meta.optString("compiler_version"))' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java
+          ! grep -Fq 'Perfil TSO' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
           grep -Fq 'RELAXED="off"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TsoProfile.java
           grep -Fq 'env.put("GOW3_TLOU_HOST_COPY_BATCH","0")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
           grep -Fq 'if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
@@ -204,12 +177,9 @@ jobs:
           PY
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
           export TLOU_TSO_REQUIRED=1
-          export TLOU_TSO_ALIGNED_AR_EXPERIMENT=1
-          export TLOU_TSO_OUTLINE_UNALIGNED_EXPERIMENT=1
-          export TLOU_AOT_COMPILER_ARCHIVE="$PWD/out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz"
+          export TLOU_AOT_COMPILER_ARCHIVE="$PWD/out/aot-v3-compiler/bb-recomp-android-aarch64.tar.xz"
+          unset TLOU_TSO_MULTI_PROFILE_DIR TLOU_TSO_ALIGNED_AR_EXPERIMENT TLOU_TSO_OUTLINE_UNALIGNED_EXPERIMENT
           bash android/bionic/stage_aot_compiler.sh
-          export TLOU_TSO_MULTI_PROFILE_DIR="$PWD/out/tso-profiles"
-          python3 android/bionic/test_multi_tso_packaging.py -v
           python3 android/bionic/repackage_local_aot.py "$apk"
       - name: Fetch GPU library compiled from current optimized renderer
         uses: actions/download-artifact@v4
@@ -287,25 +257,15 @@ jobs:
                   assert b'--no-callee-saved' in aot_source, 'fiber-safe ARM64 recompilation flags not packaged'
                   assert b'reload_after_calls_for_fibers' in aot_source, 'fiber-safe compiler metadata not packaged'
                   compiler=tools.read('bin/libbbrecomp.so')
-                  expected_compiler_hash=hashlib.sha256(open('out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz','rb').read()).hexdigest().encode()
+                  expected_compiler_hash=hashlib.sha256(open('out/aot-v3-compiler/bb-recomp-android-aarch64.tar.xz','rb').read()).hexdigest().encode()
                   assert tools.read('aot/upstream.sha256').strip()==expected_compiler_hash, 'wrong compiler archive'
-                  assert b'5-tlou-tso-outlined-unaligned-v1' in compiler, 'base TSO v5 compiler missing from APK'
-                  for profile,version in (
-                      ('v3',b'3-tlou-string'),
-                      ('v4',b'4-tlou-tso-aligned-ar-v1'),
-                      ('v5',b'5-tlou-tso-outlined-unaligned-v1'),
-                  ):
-                      key='aot/compilers/'+profile
-                      candidate=tools.read(key+'/libbbrecomp.so')
-                      assert version in candidate, 'Wrong TSO compiler '+profile
-                      assert len(candidate)>100000, 'Incomplete TSO compiler '+profile
-                      assert tools.getinfo(key+'/bundle/helpers-aarch64.o').file_size>1000, 'Wrong TSO bundle '+profile
-                      expected_sha=hashlib.sha256(candidate).hexdigest().encode()
-                      assert tools.read(key+'/compiler.sha256').strip()==expected_sha, 'TSO compiler corrupted '+profile
+                  assert b'3-tlou-string' in compiler, 'single v3 compiler missing'
+                  assert not any(n.startswith('aot/compilers/') for n in tools.namelist()), 'obsolete compiler profiles packaged'
+                  assert tools.getinfo('aot/bundle/helpers-aarch64.o').file_size>1000, 'native helpers missing'
                   assert b'--no-dirty-check' in compiler, 'AOT compiler lacks immutable-unit optimization'
                   assert b'-O2' in compiler, 'AOT compiler lacks LLVM O2'
                   assert b'tlou-111-static-llvmO2-immutable-v1' in aot_source, 'AOT fast codegen profile not packaged'
-                  assert b'if version not in {"3-tlou-string", "4-tlou-tso-aligned-ar-v1", "5-tlou-tso-outlined-unaligned-v1"}' in aot_source, 'AOT v5 codegen adapter missing'
+                  assert b'choices=("off",), default="off"' in aot_source, 'production frontend exposes old AOT profiles'
                   assert b'--granular-funcs' in aot_source, 'No preventive AOT entry coverage in APK'
                   assert b'0x1BF55B' in aot_source, 'ZIP 26 worker jump not included'
                   assert b'granular_risk_entries' in aot_source, 'Saved jump miss parsing not included'
@@ -314,7 +274,7 @@ jobs:
                   assert b'0x1C28AD' in aot_source, 'ZIP27 missed native entry not seeded'
                   assert b'select_compile_workers' in aot_source, 'low RAM AOT worker cap missing'
                   assert b'TLOU_111_WORKER_JUMP_HOTSPOT_STEP = 1' in aot_source, 'complete AOT worker target coverage missing'
-                  assert b'--tso-profile' in aot_source, 'AOT relaxed TSO selection missing'
+                  assert b'--tso-profile' in aot_source, 'single ARM64 compile policy missing'
                   assert b'guest_flags = native_guest_flags(args.tso_profile)' in aot_source, 'AOT TSO switching is not wired'
                   assert b'relaxed_ARM64_no_TSO_UNSAFE' in aot_source, 'AOT relaxed memory model not identified'
               print('Verified',len(preserved)-1,'unchanged native/runtime/driver files; new GPU rebuilt and AOT compiler pinned')
@@ -322,7 +282,7 @@ jobs:
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-8GB-A6xx-UBWC-Compatibility-APK
+          name: TLOU-v011-Single-ARM64-Physical-Updates-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

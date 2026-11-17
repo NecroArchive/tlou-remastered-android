@@ -47,6 +47,29 @@ public final class HostCopyBatchLaunchTest {
         assertTrue(PortSettings.experimentReport(c,env).contains(
                 "host-copy-batching=0"));
     }
+    @Test public void zip28NewShadowsCannotSilentlyRemainUnapplied() throws Exception {
+        // Real ZIP 28 01.11 case: only these two switches changed after
+        // the user's AOT image was compiled. Previously JOGAR silently
+        // launched a .so with both effects still enabled.
+        JSONObject built=new JSONObject()
+            .put("resolution","720")
+            .put("ssao",true)
+            .put("motion_blur",true)
+            .put("depth_of_field",true)
+            .put("bloom",true)
+            .put("sunlight_shadows",true)
+            .put("subsurface",true)
+            .put("omni_light_shadows",false)
+            .put("spot_light_shadows",false);
+        JSONObject chosen=new JSONObject(built.toString())
+            .put("omni_light_shadows",true)
+            .put("spot_light_shadows",true);
+        assertEquals("omni_light_shadows, spot_light_shadows",
+            RuntimeAot.pendingCodePatches(built,chosen));
+        assertEquals("",RuntimeAot.pendingCodePatches(chosen,chosen));
+        assertEquals("",RuntimeAot.pendingCodePatches(built,built));
+    }
+
     @Test public void changingStaticVisualPatchesDoesNotInvalidateExistingAot() throws Exception {
         JSONObject compiled=new JSONObject()
                 .put("resolution","720").put("ssao",true)

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdio>
+#include <cstdlib>
+
 #include <boost/container/small_vector.hpp>
 
 #include "shader_recompiler/info.h"
@@ -111,8 +114,88 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     };
     auto [pipeline_result, pipe] =
         instance.GetDevice().createComputePipelineUnique(pipeline_cache, compute_pipeline_ci);
-    ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
-               vk::to_string(pipeline_result));
+
+    // Qualcomm's proprietary compiler sometimes returns VK_ERROR_UNKNOWN
+    // for valid compute shaders (TLOU 01.11 Adreno 840, log 31). This is NOT
+    // the earlier dlopen error of an external Qualcomm driver. The generic
+    // assertion previously hid the shader hash and supplied no alternatives.
+    // Do not retry for Turnip, which has a different shader compiler, or for
+    // OOM/unsupported-feature results. Never drop compute output.
+    const bool qualcomm = instance.GetVendorID() == 0x5143;
+    const char* retry_env = std::getenv("GOW3_QUALCOMM_COMPUTE_RETRY");
+    const bool retry_enabled = qualcomm && !(retry_env && retry_env[0] == '0');
+    if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled) {
+        std::fprintf(stderr,
+                     "Qualcomm compute compile: first attempt failed for "
+                     "shader=%016llx key=%016llx (%s); buffers=%zu images=%zu "
+                     "samplers=%zu subgroup64=%d native_subgroup=%u. "
+                     "Trying isolated pipeline compilation.\n",
+                     static_cast<unsigned long long>(info_.pgm_hash),
+                     static_cast<unsigned long long>(compute_key.value),
+                     vk::to_string(pipeline_result).c_str(), info->buffers.size(),
+                     info->images.size(), info->samplers.size(),
+                     shader_ci.pNext != nullptr, instance.SubgroupSize());
+        std::fflush(stderr);
+        // A cache can carry a driver compiler state incompatible with an
+        // otherwise valid SPIR-V module. Empty cache changes no shader code.
+        auto [uncached_result, uncached_pipe] =
+            device.createComputePipelineUnique(vk::PipelineCache{}, compute_pipeline_ci);
+        if (uncached_result == vk::Result::eSuccess) {
+            pipe = std::move(uncached_pipe);
+            pipeline_result = uncached_result;
+            std::fprintf(stderr, "Qualcomm compute recovered: uncached shader=%016llx\n",
+                         static_cast<unsigned long long>(info_.pgm_hash));
+        } else {
+            vk::ComputePipelineCreateInfo compatible = compute_pipeline_ci;
+            // With native subgroup=64, omitting a redundant required-64 pNext
+            // keeps wave width unchanged. Do not do this on native 32 devices.
+            if (shader_ci.pNext != nullptr && instance.SubgroupSize() == 64) {
+                compatible.stage.pNext = nullptr;
+                auto [subgroup_result, subgroup_pipe] =
+                    device.createComputePipelineUnique(vk::PipelineCache{}, compatible);
+                if (subgroup_result == vk::Result::eSuccess) {
+                    pipe = std::move(subgroup_pipe);
+                    pipeline_result = subgroup_result;
+                    std::fprintf(stderr,
+                                 "Qualcomm compute recovered: native subgroup64 "
+                                 "shader=%016llx\n",
+                                 static_cast<unsigned long long>(info_.pgm_hash));
+                } else {
+                    pipeline_result = subgroup_result;
+                }
+            } else {
+                pipeline_result = uncached_result;
+            }
+            if (pipeline_result != vk::Result::eSuccess) {
+                // Last resort for known Qualcomm internal compiler errors:
+                // preserve SPIR-V and resources but request a less aggressive
+                // driver optimization path. Only the failing shader pays cost.
+                compatible.flags |= vk::PipelineCreateFlagBits::eDisableOptimization;
+                auto [compat_result, compat_pipe] =
+                    device.createComputePipelineUnique(vk::PipelineCache{}, compatible);
+                pipeline_result = compat_result;
+                if (compat_result == vk::Result::eSuccess) {
+                    pipe = std::move(compat_pipe);
+                    std::fprintf(stderr,
+                                 "Qualcomm compute recovered: disable-optimization "
+                                 "shader=%016llx\n",
+                                 static_cast<unsigned long long>(info_.pgm_hash));
+                }
+            }
+        }
+        std::fflush(stderr);
+    }
+    if (pipeline_result != vk::Result::eSuccess) {
+        std::fprintf(stderr, "GPU compute pipeline unrecoverable: shader=%016llx "
+                             "key=%016llx vendor=%#x error=%s\n",
+                     static_cast<unsigned long long>(info_.pgm_hash),
+                     static_cast<unsigned long long>(compute_key.value),
+                     instance.GetVendorID(), vk::to_string(pipeline_result).c_str());
+        std::fflush(stderr);
+    }
+    ASSERT_MSG(pipeline_result == vk::Result::eSuccess,
+               "Failed to create compute pipeline shader {:#x}: {}",
+               info_.pgm_hash, vk::to_string(pipeline_result));
     pipeline = std::move(pipe);
     SetObjectName(device, *pipeline, "Compute Pipeline {}", debug_str);
 }

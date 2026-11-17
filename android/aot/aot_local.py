@@ -533,6 +533,32 @@ def verify_aot_coverage(stats: Path, meta: dict) -> dict:
             "estimated_usable_units": count - dirty, "compiler_version": version}
 
 
+def verify_native_variant_coverage(stats: Path, catalog: dict) -> dict:
+    """Never mark a library ready if ANY requested patch function failed lifting.
+
+    The pinned compiler's summary is written to compile.txt even without
+    --variant-report; count the full group and function coverage. A partial
+    variant catalog must not silently launch with missing visual patches.
+    """
+    report = stats.read_text(encoding="utf-8", errors="replace")
+    pattern = (r"variants:\\s+(\\d+)\\s+groups in the catalogs\\s+"
+               r"\\((\\d+)\\s+touch code\\),\\s+(\\d+)\\s+variants planned,\\s+"
+               r"(\\d+)\\s+built\\s+\\([^)]*\\),\\s+(\\d+)\\s+skipped,")
+    found = re.search(pattern, report)
+    if not found:
+        raise ValueError("Compiler did not confirm complete native patch variants")
+    declared, touches, planned, built, skipped = map(int, found.groups())
+    required = len(catalog["groups"])
+    if declared != required or touches != required or planned < required or \\
+            built != planned or skipped:
+        raise ValueError(
+            f"Incomplete AOT patch variants: {touches}/{required} groups, "
+            f"{built}/{planned} functions, {skipped} skipped; refusing build")
+    return {"groups": declared, "groups_with_code": touches,
+            "variants_planned": planned, "variants_built": built,
+            "variants_skipped": skipped}
+
+
 def available_compile_memory_bytes() -> int:
     """Actual Linux MemAvailable, not PS4 sparse virtual pool or zram size."""
     try:
@@ -641,6 +667,7 @@ def main(argv=None):
             command += ["--bundle-dir", str(args.bundle_dir)]
         if variant_info:
             command += ["--variants", variant_info["catalog"]]
+            command += ["--variant-report"]
             if "--no-dirty-check" in command:
                 raise ValueError("Native patch variants require dirty-entry checks")
         # All 11 entries of the verified 1.11 scheduler switch are seeded at
@@ -723,6 +750,11 @@ def main(argv=None):
             if meta.get("abi_version") != 2 or meta.get("so_sha256") != sha256(so):
                 raise ValueError("Unexpected AOT ABI or .so hash")
             report["coverage"] = verify_aot_coverage(aot / "compile.txt", meta)
+            if variant_info:
+                report["variant_build"] = verify_native_variant_coverage(
+                    aot / "compile.txt", variant_info)
+                if int(meta.get("abi_flags", 0)) & 6 != 6:
+                    raise ValueError("Native variant ABI lacks dirty-entry and variant flags")
             report["status"] = "aarch64_generated_native_ready"
             report["runtime_integrated"] = True
             report["unit_count"] = meta.get("unit_count")

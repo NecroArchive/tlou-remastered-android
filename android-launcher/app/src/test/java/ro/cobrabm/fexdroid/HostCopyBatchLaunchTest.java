@@ -19,11 +19,12 @@ public final class HostCopyBatchLaunchTest {
     private static String launch(Context context, String backend, String tso) {
         SharedPreferences p=PortSettings.prefs(context);
         p.edit().putString("cpu_backend",backend)
-                .putString(TsoProfile.KEY,tso).commit();
+                .putString("aot_tso_profile",tso).commit();
         Map<String,String> env=new HashMap<>();
         // An external default must not silently override the launcher policy.
         env.put("GOW3_TLOU_HOST_COPY_BATCH","0");
         PortSettings.environment(context,env);
+        assertEquals("off",TsoProfile.selected(context));
         return env.get("GOW3_TLOU_HOST_COPY_BATCH");
     }
 
@@ -41,7 +42,7 @@ public final class HostCopyBatchLaunchTest {
         Context c=RuntimeEnvironment.getApplication();
         Map<String,String> env=new HashMap<>();
         PortSettings.prefs(c).edit().putString("cpu_backend","aot")
-                .putString(TsoProfile.KEY,"off").commit();
+                .putString("aot_tso_profile","off").commit();
         PortSettings.environment(c,env);
         assertTrue(PortSettings.experimentReport(c,env).contains(
                 "host-copy-batching=0"));

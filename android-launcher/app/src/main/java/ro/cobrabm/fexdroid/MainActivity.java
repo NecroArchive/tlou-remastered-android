@@ -307,8 +307,9 @@ public final class MainActivity extends Activity {
                 new String[]{"ARM64 recompilado (AOT experimental)","FEX (estável)"},
                 new String[]{"aot","fex"},"fex");
             File selectedAot=new File(TsoProfile.work(this),"aot/libtlouaot.so");
-            cpu.addView(text("CPU ARM64: "+(selectedAot.isFile()?"já compilada":"ainda não compilada")
-                +". A compilação inclui todos os patches e resoluções 1.11. Alterar opções não exige recompilar; atualizações do jogo ou do compilador podem exigir.",12,MUTED));
+            cpu.addView(text(TlouLanguage.t(this,"CPU ARM64: ")+TlouLanguage.t(this,
+                selectedAot.isFile()?"já compilada":"ainda não compilada")
+                +TlouLanguage.t(this,". A compilação inclui todos os patches e resoluções 1.11. Alterar opções não exige recompilar; atualizações do jogo ou do compilador podem exigir."),12,MUTED));
             add(cpu,"Compilar CPU ARM64",false,
                 ()->withAccess(this::buildSelectedAot));
             toggleSetting(cpu,"aot_detailed_diagnostics",
@@ -591,13 +592,14 @@ public final class MainActivity extends Activity {
 
     private void showPendingAotPatches(String changed) {
         TlouDialogs.show(this,new AlertDialog.Builder(this)
-            .setTitle("Patches ARM64 ainda não aplicados")
-            .setMessage("Estas alterações não estão na CPU ARM64 compilada: "+
-                changed+".\n\nPara usá-las é preciso recompilar o código do jogo. "+
-                "A compilação pode consumir bastante RAM e armazenamento. "+
-                "O jogo não será iniciado com patches diferentes dos escolhidos.")
-            .setNegativeButton("Cancelar",null)
-            .setPositiveButton("Compilar e jogar",(d,w)->
+            .setTitle(TlouLanguage.t(this,"Patches ARM64 ainda não aplicados"))
+            .setMessage(TlouLanguage.t(this,"Estas alterações não estão na CPU ARM64 compilada: ")+
+                changed+".\n\n"+
+                TlouLanguage.t(this,"Para usá-las é preciso recompilar o código do jogo.")+" "+
+                TlouLanguage.t(this,"A compilação pode consumir bastante RAM e armazenamento.")+" "+
+                TlouLanguage.t(this,"O jogo não será iniciado com patches diferentes dos escolhidos."))
+            .setNegativeButton(TlouLanguage.t(this,"Cancelar"),null)
+            .setPositiveButton(TlouLanguage.t(this,"Compilar e jogar"),(d,w)->
                 withAccess(()->compileSelectedAot(true))));
     }
 
@@ -630,8 +632,9 @@ public final class MainActivity extends Activity {
                 throw new IOException("Patches ARM64 continuam pendentes. Não iniciando o jogo.");
             prefs.edit().putString("cpu_backend","aot")
                 .putString("prepared_path",prepared.getAbsolutePath()).apply();
-            String message="CPU ARM64 atualizada: "+valid+" unidades válidas, "+
-                unsupported+" ainda não suportadas. Todas as variantes de patches 1.11 disponíveis.";
+            String message=TlouLanguage.t(this,"CPU ARM64 atualizada: ")+valid+
+                TlouLanguage.t(this," unidades válidas, ")+unsupported+
+                TlouLanguage.t(this," ainda não suportadas. Todas as variantes de patches 1.11 disponíveis.");
             RunLog.write(this,"CPU ARM64 recompilada e patches conferidos: "+
                 message+" biblioteca="+result);
             update(message);
@@ -696,7 +699,7 @@ public final class MainActivity extends Activity {
             }else if(!d.getName().startsWith(".")){DriverArchive.Installed imported=DriverArchive.read(root,d.getName(),Build.VERSION.SDK_INT);names.add(imported.name);paths.add(imported.library.getAbsolutePath());}
         }catch(Exception ignored){}
         String current=prefs.getString("driver_path","");int checked=Math.max(0,paths.indexOf(current));
-        TlouDialogs.show(this,new AlertDialog.Builder(this).setTitle("Driver Vulkan").setSingleChoiceItems(names.toArray(new String[0]),checked,(dialog,index)->{
+        TlouDialogs.show(this,new AlertDialog.Builder(this).setTitle(TlouLanguage.t(this,"Driver Vulkan")).setSingleChoiceItems(names.toArray(new String[0]),checked,(dialog,index)->{
             prefs.edit().putString("driver_path",paths.get(index)).putString("driver_name",names.get(index)).apply();refresh();dialog.dismiss();
         }).setNegativeButton(TlouLanguage.t(this,"Cancelar"),null));
     }

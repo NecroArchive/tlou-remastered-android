@@ -53,9 +53,9 @@ final class PortSettings {
         // Never silently change the saved resolution.
         final String resolution=p.getString("resolution","original");
         options.put("resolution",resolution);
-        // Remove only the earlier SM7475/23049PCD8G-specific worker-wake
-        // workaround. Keep user-selectable generic performance features.
-        options.put("job_sleep",false);
+        // Generic 1.11 job-worker wait patch: not a hardware-specific workaround.
+        // Preserve the existing CPU policy and FEX/AOT native wake behavior.
+        options.put("job_sleep",true);
         for(String key:EFFECTS) options.put(key,p.getBoolean(key,false));
         File file=new File(context.getFilesDir(),"patch-options.json");
         Files.write(file.toPath(),options.toString().getBytes(StandardCharsets.UTF_8));

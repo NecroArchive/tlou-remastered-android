@@ -1,4 +1,4 @@
-name: TLOU Single ARM64 AOT and Physical Game Updates - Original Signer
+name: TLOU Complete ARM64 Patch Variants AOT - Original Signer
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 'f9b51c857f1b49505b37016de7c668fefb87e935'
+          ref: '1a89421ccaee6008da346d4a8f1057ff5c146225'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -62,8 +62,9 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
       - name: Check local ARM64 AOT preparation
         run: |
-          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/bionic/repackage_local_aot.py android/aot/port_runtime.py
+          python3 -m py_compile android/aot/aot_local.py android/aot/patch_variants.py android/aot/test_patch_variants.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/bionic/repackage_local_aot.py android/aot/port_runtime.py
           python3 android/aot/test_aot_local.py -v
+          python3 android/aot/test_patch_variants.py -v
           python3 android/aot/test_aot_quality.py -v
           python3 android/aot/test_fiber_tls.py -v
           python3 android/aot/test_aot_fault_probe.py -v
@@ -251,7 +252,7 @@ jobs:
               assert b.getinfo('assets/runtime-aot/libgow3cpu.so').file_size>4096
               assert b.getinfo('assets/runtime-aot/libbbcpu.so').file_size>=512
               with zipfile.ZipFile(io.BytesIO(b.read('assets/tools.zip'))) as tools:
-                  for n in ['bin/libbbrecomp.so','source/android/aot/aot_local.py','aot/upstream.sha256']:
+                  for n in ['bin/libbbrecomp.so','source/android/aot/aot_local.py','source/android/aot/patch_variants.py','aot/upstream.sha256']:
                       assert tools.getinfo(n).file_size>0
                   aot_source=tools.read('source/android/aot/aot_local.py')
                   assert b'--no-callee-saved' in aot_source, 'fiber-safe ARM64 recompilation flags not packaged'
@@ -262,9 +263,18 @@ jobs:
                   assert b'3-tlou-string' in compiler, 'single v3 compiler missing'
                   assert not any(n.startswith('aot/compilers/') for n in tools.namelist()), 'obsolete compiler profiles packaged'
                   assert tools.getinfo('aot/bundle/helpers-aarch64.o').file_size>1000, 'native helpers missing'
-                  assert b'--no-dirty-check' in compiler, 'AOT compiler lacks immutable-unit optimization'
+                  for feature in (b'--variants', b'--variant-report', b'bbr_vfuncs',
+                                  b'bbr_vunit_count', b'bbr_dirty'):
+                      assert feature in compiler, 'Pinned AOT compiler lacks patch variant support: '+repr(feature)
                   assert b'-O2' in compiler, 'AOT compiler lacks LLVM O2'
-                  assert b'tlou-111-static-llvmO2-immutable-v1' in aot_source, 'AOT fast codegen profile not packaged'
+                  assert b'AOT_111_PERFORMANCE_FLAGS = ("-O2",)' in aot_source, 'Dirty checks needed for variants are disabled'
+                  assert b'verify_native_variant_coverage' in aot_source, 'Incomplete patch banks could pass'
+                  assert b'--variant-report' in aot_source, 'Variant count is not verified'
+                  variants=tools.read('source/android/aot/patch_variants.py')
+                  assert b'PROFILE = "tlou-111-variants-v1"' in variants, 'All-patch catalog missing'
+                  assert b'("720", "540", "360")' in variants, 'All game resolutions are not packaged'
+                  assert b'"omni_light_shadows"' in variants and b'"spot_light_shadows"' in variants, 'ZIP28 light patches unavailable'
+                  assert b'tlou-111-llvmO2-native-variants-v1' in aot_source, 'Native patch variant codegen missing'
                   assert b'choices=("off",), default="off"' in aot_source, 'production frontend exposes old AOT profiles'
                   assert b'--granular-funcs' in aot_source, 'No preventive AOT entry coverage in APK'
                   assert b'0x1BF55B' in aot_source, 'ZIP 26 worker jump not included'
@@ -282,7 +292,7 @@ jobs:
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-Single-ARM64-Physical-Updates-APK
+          name: TLOU-v011-Complete-AOT-Patch-Variants-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

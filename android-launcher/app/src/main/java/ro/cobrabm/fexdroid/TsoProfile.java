@@ -1,79 +1,41 @@
 package ro.cobrabm.fexdroid;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import java.io.File;
 
 /**
- * PS4 TSO is enabled in v3/v4/v5. The opt-in 'off' mode allows
- * controlled real-device tests of ARM relaxed guest memory semantics.
- * It is NOT validated for gameplay stability or saving.
- *
- * Codegen happens at compilation time, not at gameplay runtime. Native units
- * and resume shards must never be shared across compiler versions.
+ * Internal AOT codegen identity. The shipping Android app has exactly one
+ * ARM64 compilation policy: native relaxed guest memory, no --tso.
+ * Keep a distinct cache path from older AOT profile libraries so an APK
+ * upgrade cannot mistakenly launch code compiled with the old model.
  */
 final class TsoProfile {
-    static final String KEY="aot_tso_profile";
-    static final String BASELINE="v3", ALIGNED="v4", OUTLINED="v5", RELAXED="off";
-    static final String[] VALUES={BASELINE,ALIGNED,OUTLINED,RELAXED};
-    static final String[] LABELS={
-        "TSO v3 — conservador (DMB)",
-        "TSO v4 — LDAR/STLR + fallback completo",
-        "TSO v5 — LDAR/STLR + fallback compartilhado",
-        "TSO DESLIGADO — experimental, pode travar ou corromper saves"
-    };
+    static final String RELAXED="off";
+    private static final String COMPILER_VERSION="3-tlou-string";
+
     private TsoProfile() {}
 
-    static String normalize(String value) {
-        return ALIGNED.equals(value)?ALIGNED:OUTLINED.equals(value)?OUTLINED:
-            RELAXED.equals(value)?RELAXED:BASELINE;
-    }
     static String selected(Context context) {
-        SharedPreferences prefs=PortSettings.prefs(context);
-        return normalize(prefs.getString(KEY,BASELINE));
+        // Intentionally ignore legacy aot_tso_profile preferences.
+        return RELAXED;
     }
-    static String version(String profile) {
-        switch(normalize(profile)) {
-            case ALIGNED: return "4-tlou-tso-aligned-ar-v1";
-            case OUTLINED: return "5-tlou-tso-outlined-unaligned-v1";
-            default: return "3-tlou-string";
-        }
-    }
+
+    static String normalize(String ignored) { return RELAXED; }
+
+    static String version(String ignored) { return COMPILER_VERSION; }
+
     static File work(Context context) {
-        return work(context,selected(context));
+        return new File(context.getFilesDir(),"tlou-aot-work-off");
     }
-    static File work(Context context,String profile) {
-        String valid=normalize(profile);
-        File destination=new File(context.getFilesDir(),"tlou-aot-work-"+valid);
-        // Previous experimental APKs stored one large AOT image at this
-        // legacy path. Rename the WHOLE cache once, only if the compiler
-        // metadata matches the selected profile. Never copy GB of shards.
-        File legacy=new File(context.getFilesDir(),"tlou-aot-work");
-        // Never mistake a previously TSO-enabled v3 library for TSO OFF:
-        // the version string is identical, but generated memory semantics differ.
-        if(!RELAXED.equals(valid) && !destination.exists() && legacy.isDirectory()) {
-            File metadata=new File(legacy,"aot/libtlouaot.json");
-            if(metadata.isFile() && new File(legacy,"aot-report.json").isFile()) {
-                try {
-                    org.json.JSONObject info=new org.json.JSONObject(
-                        new String(java.nio.file.Files.readAllBytes(metadata.toPath()),
-                            java.nio.charset.StandardCharsets.UTF_8));
-                    if(version(valid).equals(info.optString("compiler_version")))
-                        legacy.renameTo(destination);
-                } catch(Exception ignored) {
-                    // Keep the legacy library untouched if it is incomplete.
-                    // Explicit recompilation creates the new profile directory.
-                }
-            }
-        }
-        return destination;
+
+    static File work(Context context,String ignored) { return work(context); }
+
+    static String compilerRelative(String ignored) {
+        // One signed, pinned v3 backend. AOT frontend explicitly omits --tso.
+        return "bin/libbbrecomp.so";
     }
-    static String compilerRelative(String profile) {
-        String source=RELAXED.equals(normalize(profile))?BASELINE:normalize(profile);
-        return "aot/compilers/"+source+"/libbbrecomp.so";
-    }
-    static String bundleRelative(String profile) {
-        String source=RELAXED.equals(normalize(profile))?BASELINE:normalize(profile);
-        return "aot/compilers/"+source+"/bundle";
+
+    static String bundleRelative(String ignored) {
+        return "aot/bundle";
     }
 }

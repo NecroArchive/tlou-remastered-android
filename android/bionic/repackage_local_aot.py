@@ -47,39 +47,12 @@ def compiler_payload() -> dict[str, bytes]:
                 result[f"aot/{folder}/{p.relative_to(AOT / folder).as_posix()}"] = p.read_bytes()
     if not any(x.startswith("aot/bundle/") for x in result):
         raise ValueError("Compiler missing LLVM bundle")
-    # AOT TSO profiles are distinct compilers with distinct linker bundles:
-    # `--tso` stays enabled, but codegen selection occurs before translation.
-    # The experiment's packaging workflow supplies archived, pinned v3/v4
-    # compilers, and the staged v5 compiler. Never silently mix bundles.
-    profiles_root = os.environ.get("TLOU_TSO_MULTI_PROFILE_DIR", "").strip()
-    if profiles_root:
-        expected_versions = {
-            "v3": b"3-tlou-string",
-            "v4": b"4-tlou-tso-aligned-ar-v1",
-            "v5": b"5-tlou-tso-outlined-unaligned-v1",
-        }
-        for profile, version in expected_versions.items():
-            directory = AOT if profile == "v5" else (
-                Path(profiles_root) / profile / "android")
-            binary = directory / ("bin/libbbrecomp.so" if profile == "v5"
-                                  else "libbbrecomp.so")
-            if not binary.is_file():
-                raise ValueError(f"Missing AOT TSO profile compiler: {profile}")
-            data = binary.read_bytes()
-            if (data[:4] != b"\x7fELF" or
-                    struct.unpack_from("<H", data, 18)[0] != 183 or
-                    version not in data):
-                raise ValueError(f"Wrong AOT TSO compiler ABI/version: {profile}")
-            bundle = directory / "bundle"
-            if not (bundle / "helpers-aarch64.o").is_file():
-                raise ValueError(f"AOT TSO profile linker bundle missing: {profile}")
-            key = f"aot/compilers/{profile}"
-            result[f"{key}/libbbrecomp.so"] = data
-            result[f"{key}/compiler.sha256"] = (
-                hashlib.sha256(data).hexdigest()+"\n").encode()
-            for member in sorted(bundle.rglob("*")):
-                if member.is_file() and not member.is_symlink():
-                    result[f"{key}/bundle/{member.relative_to(bundle).as_posix()}"] = member.read_bytes()
+    # Shipping Android AOT has only one pinned backend. Reject accidental
+    # reintroduction of multiple codegen variants into installable APKs.
+    if os.environ.get("TLOU_TSO_MULTI_PROFILE_DIR"):
+        raise ValueError("Production APK must not stage multiple AOT compiler profiles")
+    if b"3-tlou-string" not in code:
+        raise ValueError("Production AOT compiler is not the validated v3 backend")
     for name in SOURCE_OVERRIDES:
         result[f"source/{name}"] = (ROOT / name).read_bytes()
     for file in sorted((ROOT / "gow3_pc/scripts").glob("*.py")):
@@ -94,6 +67,10 @@ def merge_tools(original: bytes, replacements: dict[str, bytes]) -> bytes:
         names = set()
         for info in old.infolist():
             safe_path(info.filename)
+            if info.filename.startswith("aot/compilers/"):
+                # Remove any old multi-profile payload if the input APK ever
+                # contains one. Never let it reappear on a later repackage.
+                continue
             if info.filename in names:
                 raise ValueError(f"Duplicate original tool: {info.filename}")
             names.add(info.filename)

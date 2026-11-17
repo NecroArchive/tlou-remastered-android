@@ -52,14 +52,11 @@ final class RunLog {
                 "tlou-aot-work/aot/libtlouaot.json",
                 "tlou/aot-misses.log","tlou/perf-cs-22e6e19e.bin",
                 "tlou/perf-cs-61d67259.bin"));
-            // Preserve tiny version/compile/coverage reports for ALL TSO modes.
-            // Do not export the multi-GB proprietary game-generated AOT units.
-            for(String profile:TsoProfile.VALUES) {
-                for(String filename:new String[]{
-                    "aot-report.json","aot/compile.txt","aot/libtlouaot.json"}) {
-                    paths.add("tlou-aot-work-"+profile+"/"+filename);
-                }
-            }
+            // Only the single shipping ARM64 cache is relevant to reports.
+            // Never export the multi-GB proprietary recompiled unit shards.
+            for(String filename:new String[]{
+                "aot-report.json","aot/compile.txt","aot/libtlouaot.json"})
+                paths.add("tlou-aot-work-off/"+filename);
             for(String path:paths) {
                 File file=new File(c.getFilesDir(),path);if(!file.isFile())continue;
                 zip.putNextEntry(new ZipEntry(path));

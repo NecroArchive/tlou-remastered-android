@@ -255,7 +255,7 @@ final class PortSettings {
         String r=p.getString("resolution","original"), limit=fpsLimit(context);
         String res=r.equals("original")?"Original":r+"p";
         return res+"  ·  "+(limit+" FPS")+"  ·  "+
-            (p.getBoolean("fps_unlock",false)?"VSync OFF (desbloqueio)":
+            (p.getBoolean("fps_unlock",false)?TlouLanguage.t(context,"VSync OFF (desbloqueio)"):
              p.getBoolean("vsync",true)?"VSync ON":"VSync OFF");
     }
 }

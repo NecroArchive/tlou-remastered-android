@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/tlou-tso-off-host-copy-original-signer-apk.yml'
       - 'gow3_pc/gpu/shim/vk_driver_loader.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_compute_pipeline.cpp'
       - 'gow3_pc/tests/test_tlou_qualcomm_vulkan_fallback.cpp'
       - 'android/tlou_patches.py'
       - 'android/tests/test_tlou_111_optional_light_shadows.py'
@@ -299,6 +300,7 @@ jobs:
           grep -aFq 'host-copy items=' out/native-gpu/libgow3gpu.so
           grep -aFq 'GOW3_STAGING_PREWARM_BLOCKS' out/native-gpu/libgow3gpu.so
           grep -aFq 'GPU allocation failure:' out/native-gpu/libgow3gpu.so
+          grep -aFq 'Qualcomm compute recovered:' out/native-gpu/libgow3gpu.so
           grep -aFq 'SYSTEM Qualcomm driver instead' out/native-gpu/libgow3gpu.so
           cp out/native-gpu/libgow3gpu.so out/android-bionic/apk-jni/arm64-v8a/libgow3gpu.so
       - name: Generate save-selection fixtures for existing Android tests
@@ -339,6 +341,7 @@ jobs:
               assert b'GOW3_STAGING_PREWARM_BLOCKS' in new_gpu, 'A6xx staging prewarm not built into APK'
               assert b'GPU allocation failure:' in new_gpu, 'Vulkan OOM caller diagnostics missing from APK'
               assert b'SYSTEM Qualcomm driver instead' in new_gpu, 'Native system Qualcomm fallback missing from APK'
+              assert b'Qualcomm compute recovered:' in new_gpu, 'Native proprietary Qualcomm compute retry missing from APK'
               assert new_gpu!=a.read('lib/arm64-v8a/libgow3gpu.so'), 'old native GPU still packaged'
               for n in preserved:
                   if n=='lib/arm64-v8a/libgow3gpu.so': continue
@@ -365,7 +368,7 @@ jobs:
                   assert b'verify_native_variant_coverage' in aot_source, 'Incomplete patch banks could pass'
                   assert b'--variant-report' in aot_source, 'Variant count is not verified'
                   variants=tools.read('source/android/aot/patch_variants.py')
-                  assert b'PROFILE = "tlou-111-variants-v2"' in variants, 'Fixed omni-light variant catalog missing'
+                  assert b'PROFILE = "tlou-111-variants-v3"' in variants, 'Fixed omni-light variant catalog missing'
                   assert b'("720", "540", "360")' in variants, 'All game resolutions are not packaged'
                   assert b'"omni_light_shadows"' in variants and b'"spot_light_shadows"' in variants, 'ZIP28 light patches unavailable'
                   assert b'tlou-111-llvmO2-native-variants-v1' in aot_source, 'Native patch variant codegen missing'

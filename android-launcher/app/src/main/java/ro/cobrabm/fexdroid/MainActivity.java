@@ -276,6 +276,11 @@ public final class MainActivity extends Activity {
             video.addView(text("Modo Unificado padrão: jogo, interface e mira na mesma resolução. Vídeos mantêm a decodificação original.",12,MUTED));
             video.addView(text("Sincronização da geometria: Completo (único modo). "
                 +"Correção de deformações mantida sem opções que não melhoraram o FPS.",12,MUTED));
+            choice(video,"adreno750_compact_present","Apresentação Vulkan compacta (8 Gen 3)",
+                new String[]{"Automático (somente Adreno 750)","Resolução original da tela","Compactar saída (teste em qualquer GPU)"},
+                new String[]{"auto","off","on"},"auto");
+            video.addView(text("Evita ampliar 720p para a resolução física antes de enviar a imagem ao Android. "
+                +"Não muda a resolução interna nem o driver. Reinicie o jogo para comparar FPS e estabilidade.",12,MUTED));
             LinearLayout drivers=card(root,"DRIVER VULKAN");
             driverInfo=text("",12,MUTED);drivers.addView(driverInfo);
             add(drivers,"Selecionar driver Vulkan",false,this::selectDriver);

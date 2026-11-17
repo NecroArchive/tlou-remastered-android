@@ -283,9 +283,18 @@ public final class MainActivity extends Activity {
             driverInfo=text("",12,MUTED);drivers.addView(driverInfo);
             add(drivers,"Selecionar driver Vulkan",false,this::selectDriver);
             add(drivers,"Importar driver ZIP ou SO",false,()->pickFile(PICK_DRIVER));
-            drivers.addView(text("Políticas específicas de KGSL e ajustes automáticos de energia foram removidos. A escolha manual de drivers Vulkan permanece disponível.",12,MUTED));
+            toggleSetting(drivers,"gpu_turbo","Adreno Turbo (sem root)",false);
+            drivers.addView(text("Política KGSL de máximo desempenho; a proteção térmica continua ativa. Pode não funcionar em todos os dispositivos.",12,MUTED));
             LinearLayout cpu=card(root,"CPU E DESEMPENHO");
-            cpu.addView(text("Escalonamento padrão do Android, sem pinagem prime, ADPF forçado ou perfil específico de dispositivo.",12,MUTED));
+            toggleSetting(cpu,"fast_render_cores","Priorizar núcleos rápidos (experimental)",false);
+            cpu.addView(text("Não força o clock. Limita as threads críticas aos núcleos mais rápidos; reinicie o jogo para aplicar. Pode aumentar a disputa entre threads.",12,MUTED));
+            toggleSetting(cpu,"aot_gpu_prime_split_v2",
+                "AOT: usar os dois núcleos prime sem pinagem exclusiva (A/B)",false);
+            cpu.addView(text("Experimental, somente ARM64 AOT: se houver dois núcleos prime permitidos, "
+                +"permite comandos e draws em ambos os prime. Os seis workers permanecem "
+                +"com todos os núcleos disponíveis. Não habilite junto com 'Priorizar núcleos rápidos' "
+                +"no primeiro teste. Não aumenta clocks e pode piorar o FPS; reinicie o jogo.",12,MUTED));
+            toggleSetting(cpu,"adpf","ADPF — ajuste dinâmico de desempenho",false);
             choice(cpu,"cpu_backend","Processador do jogo",
                 new String[]{"ARM64 recompilado (AOT experimental)","FEX (estável)"},
                 new String[]{"aot","fex"},"fex");

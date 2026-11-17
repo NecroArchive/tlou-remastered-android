@@ -348,6 +348,28 @@ class TestBridge(unittest.TestCase):
         self.assertNotIn("--no-tso", mod.AOT_111_PERFORMANCE_FLAGS)
         self.assertNotIn("--no-callee-saved", mod.AOT_111_PERFORMANCE_FLAGS)
 
+    def test_complete_compiler_variant_report_is_mandatory(self):
+        with tempfile.TemporaryDirectory() as td:
+            report=Path(td)/"compile.txt"
+            catalog={"groups": [f"test_{i}" for i in range(11)]}
+            def write(planned, built, skipped, groups=11, touches=11):
+                report.write_text(
+                    f"variants: {groups} groups in the catalogs ({touches} touch code), "
+                    f"{planned} variants planned, {built} built (65 units, 12 only "
+                    f"in the variant), {skipped} skipped, 0 writes outside any function\n")
+            write(36,36,0)
+            result=mod.verify_native_variant_coverage(report,catalog)
+            self.assertEqual(result["groups_with_code"],11)
+            self.assertEqual(result["variants_built"],36)
+            for args in ((36,35,1,11,11),(36,36,0,11,10),
+                         (36,36,0,10,10),(8,8,0,11,11)):
+                write(*args)
+                with self.assertRaisesRegex(ValueError,"Incomplete AOT patch variants"):
+                    mod.verify_native_variant_coverage(report,catalog)
+            report.write_text("LLVM -O2 codegen; no variant proof")
+            with self.assertRaisesRegex(ValueError,"did not confirm"):
+                mod.verify_native_variant_coverage(report,catalog)
+
     def test_header_only_and_never_modify_input(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

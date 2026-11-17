@@ -167,14 +167,14 @@ def granular_risk_entries(eboot_sha: str, misses: Path | None,
         with misses.open("r", encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 match = re.match(
-                    r"^\\s*miss\\s+\\+(?:0x)?([0-9a-fA-F]+)\\b.*\\bkind=jump\\b", line)
+                    r"^\s*miss\s+\+(?:0x)?([0-9a-fA-F]+)\b.*\bkind=jump\b", line)
                 if not match:
                     continue
                 risk.add(int(match.group(1), 16))
-                context = re.search(r"\\bbacktrace=([^\\s]+)", line)
+                context = re.search(r"\bbacktrace=([^\s]+)", line)
                 if context:
                     for frame in context.group(1).split(",")[:12]:
-                        match_frame = re.fullmatch(r"\\+(?:0x)?([0-9a-fA-F]+)", frame)
+                        match_frame = re.fullmatch(r"\+(?:0x)?([0-9a-fA-F]+)", frame)
                         if match_frame:
                             risk.add(int(match_frame.group(1), 16))
     return sorted(value for value in risk if 0x1000 <= value < image_size)
@@ -185,7 +185,7 @@ def prepare_granular_risk_file(boot: Path, eboot_sha: str, misses: Path | None,
     hints = granular_risk_entries(eboot_sha, misses, check_boot(boot)["size"])
     if hints:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text("".join(f"+0x{value:x}\\n" for value in hints),
+        destination.write_text("".join(f"+0x{value:x}\n" for value in hints),
                                encoding="ascii")
     else:
         destination.unlink(missing_ok=True)

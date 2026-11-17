@@ -699,7 +699,7 @@ def main(argv=None):
                   "effective_game": str(game), "eboot_sha256": sha256(game / "eboot.bin"),
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),
                   "native_patch_profile": (
-                      "tlou-111-variants-v1" if variant_info
+                      variant_info["profile"] if variant_info
                       else "tlou-111-animation-guard-v1" if native_patches else ""),
                   "variant_catalog": variant_info,
                   "native_patches": native_patches,

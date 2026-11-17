@@ -245,6 +245,13 @@ def prepare_native_animation_patch(boot: Path, self_digest: str,
     else:
         groups = module.base_patches_for(options, "01.11")
         groups.update(module.selected_options(options, "01.11", self_digest))
+        # Generic 1.11 AOT job-worker idle-loop optimization. This is not
+        # selected by GPU/SoC/device identity; keep the existing codegen and
+        # launch compatibility unchanged while expanding jump coverage.
+        if options.get("job_sleep", True):
+            groups["native-job-idle-backoff"] = [
+                (0xC87D71, "483de8030000", "483d80000000"),
+            ]
         if "invalid-animation-output-pointer" not in groups:
             raise ValueError("Required native animation guard was disabled")
     cave = groups["invalid-animation-output-pointer"]

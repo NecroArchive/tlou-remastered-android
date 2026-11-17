@@ -18,7 +18,7 @@ EFFECTS = ("ssao", "motion_blur", "depth_of_field", "bloom",
            "sunlight_shadows", "subsurface", "omni_light_shadows",
            "spot_light_shadows")
 RESOLUTIONS = ("720", "540", "360")
-PROFILE = "tlou-111-variants-v1"
+PROFILE = "tlou-111-variants-v2"  # Omni now preserves nonshadowed local illumination.
 
 
 def load_patches():

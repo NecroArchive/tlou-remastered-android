@@ -383,7 +383,14 @@ public final class GameActivity extends Activity {
             } catch(RuntimeException e) {
                 RunLog.write(this,"RAM class unavailable: keeping the normal GPU budgets");
             }
-            String memoryProfile=TlouDevicePolicy.configureMemory(env,totalRam);
+            String memoryRenderer="";
+            if(TlouDevicePolicy.isEightGiBClass(totalRam)) {
+                try {memoryRenderer=BuiltinDrivers.renderer();}
+                catch(Throwable detectionFailure) {
+                    RunLog.write(this,"GPU memory-profile renderer detection failed: "+detectionFailure);
+                }
+            }
+            String memoryProfile=TlouDevicePolicy.configureMemory(env,totalRam,memoryRenderer);
             RunLog.write(this,"GPU memory policy="+memoryProfile+
                 " • physical="+(totalRam/(1024L*1024L))+" MiB"+
                 " • stream="+env.getOrDefault("GOW3_STREAM_MB","512")+" MiB"+

@@ -90,10 +90,10 @@ final class RuntimeAot {
      * A missing AOT report is handled by the existing full prepare validator.
      */
     static boolean hasCompleteVariantCatalog(JSONObject source) {
-        if(!"tlou-111-variants-v1".equals(source.optString("native_patch_profile")))
+        if(!"tlou-111-variants-v2".equals(source.optString("native_patch_profile")))
             return false;
         JSONObject variants=source.optJSONObject("variant_catalog");
-        if(variants==null || !"tlou-111-variants-v1".equals(variants.optString("profile"))
+        if(variants==null || !"tlou-111-variants-v2".equals(variants.optString("profile"))
                 || variants.optString("sha256").length()!=64)
             return false;
         JSONArray groups=variants.optJSONArray("groups");

@@ -25,8 +25,11 @@ def native_guest_flags(profile: str) -> tuple[str, ...]:
 # Keep --tso and fiber ABI safeguards. The verified PS4 1.11 native image has
 # all static patches built in, --no-game-hooks, and no runtime x86 patch writes.
 # The pinned compiler explicitly supports -O2 and --no-dirty-check.
-AOT_111_PERFORMANCE_FLAGS = ("-O2", "--no-dirty-check")
-AOT_111_PERFORMANCE_PROFILE = "tlou-111-static-llvmO2-immutable-v1"
+# Native patches are stored as alternatives of affected functions. Their
+# original entry checks are REQUIRED for bb-recomp variant redirection.
+# Keep LLVM -O2; never use --no-dirty-check with --variants.
+AOT_111_PERFORMANCE_FLAGS = ("-O2",)
+AOT_111_PERFORMANCE_PROFILE = "tlou-111-llvmO2-native-variants-v1"
 
 import argparse
 import hashlib
@@ -244,7 +247,8 @@ def prepare_extra_entries(boot: Path, eboot_sha: str, misses: Path | None,
 
 def prepare_native_animation_patch(boot: Path, self_digest: str,
                                    output: Path,
-                                   options: dict | None = None) -> list[str]:
+                                   options: dict | None = None,
+                                   catalog_mode: bool = False) -> list[str]:
     """Compile fully byte-verified 1.11 patches into an isolated native image.
 
     Unspecified options retain the legacy animation-only mode for compatibility
@@ -271,8 +275,16 @@ def prepare_native_animation_patch(boot: Path, self_digest: str,
         groups = {"invalid-animation-output-pointer":
                   module.BASE_PATCHES_111["invalid-animation-output-pointer"]}
     else:
-        groups = module.base_patches_for(options, "01.11")
-        groups.update(module.selected_options(options, "01.11", self_digest))
+        # On the variant path compile only mandatory stability patches into
+        # the baseline. Every resolution and visual effect (including OFF)
+        # must remain selectable without retranslating other game functions.
+        # Validating selected options here is useful, but NEVER bake those
+        # optional options into the AOT image.
+        module.selected_options(options, "01.11", self_digest)
+        baseline = {"job_sleep": True} if catalog_mode else options
+        groups = module.base_patches_for(baseline, "01.11")
+        if not catalog_mode:
+            groups.update(module.selected_options(options, "01.11", self_digest))
         # Generic 1.11 AOT job-worker idle-loop optimization. This is not
         # selected by GPU/SoC/device identity; keep the existing codegen and
         # launch compatibility unchanged while expanding jump coverage.
@@ -591,8 +603,20 @@ def main(argv=None):
             native_options = json.loads(args.options.read_text(encoding="utf-8"))
             if not isinstance(native_options, dict):
                 raise ValueError("Native patch options must be a JSON object")
+        # Single library, all user-selectable patches compiled as variants.
+        # Do not put any optional visual/resolution byte changes into the
+        # baseline image; otherwise the 'off' version cannot be selected.
+        catalog_mode = version == "1.11" and native_options is not None
         native_patches = prepare_native_animation_patch(
-            boot, digest, native_boot, native_options)
+            boot, digest, native_boot, native_options, catalog_mode=catalog_mode)
+        variant_info = None
+        if catalog_mode:
+            try:
+                from .patch_variants import create_catalog
+            except ImportError:
+                from patch_variants import create_catalog
+            variant_info = create_catalog(
+                native_boot, digest, out / "aot" / "tlou-111-all-variants.txt")
         staged = stage_boot(native_boot if native_patches else boot, out / "bb-prepared")
         aot = out / "aot"
         aot.mkdir(exist_ok=True)
@@ -615,6 +639,10 @@ def main(argv=None):
                    "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]
+        if variant_info:
+            command += ["--variants", variant_info["catalog"]]
+            if "--no-dirty-check" in command:
+                raise ValueError("Native patch variants require dirty-entry checks")
         # All 11 entries of the verified 1.11 scheduler switch are seeded at
         # once. This avoids repeated full recompilation as new cases execute.
         seed_file = aot / "verified-extra-entries.txt"
@@ -643,14 +671,17 @@ def main(argv=None):
                   "effective_game": str(game), "eboot_sha256": sha256(game / "eboot.bin"),
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),
                   "native_patch_profile": (
-                      "tlou-111-static-v2" if native_options is not None and native_patches
+                      "tlou-111-variants-v1" if variant_info
                       else "tlou-111-animation-guard-v1" if native_patches else ""),
+                  "variant_catalog": variant_info,
                   "native_patches": native_patches,
                   "native_patch_options": native_options,
                   "native_codegen_profile": AOT_111_PERFORMANCE_PROFILE if fast_111 else "conservative-O1",
                   "native_codegen_flags": list(cpu_flags),
-                  "runtime_code_immutable": bool(fast_111),
-                  "runtime_patch_contract": "static-patches;--no-game-hooks;--patches-disabled" if fast_111 else "checks-enabled",
+                  "runtime_code_immutable": not bool(variant_info),
+                  "runtime_patch_contract": (
+                      "native-variants;--no-game-hooks;--patches-at-launch"
+                      if variant_info else "checks-enabled"),
                   "native_boot_sha256": sha256(native_boot) if native_patches else "",
                   "native_patch_entries": [f"+0x{x:x}" for x in patch_entries],
                   "verified_executable_bytes": verified_code_bytes,

@@ -161,32 +161,28 @@ PERFORMANCE_EFFECTS_111 = {
         (0xA9250A, "0f840c060000", "e90d06000090"),
         (0xA92500, "488b0080b8942e0000000f840c060000", None),
     ],
-    # Optional 01.11 light-category overrides, OFF by default. The original
-    # spot patch only cleared the "shadowed spotlights" category, causing
-    # illuminated spotlights to vanish in actual gameplay (2026-11-17 user
-    # screenshots). The adjacent "unshadowed spotlights" consumer must also
-    # be enabled when shadowed spotlights are disabled. DO NOT write to the
-    # render-state object globally: change only AL at its two read sites and
-    # preserve the following original light-dispatch branches. This is the
-    # spotlight LIGHT-CATEGORY fallback, not proven shadow-map suppression:
-    # compare both lighting and shadow projection visually on the device.
-    # Original opcode guards verified on both supplied 01.11 SELF hashes.
-    # The render-state base at 0xA638C4 is 0x181A770.
-    # Omni needs the same paired category fallback as spot: simply clearing
-    # shadowed omni lights drops the whole local light when the nonshadowed
-    # consumer is disabled. Override AL at the two adjacent reads only.
-    # This preserves an unshadowed omni LIGHT path; actual shadow removal
-    # still requires on-device image comparison (not a blanket lighting OFF).
+    # Optional 01.11 light-category overrides, OFF by default.
+    # Real 01.11 disassembly (supplied eboot SHA 3cfa475f..., SELF file offsets
+    # = guest patch offset + 0xAC90) proves the previous "mov al,0" approach
+    # discarded the ENTIRE light: TEST AL; JE skip-all comes immediately
+    # after the shadowed consumer. Enabling the adjacent unshadowed flag
+    # cannot recover the skipped light (reported black scene, 2026-11-17).
+    # Instead set each per-light *classification* to zero before its category
+    # branch. This reaches the nonshadowed consumer and passes kind=0 to the
+    # light-output allocator. Preserve the render-state/shadow consumers and
+    # all following lighting arithmetic; never globally alter light objects.
+    # NOTE: structural fix validated against actual SELF bytes, not yet
+    # proven to remove every projected shadow in gameplay.
     "omni_light_shadows": [
-        (0xA638C4, "4c8d25a56edb00", None),  # lea r12,[rip+render-state]
-        (0xA63BBA, "418a84244d010000", "30c0" + "90"*6),  # shadow category +0x14d
-        (0xA63BCA, "418a84244f010000", "b001" + "90"*6),  # enable no-shadow omni LIGHT path +0x14f
+        (0xA638C4, "4c8d25a56edb00", None),  # r12=render-state anchor
+        (0xA63BB6, "84c9", "30c9"),  # TEST CL,CL -> XOR CL,CL; branch to no-shadow; EDX=0
+        (0xA63BCA, "418a84244f010000", "b001" + "90"*6),  # no-shadow category enabled
     ],
     "spot_light_shadows": [
-        (0xA6445F, "418a84244e010000", "30c0" + "90"*6),  # spot shadow +0x14e
-        (0xA6446F, "418a842450010000", "b001" + "90"*6),  # enable no-shadow spot LIGHT path
-        (0xA652A4, "418a84244e010000", "30c0" + "90"*6),  # second shadow consumer
-        (0xA652B8, "418a842450010000", "b001" + "90"*6),  # enable second no-shadow spot LIGHT path
+        (0xA6445A, "4584ed", "4530ed"),  # TEST R13B,R13B -> XOR R13B,R13B
+        (0xA6446F, "418a842450010000", "b001" + "90"*6),  # no-shadow spot path #1
+        (0xA652A0, "85d2", "31d2"),  # TEST EDX,EDX -> XOR EDX,EDX; bypass shadow route
+        (0xA652B8, "418a842450010000", "b001" + "90"*6),  # no-shadow spot path #2
     ],
 }
 

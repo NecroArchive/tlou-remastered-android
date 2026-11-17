@@ -15,7 +15,7 @@ SHADOWS={
     "omni_light_shadows": (0xA63BBA,),
     "spot_light_shadows": (0xA6445F,0xA652A4),
 }
-NEIGHBORS={
+NONSHADOW_LIGHT_CONSUMERS={
     "omni_light_shadows": {0xA63BCA:"418a84244f010000"},
     "spot_light_shadows": {
         0xA6446F:"418a842450010000",
@@ -33,7 +33,7 @@ class OptionalLightShadows111(unittest.TestCase):
                 self.assertEqual(p.selected_options({name:True},"01.11",digest)["disable-"+name],expected)
             self.assertTrue(any(new is not None for _,_,new in expected))
 
-    def test_consumer_reads_forced_off_nonshadow_routes_left_untouched(self):
+    def test_shadowed_consumer_off_and_unshadowed_light_enabled(self):
         for name,consumers in SHADOWS.items():
             instructions={at:(before,after) for at,before,after in p.PERFORMANCE_EFFECTS_111[name]}
             for at in consumers:
@@ -41,8 +41,14 @@ class OptionalLightShadows111(unittest.TestCase):
                 self.assertTrue(old.startswith("418a8424"))
                 self.assertEqual(new, "30c0" + "90"*6)
                 self.assertEqual(len(bytes.fromhex(old)),len(bytes.fromhex(new)))
-            for at,original in NEIGHBORS[name].items():
-                self.assertEqual(instructions[at],(original,None))
+            # Muting only the shadowed-light category removed all local
+            # illumination in gameplay. Make the corresponding nonshadowed
+            # category active at each read, including both spotlight paths.
+            for at,original in NONSHADOW_LIGHT_CONSUMERS[name].items():
+                old,new=instructions[at]
+                self.assertEqual(old,original)
+                self.assertEqual(new,"b001"+"90"*6)
+                self.assertEqual(len(bytes.fromhex(old)),len(bytes.fromhex(new)))
         self.assertEqual(p.PERFORMANCE_EFFECTS_111["omni_light_shadows"][0],
             (0xA638C4,"4c8d25a56edb00",None))
 

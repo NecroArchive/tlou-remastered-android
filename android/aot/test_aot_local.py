@@ -332,14 +332,12 @@ class TestBridge(unittest.TestCase):
         self.assertNotIn("--flags-at-calls", mod.NATIVE_FIBER_CPU_FLAGS)
 
     def test_native_fast_codegen_profile_preserves_memory_order_and_fibers(self):
-        # In AOT the 1.11 game image is compiled with all static patches
-        # already applied. Runtime hook installation and x86 executable patch
-        # writes are disabled by GameActivity --no-game-hooks.
-        self.assertEqual(
-            mod.AOT_111_PERFORMANCE_FLAGS,
-            ("-O2", "--no-dirty-check"))
+        # Native variants keep the 1.11 guest code at LLVM -O2, but
+        # dirty-entry checks are REQUIRED for reselecting compiled variants
+        # without JIT or repeated whole-image recompilation.
+        self.assertEqual(mod.AOT_111_PERFORMANCE_FLAGS, ("-O2",))
         self.assertEqual(mod.AOT_111_PERFORMANCE_PROFILE,
-                         "tlou-111-static-llvmO2-immutable-v1")
+                         "tlou-111-llvmO2-native-variants-v1")
         self.assertEqual(
             mod.NATIVE_FIBER_CPU_FLAGS,
             ("--tso", "--resume-entries", "--no-callee-saved"))

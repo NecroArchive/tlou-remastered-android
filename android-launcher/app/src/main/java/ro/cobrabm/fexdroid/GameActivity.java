@@ -1,6 +1,7 @@
 package ro.cobrabm.fexdroid;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
@@ -362,6 +363,25 @@ public final class GameActivity extends Activity {
             env.put("GOW3_FSR1","0");
             env.put("GOW3_RCAS","0");
             PortSettings.environment(this,env,nativeAot==null?null:nativeAot.compiledResolution);
+            // Use the physical RAM class only for launch-time cache retention.
+            // Never shrink the emulated PS4 direct-memory pool: it is sparsely
+            // mapped, and changing its size breaks the guest memory contract.
+            long totalRam=0;
+            try {
+                ActivityManager manager=(ActivityManager)getSystemService(ACTIVITY_SERVICE);
+                if(manager!=null) {
+                    ActivityManager.MemoryInfo info=new ActivityManager.MemoryInfo();
+                    manager.getMemoryInfo(info);
+                    totalRam=info.totalMem;
+                }
+            } catch(RuntimeException e) {
+                RunLog.write(this,"RAM class unavailable: keeping the normal GPU budgets");
+            }
+            String memoryProfile=TlouDevicePolicy.configureMemory(env,totalRam);
+            RunLog.write(this,"GPU memory policy="+memoryProfile+
+                " • physical="+(totalRam/(1024L*1024L))+" MiB"+
+                " • stream="+env.getOrDefault("GOW3_STREAM_MB","512")+" MiB"+
+                " • staging-retain="+env.getOrDefault("GOW3_STAGING_KEEP_MB","512")+" MiB");
             if(nativeAot!=null && !nativeAot.pendingCodePatches.isEmpty())
                 RunLog.write(this,"AOT: configurações pendentes="+nativeAot.pendingCodePatches+
                     "; renderizador sincronizado com o perfil ARM64 compilado.");
@@ -404,6 +424,19 @@ public final class GameActivity extends Activity {
                 env.put("GOW3_VULKAN_DRIVER",custom.getAbsolutePath());
                 env.put("LD_LIBRARY_PATH",custom.getParent()+":"+cpuLibraryPath);
             }
+            String ubwcMode=PortSettings.prefs(this)
+                .getString("turnip_ubwc_hint_mode","auto");
+            String eglRenderer="";
+            if(!"off".equals(ubwcMode) && env.containsKey("GOW3_VULKAN_DRIVER")) {
+                try { eglRenderer=BuiltinDrivers.renderer(); }
+                catch(Throwable e) { RunLog.write(this,"GPU renderer detection failed: "+e); }
+            }
+            String ubwcStatus=TlouDevicePolicy.configureUbwcHint(
+                env,ubwcMode,eglRenderer,env.get("GOW3_VULKAN_DRIVER"),
+                PortSettings.prefs(this).getString("driver_name",""));
+            RunLog.write(this,"Turnip UBWC compositor hint="+ubwcStatus+
+                " • EGL="+eglRenderer+" • driver="+
+                env.getOrDefault("GOW3_VULKAN_DRIVER","system"));
             builder.directory(app0);
             builder.redirectErrorStream(true);
             builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));

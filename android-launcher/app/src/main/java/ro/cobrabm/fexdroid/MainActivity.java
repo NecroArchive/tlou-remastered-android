@@ -283,6 +283,12 @@ public final class MainActivity extends Activity {
             driverInfo=text("",12,MUTED);drivers.addView(driverInfo);
             add(drivers,"Selecionar driver Vulkan",false,this::selectDriver);
             add(drivers,"Importar driver ZIP ou SO",false,()->pickFile(PICK_DRIVER));
+            choice(drivers,"turnip_ubwc_hint_mode",
+                "Correção UBWC do Turnip (tela/DeX)",
+                new String[]{"Automático (somente Adreno 740)","Forçar para Turnip (teste)","Desativado"},
+                new String[]{"auto","on","off"},"auto");
+            drivers.addView(text("Corrige possível piscada e quadros pretos com controles/DeX no Snapdragon 8 Gen 2. "
+                +"Não altera o driver do sistema; A6xx fica inalterada no automático.",12,MUTED));
             toggleSetting(drivers,"gpu_turbo","Adreno Turbo (sem root)",false);
             drivers.addView(text("Política KGSL de máximo desempenho; a proteção térmica continua ativa. Pode não funcionar em todos os dispositivos.",12,MUTED));
             LinearLayout cpu=card(root,"CPU E DESEMPENHO");

@@ -541,16 +541,16 @@ def verify_native_variant_coverage(stats: Path, catalog: dict) -> dict:
     variant catalog must not silently launch with missing visual patches.
     """
     report = stats.read_text(encoding="utf-8", errors="replace")
-    pattern = (r"variants:\\s+(\\d+)\\s+groups in the catalogs\\s+"
-               r"\\((\\d+)\\s+touch code\\),\\s+(\\d+)\\s+variants planned,\\s+"
-               r"(\\d+)\\s+built\\s+\\([^)]*\\),\\s+(\\d+)\\s+skipped,")
+    pattern = (r"variants:\s+(\d+)\s+groups in the catalogs\s+"
+               r"\((\d+)\s+touch code\),\s+(\d+)\s+variants planned,\s+"
+               r"(\d+)\s+built\s+\([^)]*\),\s+(\d+)\s+skipped,")
     found = re.search(pattern, report)
     if not found:
         raise ValueError("Compiler did not confirm complete native patch variants")
     declared, touches, planned, built, skipped = map(int, found.groups())
     required = len(catalog["groups"])
-    if declared != required or touches != required or planned < required or \\
-            built != planned or skipped:
+    if (declared != required or touches != required or planned < required
+            or built != planned or skipped):
         raise ValueError(
             f"Incomplete AOT patch variants: {touches}/{required} groups, "
             f"{built}/{planned} functions, {skipped} skipped; refusing build")

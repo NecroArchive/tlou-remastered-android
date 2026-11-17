@@ -257,11 +257,11 @@ class TestBridge(unittest.TestCase):
             misses=root / "aot-misses.log"
             misses.write_text(
                 "miss +0x1bf55b kind=jump thread=NdJobWorkerThre "
-                "backtrace=+0x1bf38a,+0xb4e33,+0xc88f73,+0xc6a088\\n"
-                "miss +0x553c82 kind=jump backtrace=+0x5115b3,+0x511a58\\n"
-                "outside 0xffffffffffffffff kind=outside\\n"
-                "miss +0xffffffffffffffff kind=jump backtrace=+0xffffffffffffffff\\n"
-                "miss +0x2bbbbb kind=call backtrace=+0x2aaaaa\\n",
+                "backtrace=+0x1bf38a,+0xb4e33,+0xc88f73,+0xc6a088\n"
+                "miss +0x553c82 kind=jump backtrace=+0x5115b3,+0x511a58\n"
+                "outside 0xffffffffffffffff kind=outside\n"
+                "miss +0xffffffffffffffff kind=jump backtrace=+0xffffffffffffffff\n"
+                "miss +0x2bbbbb kind=call backtrace=+0x2aaaaa\n",
                 encoding="ascii")
             risk = mod.granular_risk_entries(mod.TLOU_111_SWITCH_SHA256,
                                             misses, 0x2000000)

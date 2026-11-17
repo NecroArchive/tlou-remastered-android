@@ -1,4 +1,4 @@
-name: TLOU AOT Verified 1.11 Worker Hotspot Coverage - Original Signer
+name: TLOU AOT 8GB A6xx UBWC Device Compatibility - Original Signer
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: '13193de01286c7728acac7cea60f28bf5b3709c3'
+          ref: '38df4c48c027791d84018d9170ad97cfd179baf3'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -75,6 +75,10 @@ jobs:
           python3 android/aot/test_tso_outlined.py -v
           python3 android/bionic/test_multi_tso_packaging.py -v
           python3 android/aot/test_no_tso_profile.py -v
+          javac -d /tmp/tlou-device-policy-test \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouDevicePolicy.java \
+            android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouDevicePolicyTest.java
+          java -cp /tmp/tlou-device-policy-test ro.cobrabm.fexdroid.TlouDevicePolicyTest
           cc -std=gnu11 -O2 -pthread -Wall -Wextra -Werror gow3_pc/tests/test_android_cpu_policy.c -o /tmp/tlou-test-cpu-placement
           /tmp/tlou-test-cpu-placement
           c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_readback_watch_gate.cpp -o /tmp/tlou-test-readback-gate
@@ -239,6 +243,15 @@ jobs:
         run: python3 gow3_pc/tests/test_android_save_choice.py
       - name: Build standalone signed debug APK for local AOT compiler testing
         run: gradle -p android-launcher :app:assembleDebug :app:testDebugUnitTest --no-daemon --max-workers=2
+      - name: Verify Adreno740 UBWC, A6xx isolation and 8 GB native policy source before APK signing
+        run: |
+          set -euo pipefail
+          grep -Fq 'TlouDevicePolicy.configureUbwcHint' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'TlouDevicePolicy.configureMemory' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'turnip_ubwc_hint_mode' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          grep -Fq 'GOW3_STREAM_MB' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouDevicePolicy.java
+          grep -Fq 'GOW3_STAGING_KEEP_MB' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouDevicePolicy.java
+          grep -Fq 'GOW3_RESIDENCY_CHUNKS' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouDevicePolicy.java
       - name: Verify signed APK, unchanged FEX/CPU and ACTUAL newly built GPU
         run: |
           set -euo pipefail
@@ -299,6 +312,8 @@ jobs:
                   assert b'TLOU_111_WORKER_JUMP_HOTSPOTS' in aot_source, 'ZIP 27 regional granular coverage missing'
                   assert b'TLOU_111_WORKER_JUMP_HOTSPOT_STEP = 1' in aot_source, 'Sparse jump coverage can miss short worker functions'
                   assert b'0x1C28AD' in aot_source, 'ZIP27 missed native entry not seeded'
+                  assert b'select_compile_workers' in aot_source, 'low RAM AOT worker cap missing'
+                  assert b'TLOU_111_WORKER_JUMP_HOTSPOT_STEP = 1' in aot_source, 'complete AOT worker target coverage missing'
                   assert b'--tso-profile' in aot_source, 'AOT relaxed TSO selection missing'
                   assert b'guest_flags = native_guest_flags(args.tso_profile)' in aot_source, 'AOT TSO switching is not wired'
                   assert b'relaxed_ARM64_no_TSO_UNSAFE' in aot_source, 'AOT relaxed memory model not identified'
@@ -307,7 +322,7 @@ jobs:
       - name: Publish installable experimental APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v011-AOT-WORKER-HOTSPOT-COVERAGE-APK
+          name: TLOU-v011-8GB-A6xx-UBWC-Compatibility-APK
           path: android-launcher/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload diagnostics when compilation fails

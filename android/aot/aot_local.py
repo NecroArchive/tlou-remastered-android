@@ -66,17 +66,36 @@ TLOU_111_SECOND_SWITCH_SLOTS = 4
 TLOU_111_SECOND_SWITCH_SIGNATURE_LEN = 23
 TLOU_111_SECOND_SWITCH_SIGNATURE_SHA256 = "3e712ef08edbc99750546e5d47589b1145bf67d957605d1ffef7680c8a3d106e"
 
-# Observed real NdJobWorkerThre jump misses in the user's 01.11 log 24,
-# restricted to the exact verified CUSA00552 binary (3cfa... SHA).
-# Cover both 0x553cxx branches in one compilation, not one rebuild per miss.
-TLOU_111_WORKER_JUMP_TARGETS = (0x1BF55B, 0x553C14, 0x553C82, 0xA2125E)
+# Verified NdJobWorkerThre indirect jump misses in logs 24, 26 and 27.
+# The newest +0x1c28ad was outside the 35 targeted granular hints and
+# stopped a genuine TSO-OFF recompilation after ~3m32s. The exact seed
+# must be present even without an exported misses log on a future install.
+TLOU_111_WORKER_JUMP_TARGETS = (
+    0x1BF55B, 0x1C28AD, 0x553C14, 0x553C82, 0xA2125E,
+)
 
-# Real 01.11 AOT jump caller PCs from ZIP 24/26. Selecting the enclosing
-# functions makes unvisited sibling case destinations dispatchable too.
+# Worker's unresolved indirect-branch target families. Granularizing only
+# prior target and caller functions (35 hints -> 627 granular functions)
+# missed a *different* target function just 13 KiB away in ZIP 27. Sweep
+# bounded, verified 1.11 code neighborhoods so any function with an
+# instruction in these ranges becomes granular before the next gameplay.
+# 32-byte spacing intentionally covers short helper functions; the compiler
+# deduplicates function starts. No guest byte or runtime dispatch is changed.
+# Regions are exclusive at end; ~112 KiB/3584 hints total, not --granular all.
+TLOU_111_WORKER_JUMP_HOTSPOTS = (
+    (0x1BC000, 0x1C6000),  # animation/job-worker jump family, logs 26/27
+    (0x54F000, 0x559000),  # worker +0x553c14/+0x553c82 family
+    (0xA1D000, 0xA25000),  # worker +0xa2125e family
+)
+TLOU_111_WORKER_JUMP_HOTSPOT_STEP = 0x20
+
+# Real 1.11 AOT jump caller PCs from logs 24/26/27; a true miss log
+# additionally contributes its own callers, regardless of source version.
 TLOU_111_KNOWN_INDIRECT_CALLERS = (
-    0x1BF38A, 0xB4E33, 0xB484E, 0xCCA09, 0xCDE4D, 0x2519,
-    0x5115B3, 0x511A58, 0x487D38, 0x7E06A3, 0x7E123E,
-    0xA21A20, 0xA1EA44, 0x9DB103, 0x9DBB8C,
+    0x1BF38A, 0x1BF68D, 0x1C2EF6, 0xB4E33, 0xB484E,
+    0xCCA09, 0xCDE4D, 0x2519, 0x5115B3, 0x511A58,
+    0x487D38, 0x7E06A3, 0x7E123E, 0xA21A20,
+    0xA1EA44, 0x9DB103, 0x9DBB8C,
 )
 
 
@@ -163,6 +182,13 @@ def granular_risk_entries(eboot_sha: str, misses: Path | None,
     if eboot_sha == TLOU_111_SWITCH_SHA256:
         risk.update(TLOU_111_WORKER_JUMP_TARGETS)
         risk.update(TLOU_111_KNOWN_INDIRECT_CALLERS)
+        # --granular-funcs resolves each hint to its enclosing function.
+        # A bounded address sweep also reaches other unvisited functions
+        # in each observed indirect-jump family. The compiler deduplicates
+        # them in its prepass; do not enable expensive whole-image granularity.
+        for first, last in TLOU_111_WORKER_JUMP_HOTSPOTS:
+            risk.update(range(first, min(last, image_size),
+                              TLOU_111_WORKER_JUMP_HOTSPOT_STEP))
     if misses and misses.is_file():
         with misses.open("r", encoding="utf-8", errors="replace") as stream:
             for line in stream:

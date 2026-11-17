@@ -9,6 +9,10 @@ import hashlib
 from unittest.mock import patch
 from pathlib import Path
 
+# The existing AOT CI executes this test module directly. Import the full
+# option-bank contract so every AOT check also tests all 11 patch groups.
+from test_patch_variants import AllPatchVariants
+
 spec = importlib.util.spec_from_file_location("tlou_aot_local", Path(__file__).with_name("aot_local.py"))
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
@@ -241,10 +245,68 @@ class TestBridge(unittest.TestCase):
                 seed, extra = mod.prepare_extra_entries(
                     boot, mod.TLOU_111_SWITCH_SHA256, misses, out)
                 self.assertEqual(seed, targets)
-                self.assertEqual(extra, sorted(set(targets + [0xB5A111])))
+                self.assertEqual(extra, sorted(set(
+                    targets + list(mod.TLOU_111_WORKER_JUMP_TARGETS) + [0xB5A111])))
+                self.assertIn(0x553C14, extra)
+                self.assertIn(0x553C82, extra)
+                self.assertIn(0xA2125E, extra)
+                self.assertIn(0x1BF55B, extra)
+                self.assertIn(0x1C28AD, extra)  # ZIP 27, TSO OFF
                 self.assertEqual(
                     out.read_text().splitlines(),
                     [f"+0x{x:x}" for x in extra])
+
+    def test_memory_aware_aot_workers_on_8gb_devices(self):
+        gib = 1024 ** 3
+        self.assertEqual(mod.select_compile_workers(3, 0), 3)
+        self.assertEqual(mod.select_compile_workers(3, 3 * gib), 1)
+        self.assertEqual(mod.select_compile_workers(3, 5 * gib), 2)
+        self.assertEqual(mod.select_compile_workers(3, 7 * gib), 3)
+        self.assertEqual(mod.select_compile_workers(1, 7 * gib), 1)
+        self.assertEqual(mod.select_compile_workers(2, 3 * gib), 1)
+
+    def test_granular_native_miss_hotpaths_cover_unvisited_sibling_cases(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            misses=root / "aot-misses.log"
+            misses.write_text(
+                "miss +0x1bf55b kind=jump thread=NdJobWorkerThre "
+                "backtrace=+0x1bf38a,+0xb4e33,+0xc88f73,+0xc6a088\n"
+                "miss +0x553c82 kind=jump backtrace=+0x5115b3,+0x511a58\n"
+                "outside 0xffffffffffffffff kind=outside\n"
+                "miss +0xffffffffffffffff kind=jump backtrace=+0xffffffffffffffff\n"
+                "miss +0x2bbbbb kind=call backtrace=+0x2aaaaa\n",
+                encoding="ascii")
+            risk = mod.granular_risk_entries(mod.TLOU_111_SWITCH_SHA256,
+                                            misses, 0x2000000)
+            for target in (0x1BF55B, 0x1BF38A, 0xB4E33, 0x553C82,
+                           0x5115B3, 0x511A58, 0xC88F73, 0xC6A088):
+                self.assertIn(target, risk)
+            self.assertNotIn(0xffffffffffffffff, risk)
+            self.assertNotIn(0x2aaaaa, risk)
+            # Exhaustive bounded hints select even tiny unvisited functions
+            # inside known worker families, not just prior crash PCs.
+            self.assertIn(0x1C28AD, risk)  # exact ZIP 27 crash seed
+            self.assertIn(0x1C2EF6, risk)  # new ZIP 27 caller
+            for address in (0x1BC000, 0x1C28A0, 0x1C5FE0,
+                            0x54F000, 0x553C00, 0x558FE0,
+                            0xA1D000, 0xA21240, 0xA24FE0):
+                self.assertIn(address, risk)
+            for address in (0x1C6000, 0x559000, 0xA25000,
+                            0x1D0000, 0x400000):
+                self.assertNotIn(address, risk)
+            self.assertGreaterEqual(len(risk), 114688)
+            self.assertLess(len(risk), 114850)
+            self.assertIn(0x1C28AD + 1, risk)
+            self.assertIn(0x553C14 - 1, risk)
+            truncated = mod.granular_risk_entries(
+                mod.TLOU_111_SWITCH_SHA256, None, 0x1C3000)
+            self.assertTrue(all(0x1000 <= x < 0x1C3000 for x in truncated))
+            self.assertNotIn(0x1C3000, truncated)
+            self.assertNotIn(0x2bbbbb, risk)
+            no_misses=mod.granular_risk_entries("unknown-game", None, 0x2000000)
+            self.assertEqual(no_misses, [])
+            self.assertEqual(risk, sorted(set(risk)))
 
     def test_switch_signature_mismatch_fails_early(self):
         with tempfile.TemporaryDirectory() as td:
@@ -274,19 +336,39 @@ class TestBridge(unittest.TestCase):
         self.assertNotIn("--flags-at-calls", mod.NATIVE_FIBER_CPU_FLAGS)
 
     def test_native_fast_codegen_profile_preserves_memory_order_and_fibers(self):
-        # In AOT the 1.11 game image is compiled with all static patches
-        # already applied. Runtime hook installation and x86 executable patch
-        # writes are disabled by GameActivity --no-game-hooks.
-        self.assertEqual(
-            mod.AOT_111_PERFORMANCE_FLAGS,
-            ("-O2", "--no-dirty-check"))
+        # Native variants keep the 1.11 guest code at LLVM -O2, but
+        # dirty-entry checks are REQUIRED for reselecting compiled variants
+        # without JIT or repeated whole-image recompilation.
+        self.assertEqual(mod.AOT_111_PERFORMANCE_FLAGS, ("-O2",))
         self.assertEqual(mod.AOT_111_PERFORMANCE_PROFILE,
-                         "tlou-111-static-llvmO2-immutable-v1")
+                         "tlou-111-llvmO2-native-variants-v1")
         self.assertEqual(
             mod.NATIVE_FIBER_CPU_FLAGS,
             ("--tso", "--resume-entries", "--no-callee-saved"))
         self.assertNotIn("--no-tso", mod.AOT_111_PERFORMANCE_FLAGS)
         self.assertNotIn("--no-callee-saved", mod.AOT_111_PERFORMANCE_FLAGS)
+
+    def test_complete_compiler_variant_report_is_mandatory(self):
+        with tempfile.TemporaryDirectory() as td:
+            report=Path(td)/"compile.txt"
+            catalog={"groups": [f"test_{i}" for i in range(11)]}
+            def write(planned, built, skipped, groups=11, touches=11):
+                report.write_text(
+                    f"variants: {groups} groups in the catalogs ({touches} touch code), "
+                    f"{planned} variants planned, {built} built (65 units, 12 only "
+                    f"in the variant), {skipped} skipped, 0 writes outside any function\n")
+            write(36,36,0)
+            result=mod.verify_native_variant_coverage(report,catalog)
+            self.assertEqual(result["groups_with_code"],11)
+            self.assertEqual(result["variants_built"],36)
+            for args in ((36,35,1,11,11),(36,36,0,11,10),
+                         (36,36,0,10,10),(8,8,0,11,11)):
+                write(*args)
+                with self.assertRaisesRegex(ValueError,"Incomplete AOT patch variants"):
+                    mod.verify_native_variant_coverage(report,catalog)
+            report.write_text("LLVM -O2 codegen; no variant proof")
+            with self.assertRaisesRegex(ValueError,"did not confirm"):
+                mod.verify_native_variant_coverage(report,catalog)
 
     def test_header_only_and_never_modify_input(self):
         with tempfile.TemporaryDirectory() as td:

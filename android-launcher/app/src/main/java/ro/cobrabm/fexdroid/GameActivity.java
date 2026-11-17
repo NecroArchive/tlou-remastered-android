@@ -1,6 +1,7 @@
 package ro.cobrabm.fexdroid;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
@@ -294,14 +295,20 @@ public final class GameActivity extends Activity {
                 }
             }
             File patches=new File(base,"patches.bin");
-            if(nativeAot==null && patches.isFile() && patches.length()>0) {
+            // AOT now has one native function-variant library for ALL verified
+            // effect/resolution options. Apply the selected G3PATCH2 writes
+            // before the first guest call; native guest_cpu_aot.cpp classifies
+            // changed function hashes and redirects directly to compiled
+            // alternatives. Never patch the user's original SELF or JNI .so.
+            if(patches.isFile() && patches.length()>0) {
                 args.add("--patches");
                 args.add(patches.getAbsolutePath());
-            } else if(nativeAot!=null && patches.isFile() && patches.length()>0) {
-                // The exact validated FEX patch selection has been compiled
-                // statically into the AOT guest image. --patches would rewrite
-                // it AGAIN after loading, invalidating the compiled units.
-                RunLog.write(this,"AOT: patches de estabilidade, efeitos e resolução já integrados no boot ARM64; não reaplicando patches.bin");
+                if(nativeAot!=null)RunLog.write(this,
+                    "AOT: aplicando patches da sessão via variantes ARM64; "+
+                    "resolução/efeitos alteráveis sem nova compilação.");
+            } else if(nativeAot!=null) {
+                throw new java.io.IOException(
+                    "Patches 1.11 não preparados; não iniciar uma sessão ARM64 com opções incompletas.");
             }
             ProcessBuilder builder=new ProcessBuilder(RuntimeProcess.command(args,runtimePidFile));
             Map<String,String> env=builder.environment();
@@ -339,7 +346,7 @@ public final class GameActivity extends Activity {
                 AotInstrumentation.configure(env,detailedAotStats);
                 RunLog.write(this,"AOT native: strict unit execution; misses and fault-entry logging always on; "
                         +"full per-call stats/trace="+(detailedAotStats?"ON (diagnostic, slower)":"OFF (performance)"));
-                RunLog.write(this,"TLOU AOT performance markers: all-thread monitor=ON; raw AOT stats="+detailedAotStats);
+                RunLog.write(this,"TLOU AOT performance markers: expensive thread scans="+(detailedAotStats?"ON":"OFF")+"; raw AOT stats="+detailedAotStats);
                 RunLog.write(this,"AOT native: FEX can be selected in Settings");
             }
             env.put("LD_LIBRARY_PATH",cpuLibraryPath);
@@ -361,7 +368,36 @@ public final class GameActivity extends Activity {
             env.put("GOW3_OBJECT_MOTION","0");
             env.put("GOW3_FSR1","0");
             env.put("GOW3_RCAS","0");
-            PortSettings.environment(this,env);
+            PortSettings.environment(this,env,nativeAot==null?null:nativeAot.compiledResolution);
+            // Use the physical RAM class only for launch-time cache retention.
+            // Never shrink the emulated PS4 direct-memory pool: it is sparsely
+            // mapped, and changing its size breaks the guest memory contract.
+            long totalRam=0;
+            try {
+                ActivityManager manager=(ActivityManager)getSystemService(ACTIVITY_SERVICE);
+                if(manager!=null) {
+                    ActivityManager.MemoryInfo info=new ActivityManager.MemoryInfo();
+                    manager.getMemoryInfo(info);
+                    totalRam=info.totalMem;
+                }
+            } catch(RuntimeException e) {
+                RunLog.write(this,"RAM class unavailable: keeping the normal GPU budgets");
+            }
+            String memoryRenderer="";
+            if(TlouDevicePolicy.isEightGiBClass(totalRam)) {
+                try {memoryRenderer=BuiltinDrivers.renderer();}
+                catch(Throwable detectionFailure) {
+                    RunLog.write(this,"GPU memory-profile renderer detection failed: "+detectionFailure);
+                }
+            }
+            String memoryProfile=TlouDevicePolicy.configureMemory(env,totalRam,memoryRenderer);
+            RunLog.write(this,"GPU memory policy="+memoryProfile+
+                " • physical="+(totalRam/(1024L*1024L))+" MiB"+
+                " • stream="+env.getOrDefault("GOW3_STREAM_MB","512")+" MiB"+
+                " • staging-retain="+env.getOrDefault("GOW3_STAGING_KEEP_MB","512")+" MiB");
+            if(nativeAot!=null && !nativeAot.pendingCodePatches.isEmpty())
+                RunLog.write(this,"AOT: configurações pendentes="+nativeAot.pendingCodePatches+
+                    "; renderizador sincronizado com o perfil ARM64 compilado.");
             // Repair Android 16 shell-wrapper PID publication failures without
             // polling /proc from the renderer or game workers.
             if (nativeAot!=null) {
@@ -401,6 +437,31 @@ public final class GameActivity extends Activity {
                 env.put("GOW3_VULKAN_DRIVER",custom.getAbsolutePath());
                 env.put("LD_LIBRARY_PATH",custom.getParent()+":"+cpuLibraryPath);
             }
+            String ubwcMode=PortSettings.prefs(this)
+                .getString("turnip_ubwc_hint_mode","auto");
+            String compactMode=PortSettings.prefs(this)
+                .getString("adreno750_compact_present","auto");
+            String eglRenderer="";
+            if(!"off".equals(ubwcMode) || !"off".equals(compactMode)) {
+                try { eglRenderer=BuiltinDrivers.renderer(); }
+                catch(Throwable e) { RunLog.write(this,"GPU renderer detection failed: "+e); }
+            }
+            String effectiveRaster=nativeAot!=null && nativeAot.compiledResolution!=null
+                ? nativeAot.compiledResolution
+                : PortSettings.prefs(this).getString("resolution","720");
+            String displayBefore=env.get("GOW3_SCREEN_W")+"x"+env.get("GOW3_SCREEN_H");
+            String compactStatus=TlouDevicePolicy.configureCompactPresent(
+                env,compactMode,eglRenderer,effectiveRaster);
+            RunLog.write(this,"Vulkan AHB presentation policy="+compactStatus+
+                " • source="+effectiveRaster+" • output="+displayBefore+" -> "+
+                env.get("GOW3_SCREEN_W")+"x"+env.get("GOW3_SCREEN_H")+
+                " • Android SurfaceControl keeps physical display size");
+            String ubwcStatus=TlouDevicePolicy.configureUbwcHint(
+                env,ubwcMode,eglRenderer,env.get("GOW3_VULKAN_DRIVER"),
+                PortSettings.prefs(this).getString("driver_name",""));
+            RunLog.write(this,"Turnip UBWC compositor hint="+ubwcStatus+
+                " • EGL="+eglRenderer+" • driver="+
+                env.getOrDefault("GOW3_VULKAN_DRIVER","system"));
             builder.directory(app0);
             builder.redirectErrorStream(true);
             builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
@@ -414,18 +475,21 @@ public final class GameActivity extends Activity {
             if(closing.get()){game.destroyForcibly();game.waitFor();return;}
             final String backend=nativeAot!=null?"ARM64 AOT":"FEX";
             RunLog.write(this,"Processo "+backend+" criado");
-            // Include all six game workers on their actual LITTLE/BIG cores.
-            // Previously TLOU CPU critical counted only the Vulkan threads.
-            // This 5-second /proc sampling runs in the Java launcher, NOT in
-            // any game worker or renderer hot path, and works for both modes.
-            final TlouCpuThreads threadCpu=new TlouCpuThreads(runtimePidFile,RuntimeProcess.readPid(runtimePidFile),backend,
-                    line->RunLog.write(this,line));
-            threadCpu.start();
+            // Full /proc/PID/task scans are diagnostic, not part of the FPS HUD.
+            // Avoid a second competing sampler during normal gameplay. The
+            // explicit detailed-diagnostics setting restores the old data.
+            final boolean scanThreads=PortSettings.prefs(this)
+                    .getBoolean("aot_detailed_diagnostics",false);
+            final TlouCpuThreads threadCpu=scanThreads
+                    ?new TlouCpuThreads(runtimePidFile,RuntimeProcess.readPid(runtimePidFile),backend,
+                            line->RunLog.write(this,line)):null;
+            if(threadCpu!=null)threadCpu.start();
             final int result;
             try {result=game.waitFor();}
-            finally {threadCpu.close();}
+            finally {if(threadCpu!=null)threadCpu.close();}
             RunLog.write(this,"Processo "+backend+" finalizado: código "+result);
-            if(nativeAot!=null && result!=0) {
+            if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(
+                    nativeAot!=null,result,closing.get())) {
                 // Keep the explicitly selected native backend for debugging.
                 // Avoid an endless auto-launch crash loop; FEX remains a manual option.
                 PortSettings.prefs(this).edit().putBoolean("launch_direct",false).apply();

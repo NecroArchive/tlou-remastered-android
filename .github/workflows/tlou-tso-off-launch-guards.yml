@@ -1,0 +1,67 @@
+name: TLOU TSO OFF host-copy launch policy and shutdown guards
+
+on:
+  push:
+    branches: [experiment/tlou-tso-off-host-copy-batch-20261114]
+    paths:
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java'
+      - 'android/aot/aot_local.py'
+      - 'android/aot/test_aot_local.py'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/HudTelemetry.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAotExitPolicy.java'
+      - 'android-launcher/app/src/test/java/ro/cobrabm/fexdroid/HostCopyBatchLaunchTest.java'
+      - 'android-launcher/app/src/test/java/ro/cobrabm/fexdroid/RuntimeAotExitPolicyTest.java'
+      - '.github/workflows/tlou-tso-off-launch-guards.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-launch:
+    name: Verify real TSO-off AOT environment and no false exit-143 crash
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - name: Verify AOT TSO OFF safe batching rollback and exit disposition
+        run: |
+          set -euo pipefail
+          gradle -p android-launcher :app:compileDebugJavaWithJavac :app:testDebugUnitTest \
+            --tests 'ro.cobrabm.fexdroid.HostCopyBatchLaunchTest' \
+            --tests 'ro.cobrabm.fexdroid.RuntimeAotExitPolicyTest' \
+            --tests 'ro.cobrabm.fexdroid.TsoProfileTest' \
+            --no-daemon --max-workers=2
+      - name: Verify corrected exact-binary worker entry seeds
+        run: |
+          set -euo pipefail
+          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_local.py
+          python3 android/aot/test_aot_local.py -v
+      - name: Verify GPU copy branch is isolated and no FEX changes
+        run: |
+          set -euo pipefail
+          grep -Fq 'env.put("GOW3_TLOU_HOST_COPY_BATCH","0")' \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+          grep -Fq 'if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(' \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'if(pid>0 && detailedThreadDiagnostics)sampleHotThreads(pid,nowNanos);' \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/HudTelemetry.java
+          grep -Fq 'environment(this,env,nativeAot==null?null:nativeAot.compiledResolution)' \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'if(threadCpu!=null)threadCpu.start();' \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'scheduler.RecordHostCopyItem(item)' \
+            gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp

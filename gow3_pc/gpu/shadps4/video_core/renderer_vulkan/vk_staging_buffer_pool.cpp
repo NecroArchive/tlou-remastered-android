@@ -72,7 +72,14 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
     const char* vram_env = std::getenv("GOW3_STAGING_KEEP_VRAM_MB");
     keep_vram_blocks = (vram_env ? std::strtoull(vram_env, nullptr, 10) : 32) * 1_MB / BLOCK_SIZE;
     Ring& ring = rings[u32(MemoryType::HostUncached)];
-    for (u64 i = 0; i < PREWARM_BLOCKS; ++i) {
+    // On constrained Adreno 6xx devices, the launch policy prewarms only two
+    // 16 MiB blocks. This trims idle allocations without restricting uploads:
+    // RequestFromRing still grows the ring on demand when GPU work requires it.
+    const char* prewarm_env = std::getenv("GOW3_STAGING_PREWARM_BLOCKS");
+    const u64 prewarm_blocks = prewarm_env
+        ? std::min<u64>(PREWARM_BLOCKS, std::strtoull(prewarm_env, nullptr, 10))
+        : PREWARM_BLOCKS;
+    for (u64 i = 0; i < prewarm_blocks; ++i) {
         auto& block = ring.blocks.emplace_back(Block{
             .buffer = std::make_unique<VideoCore::StreamBuffer>(
                 instance, scheduler, MemoryType::HostUncached, BLOCK_SIZE),

@@ -736,7 +736,16 @@ void BufferCache::SmallGuestCopy(const Gow3Copy::Item& item) {
         // no shader/readback coherency semantics are relaxed.
         static const bool batch = [] {
             const char* env = std::getenv("GOW3_TLOU_HOST_COPY_BATCH");
+#ifdef __ANDROID__
+            // A/B candidate for TLOU's saturated Vulkan recorder:
+            // each consecutive host copy shares one chunk command and one
+            // completion store.  Normal Vulkan commands still break the
+            // batch, and WaitHostCopies/guest-order barriers are unchanged.
+            // GOW3_TLOU_HOST_COPY_BATCH=0 restores exact previous behavior.
+            return !(env && env[0] == '0' && env[1] == 0);
+#else
             return env && env[0] == '1' && env[1] == 0;
+#endif
         }();
         if (batch) {
             scheduler.RecordHostCopyItem(item);

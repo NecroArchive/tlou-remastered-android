@@ -1,0 +1,34 @@
+name: TLOU AOT TSO v4 strict app-side version checks
+on:
+  push:
+    branches: [experiment/tlou-aot-tso-acquire-release-screen-20261114]
+    paths:
+      - '.github/workflows/tlou-aot-tso-v4-runtime-guard.yml'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java'
+      - 'android/aot/aot_local.py'
+      - 'android/aot/test_aot_quality.py'
+      - 'android/bionic/stage_aot_compiler.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run real TLOU AOT integrity and coverage tests
+        run: |
+          set -euo pipefail
+          python3 -m py_compile android/aot/aot_local.py android/aot/test_aot_quality.py
+          python3 android/aot/test_aot_quality.py -v
+          python3 android/aot/test_aot_local.py -v
+          bash -n android/bionic/stage_aot_compiler.sh
+      - name: Check runtime cannot use v3 modules with experimental v4 APK
+        run: |
+          set -euo pipefail
+          grep -q '"4-tlou-tso-aligned-ar-v1".equals(meta.optString("compiler_version"))' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java
+          grep -q 'if version not in {"3-tlou-string", "4-tlou-tso-aligned-ar-v1"}:' android/aot/aot_local.py
+          grep -q 'required_shard=' android/bionic/stage_aot_compiler.sh
+          grep -q '4-tlou-tso-aligned-ar-v1' android/bionic/stage_aot_compiler.sh
+          echo 'Experimental app: v4-only runtime validation, v3 still present in original release.'

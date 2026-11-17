@@ -22,13 +22,86 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gpu:
+    name: Build updated Vulkan GPU from the same commit as the APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TLOU_JOBS: '3'
+      TLOU_ANDROID_API: '30'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Confirm actual branch HEAD instead of old pinned source
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "Building GPU from $GITHUB_SHA"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: ci/environment.yml
+          cache-environment: true
+          init-shell: bash
+      - name: Restore Bionic dependencies and native compiler cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .local-deps/android/bionic-prefix
+            .local-deps/android/bionic-src
+            .local-deps/android/bionic-build
+            .local-deps/FEX
+            ~/.cache/ccache
+          key: tlou-bionic-arm64-v2-${{ runner.os }}-${{ hashFiles('android/bionic/build_deps.sh', 'android/bionic/build_fex.sh') }}
+          restore-keys: |
+            tlou-bionic-arm64-v2-${{ runner.os }}-
+      - name: Cross-compile updated Bionic Vulkan renderer
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          bash ci/setup-deps.sh "$CONDA_PREFIX"
+          export TLOU_BIONIC_HEADERS="$CONDA_PREFIX"
+          export TLOU_NDK="$ANDROID_HOME/ndk/29.0.14206865"
+          bash android/bionic/build_deps.sh
+          bash android/bionic/build_gpu.sh
+      - name: Verify actual A6xx fix and export SHA256 GPU
+        run: |
+          set -euo pipefail
+          mkdir -p out/native-gpu
+          cp out/android-bionic/lib/libgow3gpu.so out/native-gpu/libgow3gpu.so
+          readelf -h out/native-gpu/libgow3gpu.so | grep -E 'Machine:.*AArch64'
+          for marker in 'GOW3_STAGING_PREWARM_BLOCKS' 'GPU allocation failure:' 'host-copy items=' 'memory-waits-deferred=' 'TLOU compute buffer-only fast' 'TLOU pending word-hit'; do
+            grep -aFq "$marker" out/native-gpu/libgow3gpu.so
+          done
+          (cd out/native-gpu && sha256sum libgow3gpu.so > libgow3gpu.so.sha256 && sha256sum -c libgow3gpu.so.sha256)
+          test "$(stat -c %s out/native-gpu/libgow3gpu.so)" -gt 100000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-Current-Source-ARM64-GPU
+          path: out/native-gpu/libgow3gpu.so*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: TLOU-current-GPU-build-failure
+          path: |
+            out/android-bionic/gpu/CMakeCache.txt
+            out/android-bionic/gpu/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+
   apk:
+    needs: gpu
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: '1a89421ccaee6008da346d4a8f1057ff5c146225'
+        # Build from this branch's exact triggering commit, never an older ref.
+      - name: Confirm current source revision
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "APK source commit $GITHUB_SHA"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -182,13 +255,11 @@ jobs:
           unset TLOU_TSO_MULTI_PROFILE_DIR TLOU_TSO_ALIGNED_AR_EXPERIMENT TLOU_TSO_OUTLINE_UNALIGNED_EXPERIMENT
           bash android/bionic/stage_aot_compiler.sh
           python3 android/bionic/repackage_local_aot.py "$apk"
-      - name: Fetch GPU library compiled from current optimized renderer
+      - name: Fetch GPU library compiled from THIS source revision
         uses: actions/download-artifact@v4
         with:
-          name: TLOU-TSO-OFF-HostCopy-Batched-Real-ARM64-GPU
+          name: TLOU-Current-Source-ARM64-GPU
           path: out/native-gpu
-          run-id: '43664567994'
-          github-token: ${{ github.token }}
       - name: Replace old pinned libgow3gpu.so in AOT APK staging (keep same package and signing key)
         run: |
           set -euo pipefail
@@ -209,6 +280,8 @@ jobs:
           grep -aFq 'TLOU compute buffer-only fast' out/native-gpu/libgow3gpu.so
           grep -aFq 'TLOU pending word-hit' out/native-gpu/libgow3gpu.so
           grep -aFq 'host-copy items=' out/native-gpu/libgow3gpu.so
+          grep -aFq 'GOW3_STAGING_PREWARM_BLOCKS' out/native-gpu/libgow3gpu.so
+          grep -aFq 'GPU allocation failure:' out/native-gpu/libgow3gpu.so
           cp out/native-gpu/libgow3gpu.so out/android-bionic/apk-jni/arm64-v8a/libgow3gpu.so
       - name: Generate save-selection fixtures for existing Android tests
         run: python3 gow3_pc/tests/test_android_save_choice.py
@@ -245,6 +318,8 @@ jobs:
               assert b'TLOU compute buffer-only fast' in new_gpu, 'Native compute specialization missing from APK'
               assert b'TLOU pending word-hit' in new_gpu, 'Native pending filter missing from APK'
               assert b'host-copy items=' in new_gpu, 'Host-copy grouping diagnostics missing from APK'
+              assert b'GOW3_STAGING_PREWARM_BLOCKS' in new_gpu, 'A6xx staging prewarm not built into APK'
+              assert b'GPU allocation failure:' in new_gpu, 'Vulkan OOM caller diagnostics missing from APK'
               assert new_gpu!=a.read('lib/arm64-v8a/libgow3gpu.so'), 'old native GPU still packaged'
               for n in preserved:
                   if n=='lib/arm64-v8a/libgow3gpu.so': continue
@@ -271,7 +346,7 @@ jobs:
                   assert b'verify_native_variant_coverage' in aot_source, 'Incomplete patch banks could pass'
                   assert b'--variant-report' in aot_source, 'Variant count is not verified'
                   variants=tools.read('source/android/aot/patch_variants.py')
-                  assert b'PROFILE = "tlou-111-variants-v1"' in variants, 'All-patch catalog missing'
+                  assert b'PROFILE = "tlou-111-variants-v2"' in variants, 'Fixed omni-light variant catalog missing'
                   assert b'("720", "540", "360")' in variants, 'All game resolutions are not packaged'
                   assert b'"omni_light_shadows"' in variants and b'"spot_light_shadows"' in variants, 'ZIP28 light patches unavailable'
                   assert b'tlou-111-llvmO2-native-variants-v1' in aot_source, 'Native patch variant codegen missing'

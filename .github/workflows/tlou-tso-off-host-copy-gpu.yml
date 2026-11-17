@@ -1,0 +1,81 @@
+name: TLOU TSO OFF ARM64 Vulkan host-copy batch GPU
+on:
+  push:
+    branches: [experiment/tlou-tso-off-host-copy-batch-20261114]
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp'
+      - '.github/workflows/tlou-tso-off-host-copy-gpu.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 160
+    env:
+      TLOU_JOBS: '3'
+      TLOU_ANDROID_API: '30'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: ci/environment.yml
+          cache-environment: true
+          init-shell: bash
+      - name: Restore Bionic dependency build products
+        uses: actions/cache@v4
+        with:
+          path: |
+            .local-deps/android/bionic-prefix
+            .local-deps/android/bionic-src
+            .local-deps/android/bionic-build
+            .local-deps/FEX
+            ~/.cache/ccache
+          key: tlou-bionic-arm64-v2-${{ runner.os }}-${{ hashFiles('android/bionic/build_deps.sh', 'android/bionic/build_fex.sh') }}
+          restore-keys: |
+            tlou-bionic-arm64-v2-${{ runner.os }}-
+      - name: Compile Android ARM64 TLOU GPU using unchanged native deps
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          bash ci/setup-deps.sh "$CONDA_PREFIX"
+          export TLOU_BIONIC_HEADERS="$CONDA_PREFIX"
+          export TLOU_NDK="$ANDROID_HOME/ndk/29.0.14206865"
+          bash android/bionic/build_deps.sh
+          bash android/bionic/build_gpu.sh
+      - name: Verify real Vulkan GPU, existing renderer and new host-copy path
+        run: |
+          set -euo pipefail
+          mkdir -p out/host-copy-gpu
+          so=out/android-bionic/lib/libgow3gpu.so
+          test -s "$so"
+          readelf -h "$so" | grep -E 'Machine:.*AArch64'
+          grep -aFq 'GOW3_TLOU_HOST_COPY_BATCH' "$so"
+          grep -aFq 'host-copy items=' "$so"
+          grep -aFq 'memory-waits-deferred=' "$so"
+          grep -aFq 'TLOU compute buffer-only fast' "$so"
+          grep -aFq 'TLOU pending word-hit' "$so"
+          cp "$so" out/host-copy-gpu/libgow3gpu.so
+          (cd out/host-copy-gpu && sha256sum libgow3gpu.so > libgow3gpu.so.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-TSO-OFF-HostCopy-Batched-Real-ARM64-GPU
+          path: |
+            out/host-copy-gpu/libgow3gpu.so
+            out/host-copy-gpu/libgow3gpu.so.sha256
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: TLOU-TSO-OFF-HostCopy-Batched-GPU-Diagnostics
+          path: |
+            out/android-bionic/gpu/CMakeCache.txt
+            out/android-bionic/gpu/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore

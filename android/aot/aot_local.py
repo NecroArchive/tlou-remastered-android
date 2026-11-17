@@ -12,15 +12,28 @@ from __future__ import annotations
 # The upstream bb-recomp --resume shard key includes the calleeSaved option.
 NATIVE_FIBER_CPU_FLAGS = ("--tso", "--resume-entries", "--no-callee-saved")
 
+
+def native_guest_flags(profile: str) -> tuple[str, ...]:
+    """No-TSO is strictly opt-in; fiber and resume entry flags never change."""
+    if profile not in ("v3", "v4", "v5", "off"):
+        raise ValueError("Unrecognized TSO lowering profile")
+    return tuple(f for f in NATIVE_FIBER_CPU_FLAGS
+                 if profile != "off" or f != "--tso")
+
+
 # AOT vs FEX gameplay (logs 28/29): six workers 3.00 vs 2.52 CPU cores.
 # Keep --tso and fiber ABI safeguards. The verified PS4 1.11 native image has
 # all static patches built in, --no-game-hooks, and no runtime x86 patch writes.
 # The pinned compiler explicitly supports -O2 and --no-dirty-check.
-AOT_111_PERFORMANCE_FLAGS = ("-O2", "--no-dirty-check")
-AOT_111_PERFORMANCE_PROFILE = "tlou-111-static-llvmO2-immutable-v1"
+# Native patches are stored as alternatives of affected functions. Their
+# original entry checks are REQUIRED for bb-recomp variant redirection.
+# Keep LLVM -O2; never use --no-dirty-check with --variants.
+AOT_111_PERFORMANCE_FLAGS = ("-O2",)
+AOT_111_PERFORMANCE_PROFILE = "tlou-111-llvmO2-native-variants-v1"
 
 import argparse
 import hashlib
+import re
 import json
 import os
 from pathlib import Path
@@ -56,6 +69,41 @@ TLOU_111_SECOND_SWITCH_TABLE = 0x11562B0
 TLOU_111_SECOND_SWITCH_SLOTS = 4
 TLOU_111_SECOND_SWITCH_SIGNATURE_LEN = 23
 TLOU_111_SECOND_SWITCH_SIGNATURE_SHA256 = "3e712ef08edbc99750546e5d47589b1145bf67d957605d1ffef7680c8a3d106e"
+
+# Verified NdJobWorkerThre indirect jump misses in logs 24, 26 and 27.
+# The newest +0x1c28ad was outside the 35 targeted granular hints and
+# stopped a genuine TSO-OFF recompilation after ~3m32s. The exact seed
+# must be present even without an exported misses log on a future install.
+TLOU_111_WORKER_JUMP_TARGETS = (
+    0x1BF55B, 0x1C28AD, 0x553C14, 0x553C82, 0xA2125E,
+)
+
+# Worker's unresolved indirect-branch target families. Granularizing only
+# prior target and caller functions (35 hints -> 627 granular functions)
+# missed a *different* target function just 13 KiB away in ZIP 27. Sweep
+# bounded, verified 1.11 code neighborhoods so any function with an
+# instruction in these ranges becomes granular before the next gameplay.
+# Every image offset in each bounded region is passed to --granular-funcs;
+# the compiler maps offsets to enclosing functions and deduplicates starts.
+# Unlike sampling every 32 bytes this also catches very short functions.
+# Regions are exclusive at end: 112 KiB/114688 selectors total, NOT the
+# whole executable. This changes code generation only, not runtime logging.
+TLOU_111_WORKER_JUMP_HOTSPOTS = (
+    (0x1BC000, 0x1C6000),  # animation/job-worker jump family, logs 26/27
+    (0x54F000, 0x559000),  # worker +0x553c14/+0x553c82 family
+    (0xA1D000, 0xA25000),  # worker +0xa2125e family
+)
+TLOU_111_WORKER_JUMP_HOTSPOT_STEP = 1
+
+# Real 1.11 AOT jump caller PCs from logs 24/26/27; a true miss log
+# additionally contributes its own callers, regardless of source version.
+TLOU_111_KNOWN_INDIRECT_CALLERS = (
+    0x1BF38A, 0x1BF68D, 0x1C2EF6, 0xB4E33, 0xB484E,
+    0xCCA09, 0xCDE4D, 0x2519, 0x5115B3, 0x511A58,
+    0x487D38, 0x7E06A3, 0x7E123E, 0xA21A20,
+    0xA1EA44, 0x9DB103, 0x9DBB8C,
+)
+
 
 
 def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
@@ -126,11 +174,66 @@ def verified_miss_entries(path: Path | None, image_size: int) -> list[int]:
     return sorted(found)
 
 
+def granular_risk_entries(eboot_sha: str, misses: Path | None,
+                          image_size: int) -> list[int]:
+    """Cover entire functions implicated by saved AOT indirect jump misses.
+
+    Exact extra entries fix only the missed target. --granular-funcs emits
+    native entry points at every decoded instruction boundary inside the
+    enclosing source/target functions, protecting against unseen sibling
+    cases. The prepass is compile-time only, not runtime instrumentation.
+    """
+    import re
+    risk = set()
+    if eboot_sha == TLOU_111_SWITCH_SHA256:
+        risk.update(TLOU_111_WORKER_JUMP_TARGETS)
+        risk.update(TLOU_111_KNOWN_INDIRECT_CALLERS)
+        # --granular-funcs resolves each hint to its enclosing function.
+        # A bounded address sweep also reaches other unvisited functions
+        # in each observed indirect-jump family. The compiler deduplicates
+        # them in its prepass; do not enable expensive whole-image granularity.
+        for first, last in TLOU_111_WORKER_JUMP_HOTSPOTS:
+            risk.update(range(first, min(last, image_size),
+                              TLOU_111_WORKER_JUMP_HOTSPOT_STEP))
+    if misses and misses.is_file():
+        with misses.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                match = re.match(
+                    r"^\s*miss\s+\+(?:0x)?([0-9a-fA-F]+)\b.*\bkind=jump\b", line)
+                if not match:
+                    continue
+                risk.add(int(match.group(1), 16))
+                context = re.search(r"\bbacktrace=([^\s]+)", line)
+                if context:
+                    for frame in context.group(1).split(",")[:12]:
+                        match_frame = re.fullmatch(r"\+(?:0x)?([0-9a-fA-F]+)", frame)
+                        if match_frame:
+                            risk.add(int(match_frame.group(1), 16))
+    return sorted(value for value in risk if 0x1000 <= value < image_size)
+
+
+def prepare_granular_risk_file(boot: Path, eboot_sha: str, misses: Path | None,
+                               destination: Path) -> list[int]:
+    hints = granular_risk_entries(eboot_sha, misses, check_boot(boot)["size"])
+    if hints:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("".join(f"+0x{value:x}\n" for value in hints),
+                               encoding="ascii")
+    else:
+        destination.unlink(missing_ok=True)
+    return hints
+
+
 def prepare_extra_entries(boot: Path, eboot_sha: str, misses: Path | None,
                           destination: Path) -> tuple[list[int], list[int]]:
     known = known_switch_entries(boot, eboot_sha)
-    missed = verified_miss_entries(misses, check_boot(boot)["size"])
-    entries = sorted(set(known + missed))
+    image_size = check_boot(boot)["size"]
+    observed = (list(TLOU_111_WORKER_JUMP_TARGETS)
+                if eboot_sha == TLOU_111_SWITCH_SHA256 else [])
+    if any(target >= image_size for target in observed):
+        raise ValueError("Validated 1.11 worker entry outside the linked image")
+    missed = verified_miss_entries(misses, image_size)
+    entries = sorted(set(known + observed + missed))
     if entries:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text("".join(f"+0x{value:x}\n" for value in entries),
@@ -145,7 +248,8 @@ def prepare_extra_entries(boot: Path, eboot_sha: str, misses: Path | None,
 
 def prepare_native_animation_patch(boot: Path, self_digest: str,
                                    output: Path,
-                                   options: dict | None = None) -> list[str]:
+                                   options: dict | None = None,
+                                   catalog_mode: bool = False) -> list[str]:
     """Compile fully byte-verified 1.11 patches into an isolated native image.
 
     Unspecified options retain the legacy animation-only mode for compatibility
@@ -172,15 +276,19 @@ def prepare_native_animation_patch(boot: Path, self_digest: str,
         groups = {"invalid-animation-output-pointer":
                   module.BASE_PATCHES_111["invalid-animation-output-pointer"]}
     else:
-        groups = module.base_patches_for(options, "01.11")
-        groups.update(module.selected_options(options, "01.11", self_digest))
-        # NdJobWorkerThread 0..5: after checking the entire job queue is
-        # empty, the 1.11 worker spins up to 1000 PAUSE iterations before
-        # entering its existing blocking sleep path. The AOT's ARM64 PAUSE
-        # lowering can keep little cores busy with this unproductive polling.
-        # Only the validated AOT 1.11 image shortens this idle retry budget
-        # to 128; neither FEX nor actual queued work paths are changed.
-        # Instruction length (cmp rax,imm32) and branch displacements match.
+        # On the variant path compile only mandatory stability patches into
+        # the baseline. Every resolution and visual effect (including OFF)
+        # must remain selectable without retranslating other game functions.
+        # Validating selected options here is useful, but NEVER bake those
+        # optional options into the AOT image.
+        module.selected_options(options, "01.11", self_digest)
+        baseline = {"job_sleep": True} if catalog_mode else options
+        groups = module.base_patches_for(baseline, "01.11")
+        if not catalog_mode:
+            groups.update(module.selected_options(options, "01.11", self_digest))
+        # Generic 1.11 AOT job-worker idle-loop optimization. This is not
+        # selected by GPU/SoC/device identity; keep the existing codegen and
+        # launch compatibility unchanged while expanding jump coverage.
         if options.get("job_sleep", True):
             groups["native-job-idle-backoff"] = [
                 (0xC87D71, "483de8030000", "483d80000000"),
@@ -404,7 +512,7 @@ def verify_aot_coverage(stats: Path, meta: dict) -> dict:
     """Refuse useless native images that mostly contain unsupported-op traps."""
     import re
     version = str(meta.get("compiler_version", ""))
-    if version != "3-tlou-string":
+    if version not in {"3-tlou-string", "4-tlou-tso-aligned-ar-v1", "5-tlou-tso-outlined-unaligned-v1"}:
         raise ValueError("Old bb-recomp compiler: TSO LLVM lowering is missing; rebuild with TLOU TSO tool")
     if not stats.is_file():
         raise ValueError("No native compiler coverage report")
@@ -426,6 +534,57 @@ def verify_aot_coverage(stats: Path, meta: dict) -> dict:
             "estimated_usable_units": count - dirty, "compiler_version": version}
 
 
+def verify_native_variant_coverage(stats: Path, catalog: dict) -> dict:
+    """Never mark a library ready if ANY requested patch function failed lifting.
+
+    The pinned compiler's summary is written to compile.txt even without
+    --variant-report; count the full group and function coverage. A partial
+    variant catalog must not silently launch with missing visual patches.
+    """
+    report = stats.read_text(encoding="utf-8", errors="replace")
+    pattern = (r"variants:\s+(\d+)\s+groups in the catalogs\s+"
+               r"\((\d+)\s+touch code\),\s+(\d+)\s+variants planned,\s+"
+               r"(\d+)\s+built\s+\([^)]*\),\s+(\d+)\s+skipped,")
+    found = re.search(pattern, report)
+    if not found:
+        raise ValueError("Compiler did not confirm complete native patch variants")
+    declared, touches, planned, built, skipped = map(int, found.groups())
+    required = len(catalog["groups"])
+    if (declared != required or touches != required or planned < required
+            or built != planned or skipped):
+        raise ValueError(
+            f"Incomplete AOT patch variants: {touches}/{required} groups, "
+            f"{built}/{planned} functions, {skipped} skipped; refusing build")
+    return {"groups": declared, "groups_with_code": touches,
+            "variants_planned": planned, "variants_built": built,
+            "variants_skipped": skipped}
+
+
+def available_compile_memory_bytes() -> int:
+    """Actual Linux MemAvailable, not PS4 sparse virtual pool or zram size."""
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+            if line.startswith("MemAvailable:"):
+                parts = line.split()
+                return int(parts[1]) * 1024 if len(parts) >= 3 and parts[2] == "kB" else 0
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def select_compile_workers(requested: int, available_bytes: int) -> int:
+    """Avoid AOT codegen's ~2 GiB peak colliding with 8 GB Android LMKD.
+
+    This only changes translation throughput, not code, runtime scheduling,
+    shard count, TSO profile, or FPS. Unknown availability keeps the request.
+    """
+    if available_bytes <= 0:
+        return requested
+    gib = 1024 ** 3
+    ceiling = 1 if available_bytes < 4 * gib else 2 if available_bytes < 6 * gib else requested
+    return max(1, min(requested, ceiling))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, required=True,
@@ -438,6 +597,10 @@ def main(argv=None):
     parser.add_argument("--options", type=Path, help="Current FEX-validated native patch selections")
     parser.add_argument("--jobs", type=int, default=3)
     parser.add_argument("--shards", type=int, default=64)
+    # Shipping Android frontend supports only the one validated build policy.
+    # Older developer TSO variants are not selectable through packaged tools.
+    parser.add_argument("--tso-profile", choices=("off",), default="off",
+                        help="Internal compatibility flag; the only Android AOT build mode")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -467,8 +630,20 @@ def main(argv=None):
             native_options = json.loads(args.options.read_text(encoding="utf-8"))
             if not isinstance(native_options, dict):
                 raise ValueError("Native patch options must be a JSON object")
+        # Single library, all user-selectable patches compiled as variants.
+        # Do not put any optional visual/resolution byte changes into the
+        # baseline image; otherwise the 'off' version cannot be selected.
+        catalog_mode = version == "1.11" and native_options is not None
         native_patches = prepare_native_animation_patch(
-            boot, digest, native_boot, native_options)
+            boot, digest, native_boot, native_options, catalog_mode=catalog_mode)
+        variant_info = None
+        if catalog_mode:
+            try:
+                from .patch_variants import create_catalog
+            except ImportError:
+                from patch_variants import create_catalog
+            variant_info = create_catalog(
+                native_boot, digest, out / "aot" / "tlou-111-all-variants.txt")
         staged = stage_boot(native_boot if native_patches else boot, out / "bb-prepared")
         aot = out / "aot"
         aot.mkdir(exist_ok=True)
@@ -477,19 +652,35 @@ def main(argv=None):
             "invalid-animation-output-pointer" in native_patches and
             "frame-timeout" in native_patches)
         cpu_flags = AOT_111_PERFORMANCE_FLAGS if fast_111 else ("-O1",)
+        available_compile_bytes = available_compile_memory_bytes()
+        compile_jobs = select_compile_workers(args.jobs, available_compile_bytes)
+
+        # --tso is a CODE GENERATION option, not a runtime switch.
+        # Fibers and resume-entry safeguards remain enabled in both modes.
+        guest_flags = native_guest_flags(args.tso_profile)
         command = [str(args.compiler or "/path/to/libbbrecomp.so"),
                    "--boot", str(staged), "--game-dir", str(game), "--so", str(so),
-                   "--stats", str(aot / "compile.txt"), "--jobs", str(args.jobs),
+                   "--stats", str(aot / "compile.txt"), "--jobs", str(compile_jobs),
                    "--shards", str(args.shards), "--target", "aarch64",
-                   "--host", "armv8.2", *NATIVE_FIBER_CPU_FLAGS, *cpu_flags, "--no-nice",
+                   "--host", "armv8.2", *guest_flags, *cpu_flags, "--no-nice",
                    "--progress", "--resume"]
         if args.bundle_dir:
             command += ["--bundle-dir", str(args.bundle_dir)]
+        if variant_info:
+            command += ["--variants", variant_info["catalog"]]
+            command += ["--variant-report"]
+            if "--no-dirty-check" in command:
+                raise ValueError("Native patch variants require dirty-entry checks")
         # All 11 entries of the verified 1.11 scheduler switch are seeded at
         # once. This avoids repeated full recompilation as new cases execute.
         seed_file = aot / "verified-extra-entries.txt"
         seed_targets, added_entries = prepare_extra_entries(
             staged, digest, args.misses, seed_file)
+        granular_file = aot / "granular-risk-functions.txt"
+        granular_hints = prepare_granular_risk_file(
+            staged, digest, args.misses, granular_file)
+        if granular_hints:
+            command += ["--granular-funcs", str(granular_file)]
         patch_entries = [0xC9FC61] if native_patches else []
         if patch_entries:
             added_entries = sorted(set(added_entries + patch_entries))
@@ -498,7 +689,9 @@ def main(argv=None):
                 encoding="ascii")
         if added_entries:
             command += ["--extra-entries", str(seed_file)]
-        checked_entries = sorted(set(seed_targets + patch_entries))
+        # Verify the emitted native jump table has ALL genuine runtime misses,
+        # not just the switch cases. Percent coverage alone missed this crash.
+        checked_entries = added_entries
         if checked_entries:
             command += ["--check-entries",
                         ",".join(f"{target:x}" for target in checked_entries)]
@@ -506,22 +699,33 @@ def main(argv=None):
                   "effective_game": str(game), "eboot_sha256": sha256(game / "eboot.bin"),
                   "input_boot_sha256": sha256(boot), "staged_boot_sha256": sha256(staged),
                   "native_patch_profile": (
-                      "tlou-111-static-v2" if native_options is not None and native_patches
+                      variant_info["profile"] if variant_info
                       else "tlou-111-animation-guard-v1" if native_patches else ""),
+                  "variant_catalog": variant_info,
                   "native_patches": native_patches,
                   "native_patch_options": native_options,
                   "native_codegen_profile": AOT_111_PERFORMANCE_PROFILE if fast_111 else "conservative-O1",
                   "native_codegen_flags": list(cpu_flags),
-                  "runtime_code_immutable": bool(fast_111),
-                  "runtime_patch_contract": "static-patches;--no-game-hooks;--patches-disabled" if fast_111 else "checks-enabled",
+                  "runtime_code_immutable": not bool(variant_info),
+                  "runtime_patch_contract": (
+                      "native-variants;--no-game-hooks;--patches-at-launch"
+                      if variant_info else "checks-enabled"),
                   "native_boot_sha256": sha256(native_boot) if native_patches else "",
                   "native_patch_entries": [f"+0x{x:x}" for x in patch_entries],
                   "verified_executable_bytes": verified_code_bytes,
+                  "compile_memory_available_mib": available_compile_bytes // (1024 * 1024),
+                  "compile_workers_requested": args.jobs,
+                  "compile_workers_effective": compile_jobs,
                   "input_boot": check_boot(boot), "translation_command": command,
                   "runtime_integrated": False, "status": "staged",
                   "verified_switch_targets": [f"+0x{x:x}" for x in seed_targets],
                   "extra_entry_count": len(added_entries),
-                  "guest_memory_model": "conservative_TSO",
+                  "granular_risk_hint_count": len(granular_hints),
+                  "granular_policy": "verified-indirect-miss-owners-and-callers",
+                  "tso_profile": args.tso_profile,
+                  "guest_memory_model": ("relaxed_ARM64_no_TSO_UNSAFE"
+                                         if args.tso_profile == "off"
+                                         else "conservative_TSO"),
                   "fiber_resume_entries": True,
                   "callee_saved_policy": "reload_after_calls_for_fibers",
                   "x87_mode_warning": "bb-recomp uses reduced precision x87, while TLOU FEX defaults to full; do not execute without compatibility validation"}
@@ -547,6 +751,11 @@ def main(argv=None):
             if meta.get("abi_version") != 2 or meta.get("so_sha256") != sha256(so):
                 raise ValueError("Unexpected AOT ABI or .so hash")
             report["coverage"] = verify_aot_coverage(aot / "compile.txt", meta)
+            if variant_info:
+                report["variant_build"] = verify_native_variant_coverage(
+                    aot / "compile.txt", variant_info)
+                if int(meta.get("abi_flags", 0)) & 6 != 6:
+                    raise ValueError("Native variant ABI lacks dirty-entry and variant flags")
             report["status"] = "aarch64_generated_native_ready"
             report["runtime_integrated"] = True
             report["unit_count"] = meta.get("unit_count")

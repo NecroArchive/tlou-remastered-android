@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <cstdio>
+#include <source_location>
 #include <fmt/format.h>
 
 #include "common/assert.h"
@@ -61,7 +63,17 @@ static void Check(vk::Result r) {
 }
 
 template <StringLiteral msg = "", typename T>
-static T Check(vk::ResultValue<T> r) {
+static T Check(vk::ResultValue<T> r,
+               std::source_location location = std::source_location::current()) {
+    if (r.result == vk::Result::eErrorOutOfDeviceMemory ||
+        r.result == vk::Result::eErrorOutOfHostMemory) {
+        // ASSERT_MSG reports this template's line, hiding the actual Vulkan
+        // allocation call. Print the caller only on a fatal memory error.
+        std::fprintf(stderr, "GPU allocation failure: %s at %s:%u (%s)\n",
+                     vk::to_string(r.result).c_str(), location.file_name(),
+                     location.line(), location.function_name());
+        std::fflush(stderr);
+    }
     if constexpr (msg.len <= 1) {
         ASSERT_MSG(r.result == vk::Result::eSuccess, "vk::Result={}", vk::to_string(r.result));
     } else {

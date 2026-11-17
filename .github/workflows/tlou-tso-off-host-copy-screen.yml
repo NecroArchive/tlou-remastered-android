@@ -1,0 +1,57 @@
+name: TLOU AOT TSO OFF host-copy batching performance screen
+on:
+  push:
+    branches: [experiment/tlou-tso-off-host-copy-batch-20261114]
+    paths:
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_host_copy_batch.h'
+      - 'gow3_pc/tests/test_tlou_host_copy_batch.cpp'
+      - 'gow3_pc/tests/test_tlou_threaded_record_chunk.cpp'
+      - 'gow3_pc/tests/extract_host_copy_chunks.py'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.h'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp'
+      - '.github/workflows/tlou-tso-off-host-copy-screen.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  arm64:
+    name: Native ARM64 real helper correctness and callback microbenchmark
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production HostCopyBatch helper microbenchmark with assertions
+        run: |
+          set -euo pipefail
+          mkdir -p out/tlou-no-tso-host-copy
+          c++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror -pthread -I gow3_pc/gpu/shim \
+            gow3_pc/tests/test_tlou_host_copy_batch.cpp \
+            -o out/tlou-no-tso-host-copy/bench
+          out/tlou-no-tso-host-copy/bench --correctness-only
+          python3 gow3_pc/tests/extract_host_copy_chunks.py out/tlou-no-tso-host-copy
+          c++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror -pthread \
+            -I out/tlou-no-tso-host-copy -I gow3_pc/gpu/shim -I gow3_pc/gpu/shadps4 \
+            gow3_pc/tests/test_tlou_threaded_record_chunk.cpp \
+            -o out/tlou-no-tso-host-copy/threaded-bench
+          out/tlou-no-tso-host-copy/threaded-bench --correctness-only
+          out/tlou-no-tso-host-copy/threaded-bench | tee out/tlou-no-tso-host-copy/threaded-results.txt
+          out/tlou-no-tso-host-copy/bench | tee out/tlou-no-tso-host-copy/result.txt
+          grep -q '^HostCopyBatch: sequence order' out/tlou-no-tso-host-copy/result.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          t=Path("out/tlou-no-tso-host-copy/result.txt").read_text()
+          m=re.search(r'old=([\d.]+) ns/copy, batched=([\d.]+) ns/copy, delta=([-\d.]+) ns/copy',t)
+          assert m, t
+          old,new,gain=map(float,m.groups())
+          print(f"Observed ARM64 copy callback: {old:.2f} -> {new:.2f} ns/copy; {gain:+.2f} ns")
+          print("This does not include recording/chunk/copy-to-GPU cost or establish gameplay FPS")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-TSO-OFF-ARM64-HostCopyBatch-Benchmark
+          path: |
+            out/tlou-no-tso-host-copy/result.txt
+            out/tlou-no-tso-host-copy/threaded-results.txt
+          if-no-files-found: error

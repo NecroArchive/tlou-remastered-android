@@ -1,0 +1,54 @@
+name: TLOU AOT Oryon TSO OFF guarded UI experiment
+
+on:
+  push:
+    branches: [experiment/tlou-aot-tso-no-tso-oryon-ab-20261114]
+    paths:
+      - 'android/aot/aot_local.py'
+      - 'android/aot/test_no_tso_profile.py'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TsoProfile.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/InstallTools.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java'
+      - 'android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java'
+      - 'android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TsoProfileTest.java'
+      - '.github/workflows/tlou-aot-tso-off-oryon-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codegen:
+    name: Check real AOT --tso absence and independent cache policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and host tests for TSO OFF / fiber ABI
+        run: |
+          set -euo pipefail
+          python3 -m py_compile android/aot/aot_local.py android/aot/test_no_tso_profile.py
+          python3 android/aot/test_no_tso_profile.py -v
+          python3 android/aot/test_aot_local.py -v
+          python3 android/bionic/test_multi_tso_packaging.py -v
+
+  launcher:
+    name: Compile Android four-profile selector and test guarded AOT migration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - name: Compile Android UI and validate strict per-profile work folders
+        run: |
+          set -euo pipefail
+          gradle -p android-launcher :app:compileDebugJavaWithJavac :app:testDebugUnitTest --tests 'ro.cobrabm.fexdroid.TsoProfileTest' --no-daemon --max-workers=2

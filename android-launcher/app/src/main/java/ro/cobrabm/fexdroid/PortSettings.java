@@ -35,6 +35,8 @@ final class PortSettings {
            !prefs(context).contains("touch_mode"))
             edit.putString("touch_mode",prefs(context).getBoolean("touch_visible",true)?"auto":"off");
         edit.remove("touch_visible");
+        // Obsolete AOT profile preference must not affect the single ARM64 backend.
+        edit.remove("aot_tso_profile");
         // The proxy/compatibility renderer was retired. Ignore old saved choices.
         edit.remove("render_path");
         edit.apply();
@@ -53,10 +55,8 @@ final class PortSettings {
         // Never silently change the saved resolution.
         final String resolution=p.getString("resolution","original");
         options.put("resolution",resolution);
-        // F5 regression isolation (2026-11-08): return SM7475/23049PCD8G
-        // to the same sleeping-worker patch already used on other devices.
-        // The previously observed HALT after 806 s remains unproven to be
-        // caused by this patch; validate both FPS and >806 s stability.
+        // Generic 1.11 job-worker wait patch: not a hardware-specific workaround.
+        // Preserve the existing CPU policy and FEX/AOT native wake behavior.
         options.put("job_sleep",true);
         for(String key:EFFECTS) options.put(key,p.getBoolean(key,false));
         File file=new File(context.getFilesDir(),"patch-options.json");
@@ -65,8 +65,14 @@ final class PortSettings {
     }
 
     static void environment(Context context,Map<String,String> env) {
+        environment(context,env,null);
+    }
+    // AOT geometry and movie paths must match the already-compiled guest
+    // resolution. New visual preferences remain pending until native rebuild.
+    static void environment(Context context,Map<String,String> env,String compiledAotResolution) {
         SharedPreferences p=prefs(context);
-        String resolution=p.getString("resolution","original");
+        String resolution=compiledAotResolution!=null?compiledAotResolution:
+                p.getString("resolution","original");
         // The proven unified path is mandatory: no legacy proxy/composite mode.
         // Keep the original movie decoder, scale scene/HUD/aim as one domain.
         final String scaledPreset=resolution.equals("720")?"1":
@@ -102,6 +108,10 @@ final class PortSettings {
         // TLOU ZIP 30/31: exact memo saw 0 hits across >200k compute lookups/5s.
         // Retain the old stable default: avoid descriptor comparisons and memo bookkeeping.
         env.put("GOW3_TLOU_COMPUTE_MEMO","0");
+        // Log 23: 1.09-1.12 copies/group, no host-copy wait improvement and
+        // lower FPS than the previous build. Stop forcing the experimental
+        // recording representation on in normal gameplay. The renderer still
+        // implements GOW3_TLOU_HOST_COPY_BATCH=1 for isolated A/B experiments.
         env.put("GOW3_TLOU_HOST_COPY_BATCH","0");
         env.put("TLOU_SRT_HOT_READBACKS","1");
         env.put("TLOU_SRT_DEP_BATCH","0");
@@ -231,6 +241,7 @@ final class PortSettings {
         result.append("; fast-render-cores=").append(env.getOrDefault("TLOU_FAST_RENDER_CORES","0"));
         result.append("; aot-split-prime=").append(env.getOrDefault("TLOU_AOT_SPLIT_PRIME","0"));
         result.append("; compute-exact-memo=").append(env.getOrDefault("GOW3_TLOU_COMPUTE_MEMO","0"));
+        result.append("; host-copy-batching=").append(env.getOrDefault("GOW3_TLOU_HOST_COPY_BATCH","0"));
         result.append("; guest-job-worker-wake=patched-sleep");
         return result.toString();
     }
@@ -244,7 +255,7 @@ final class PortSettings {
         String r=p.getString("resolution","original"), limit=fpsLimit(context);
         String res=r.equals("original")?"Original":r+"p";
         return res+"  ·  "+(limit+" FPS")+"  ·  "+
-            (p.getBoolean("fps_unlock",false)?"VSync OFF (desbloqueio)":
+            (p.getBoolean("fps_unlock",false)?TlouLanguage.t(context,"VSync OFF (desbloqueio)"):
              p.getBoolean("vsync",true)?"VSync ON":"VSync OFF");
     }
 }

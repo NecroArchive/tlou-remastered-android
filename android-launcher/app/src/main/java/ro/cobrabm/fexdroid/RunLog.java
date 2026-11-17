@@ -7,6 +7,9 @@ import android.os.Build;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -41,7 +44,20 @@ final class RunLog {
     }
     static void export(Context c,OutputStream output) throws IOException {
         try(ZipOutputStream zip=new ZipOutputStream(output)) {
-            for(String path:new String[]{"launch.log","launch-previous.log","tlou/runtime.log","tlou/runtime-previous.log","installation.log","tlou-prepared/device-ready.json","tlou-aot-work/aot-report.json","tlou-aot-work/aot/compile.txt","tlou-aot-work/aot/libtlouaot.json","tlou/aot-misses.log","tlou/perf-cs-22e6e19e.bin","tlou/perf-cs-61d67259.bin"}) {
+            List<String> paths=new ArrayList<>(Arrays.asList(
+                "launch.log","launch-previous.log","tlou/runtime.log",
+                "tlou/runtime-previous.log","installation.log",
+                "tlou-prepared/device-ready.json",
+                "tlou-aot-work/aot-report.json","tlou-aot-work/aot/compile.txt",
+                "tlou-aot-work/aot/libtlouaot.json",
+                "tlou/aot-misses.log","tlou/perf-cs-22e6e19e.bin",
+                "tlou/perf-cs-61d67259.bin"));
+            // Only the single shipping ARM64 cache is relevant to reports.
+            // Never export the multi-GB proprietary recompiled unit shards.
+            for(String filename:new String[]{
+                "aot-report.json","aot/compile.txt","aot/libtlouaot.json"})
+                paths.add("tlou-aot-work-off/"+filename);
+            for(String path:paths) {
                 File file=new File(c.getFilesDir(),path);if(!file.isFile())continue;
                 zip.putNextEntry(new ZipEntry(path));
                 try(RandomAccessFile in=new RandomAccessFile(file,"r")) {

@@ -32,11 +32,11 @@ final class InstallTools {
         }
         for (String name:new String[]{"python/bin/python3.13","bin/orbis-pkg-util"})
             if (!new File(root,name).setExecutable(true,true)) throw new IOException("Falha ao ativar "+name);
-        // Optional AOT tool shipped only in experimental package. It is a
-        // standalone Android ARM64 executable; avoid running it as a JNI .so.
-        File aotCompiler=new File(root,"bin/libbbrecomp.so");
-        if(aotCompiler.isFile() && !aotCompiler.setExecutable(true,true))
-            throw new IOException("Falha ao ativar compilador ARM64");
+        // Only one AOT compiler is shipped and only one native ABI is used.
+        // The frontend omits --tso and caches code separately from older APKs.
+        File aotCompiler=new File(root,TsoProfile.compilerRelative(TsoProfile.RELAXED));
+        if(!aotCompiler.isFile() || !aotCompiler.setExecutable(true,true))
+            throw new IOException("Compilador ARM64 ausente ou sem permissão");
         Files.write(ready.toPath(),version.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
@@ -123,11 +123,13 @@ final class InstallTools {
         // any ARM64 units. Static native code cannot toggle x86 patches later.
         applyPatches(prepared,progress);
         File nativeOptions=PortSettings.patchOptions(context);
-        File compiler=new File(root,"bin/libbbrecomp.so");
-        File bundle=new File(root,"aot/bundle");
+        String profile=TsoProfile.selected(context);
+        File compiler=new File(root,TsoProfile.compilerRelative(profile));
+        File bundle=new File(root,TsoProfile.bundleRelative(profile));
         File frontend=new File(root,"source/android/aot/aot_local.py");
         if(!compiler.isFile() || !bundle.isDirectory() || !frontend.isFile())
-            throw new IOException("Compilador AOT não incluído nesta APK experimental");
+            throw new IOException("Compilador ARM64 não incluído nesta APK");
+        if(progress!=null)progress.accept("Preparando compilação ARM64 otimizada.");
         File game=new File(prepared,"tlou-view");
         for(String name:new String[]{"eboot.bin","sce_module/libc.prx",
                                        "sce_module/libSceFios2.prx","sce_sys/param.sfo"})
@@ -137,7 +139,7 @@ final class InstallTools {
         if(!boot.isFile())throw new IOException("Imagem vinculada não encontrada");
         // Every output is private to this installed app, never in a shared game
         // folder or on GitHub. --resume allows completed shards to be reused.
-        File output=new File(context.getFilesDir(),"tlou-aot-work");
+        File output=TsoProfile.work(context,profile);
         if(!output.isDirectory() && !output.mkdirs())
             throw new IOException("Sem espaço para criar pasta de compilação AOT");
         List<String> command=Arrays.asList(
@@ -147,6 +149,7 @@ final class InstallTools {
             "--boot",boot.getCanonicalPath(),
             "--out",output.getCanonicalPath(),
             "--compiler",compiler.getCanonicalPath(),
+            "--tso-profile",profile,
             "--bundle-dir",bundle.getCanonicalPath(),
             "--options",nativeOptions.getCanonicalPath(),
             "--jobs","3","--shards","64",

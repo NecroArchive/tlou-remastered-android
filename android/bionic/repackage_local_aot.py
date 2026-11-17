@@ -7,6 +7,8 @@ content enters CI. Do NOT change the native libraries in a launcher-only update.
 from __future__ import annotations
 
 import io
+import os
+import hashlib
 from pathlib import Path, PurePosixPath
 import struct
 import sys
@@ -19,6 +21,7 @@ SOURCE_OVERRIDES = (
     "android/tlou_bionic.py", "android/device_prepare.py",
     "android/tlou_patches.py", "tools/probe_tlou.py",
     "android/aot/aot_local.py",
+    "android/aot/patch_variants.py",
 )
 
 
@@ -45,6 +48,12 @@ def compiler_payload() -> dict[str, bytes]:
                 result[f"aot/{folder}/{p.relative_to(AOT / folder).as_posix()}"] = p.read_bytes()
     if not any(x.startswith("aot/bundle/") for x in result):
         raise ValueError("Compiler missing LLVM bundle")
+    # Shipping Android AOT has only one pinned backend. Reject accidental
+    # reintroduction of multiple codegen variants into installable APKs.
+    if os.environ.get("TLOU_TSO_MULTI_PROFILE_DIR"):
+        raise ValueError("Production APK must not stage multiple AOT compiler profiles")
+    if b"3-tlou-string" not in code:
+        raise ValueError("Production AOT compiler is not the validated v3 backend")
     for name in SOURCE_OVERRIDES:
         result[f"source/{name}"] = (ROOT / name).read_bytes()
     for file in sorted((ROOT / "gow3_pc/scripts").glob("*.py")):
@@ -59,6 +68,10 @@ def merge_tools(original: bytes, replacements: dict[str, bytes]) -> bytes:
         names = set()
         for info in old.infolist():
             safe_path(info.filename)
+            if info.filename.startswith("aot/compilers/"):
+                # Remove any old multi-profile payload if the input APK ever
+                # contains one. Never let it reappear on a later repackage.
+                continue
             if info.filename in names:
                 raise ValueError(f"Duplicate original tool: {info.filename}")
             names.add(info.filename)
@@ -71,7 +84,9 @@ def merge_tools(original: bytes, replacements: dict[str, bytes]) -> bytes:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         required = ("python/bin/python3.13", "bin/orbis-pkg-util",
                     "bin/libbbrecomp.so", "source/android/device_prepare.py",
-                    "source/android/aot/aot_local.py", "aot/upstream.sha256")
+                    "source/android/aot/aot_local.py",
+                    "source/android/aot/patch_variants.py",
+                    "aot/upstream.sha256")
         missing = [n for n in required if n not in archive.namelist()]
         if missing:
             raise ValueError(f"Tools ZIP missing {missing}")

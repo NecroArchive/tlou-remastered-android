@@ -79,6 +79,24 @@ public class GameInstallStateTest {
         prefs.edit().clear().commit();
         assertNull(GameInstallState.update(second,second,prepared,prefs));
     }
+    @Test public void physicallyInstalledUpdateRequiresNoSeparateOverlay() throws Exception {
+        File root=Files.createTempDirectory("tlou-physical-update").toFile();
+        File base=game(root,"CUSA00556");
+        File prepared=new File(root,"tlou-prepared");
+        prepared.mkdirs();
+        JSONObject marker=new JSONObject();
+        marker.put("game",base.getCanonicalPath());
+        marker.put("version","01.11");
+        marker.put("update",JSONObject.NULL);
+        marker.put("update_version",JSONObject.NULL);
+        Files.write(new File(prepared,"device-ready.json").toPath(),
+            marker.toString().getBytes(StandardCharsets.UTF_8));
+        SharedPreferences prefs=RuntimeEnvironment.getApplication()
+            .getSharedPreferences("tlou-physical-update",0);
+        prefs.edit().clear().commit();
+        assertNull(GameInstallState.update(base,base,prepared,prefs));
+    }
+
     @Test public void explicitUpdateTakesPriorityOverOldPreparedCache() throws Exception {
         File root=Files.createTempDirectory("tlou-update-choice").toFile();
         File base=game(root,"CUSA00556"), old=update(root);

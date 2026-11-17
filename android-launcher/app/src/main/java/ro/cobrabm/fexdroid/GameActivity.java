@@ -71,8 +71,6 @@ public final class GameActivity extends Activity {
     private boolean resumed;
     private final FpsMeter fpsMeter=new FpsMeter();
     private HudTelemetry hudTelemetry;
-    private final GpuTurboSession gpuTurbo=new GpuTurboSession();
-    private Boolean lastTurboChoice;
 
     private static FrameLayout.LayoutParams pos(int w,int h,int gravity) {
         return new FrameLayout.LayoutParams(w,h,gravity);
@@ -412,7 +410,6 @@ public final class GameActivity extends Activity {
                                   :"Iniciando TLOU x86-64 pelo FEX...");
             if(closing.get())return;
             RunLog.write(this,"ProcessBuilder.start • CPU="+(nativeAot!=null?"ARM64 AOT":"FEX")+" • watchdog de teste desativado");
-            gpuTurbo.start(this); // root is optional; if unavailable gameplay still runs
             game=builder.start();
             if(closing.get()){game.destroyForcibly();game.waitFor();return;}
             final String backend=nativeAot!=null?"ARM64 AOT":"FEX";
@@ -452,7 +449,6 @@ public final class GameActivity extends Activity {
                 if(interrupted)Thread.currentThread().interrupt();
             }
             if(gameChoices!=null)gameChoices.close();
-            gpuTurbo.stop(this);
             if(saveGuard!=null)try{saveGuard.close();}catch(IOException e){RunLog.failure(this,"Saves lock",e);}
         }
     }
@@ -487,16 +483,6 @@ public final class GameActivity extends Activity {
         touch.setAlpha(p.getInt("touch_opacity",55)/100f);
         touch.invalidate();
         if(started)Gow3Present.fullscreen(p.getBoolean("fullscreen",false));
-        if(started) {
-            boolean turbo=p.getBoolean("gpu_turbo",false);
-            if(lastTurboChoice==null || lastTurboChoice.booleanValue()!=turbo) {
-                lastTurboChoice=turbo;
-                new Thread(()->{
-                    if(turbo)gpuTurbo.start(this);
-                    else gpuTurbo.stop(this);
-                },"tlou-adreno-turbo-toggle").start();
-            }
-        }
         placeHud();
     }
     private void placeHud() {
@@ -589,7 +575,6 @@ public final class GameActivity extends Activity {
         }
         try { if(touch!=null) touch.release(); } catch(Exception ignored) {}
         try { if(audio!=null) audio.stop(); } catch(Exception ignored) {}
-        try { gpuTurbo.stop(this); } catch(Exception ignored) {}
         try { if(started) Gow3Present.stop(); } catch(Exception ignored) {}
         if(quitApp)finishAffinity(); else finish();
     }

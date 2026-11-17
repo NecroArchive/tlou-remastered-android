@@ -306,9 +306,9 @@ public final class MainActivity extends Activity {
             choice(cpu,"cpu_backend","Processador do jogo",
                 new String[]{"ARM64 recompilado (AOT experimental)","FEX (estável)"},
                 new String[]{"aot","fex"},"fex");
-            File selectedAot=new File(TsoProfile.work(this),"aot/libtlouaot.so");
+            boolean nativeCompiled=RuntimeAot.hasCompletedVariantBuild(this);
             cpu.addView(text(TlouLanguage.t(this,"CPU ARM64: ")+TlouLanguage.t(this,
-                selectedAot.isFile()?"já compilada":"ainda não compilada")
+                nativeCompiled?"já compilada":"ainda não compilada")
                 +TlouLanguage.t(this,". A compilação inclui todos os patches e resoluções 1.11. Alterar opções não exige recompilar; atualizações do jogo ou do compilador podem exigir."),12,MUTED));
             add(cpu,"Compilar CPU ARM64",false,
                 ()->withAccess(this::buildSelectedAot));

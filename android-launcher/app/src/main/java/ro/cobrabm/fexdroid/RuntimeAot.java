@@ -75,6 +75,8 @@ final class RuntimeAot {
         java.util.ArrayList<String> changed=new java.util.ArrayList<>();
         if(!compiled.optString("resolution","").equals(requested.optString("resolution","")))
             changed.add("resolution");
+        if(compiled.optBoolean("job_sleep",false)!=requested.optBoolean("job_sleep",false))
+            changed.add("job_sleep");
         for(String effect:PortSettings.EFFECTS) {
             if(compiled.has(effect) &&
                compiled.optBoolean(effect)!=requested.optBoolean(effect))
@@ -167,16 +169,13 @@ final class RuntimeAot {
                     "CPU ARM64 1.11 antiga (LLVM -O1). Recompile para ativar -O2 e o perfil estático otimizado.");
             RunLog.write(context,"TLOU AOT 1.11 codegen: LLVM -O2, immutable code, dirty-unit entry checks removed, TSO/fibers retained.");
             if(!"tlou-111-static-v2".equals(source.optString("native_patch_profile")) ||
-                    !hasAnimationGuard || !hasTimeout || expected==null ||
-                    (expected.optBoolean("job_sleep",true) && !hasIdleBackoff))
+                    !hasAnimationGuard || !hasTimeout || expected==null)
                 throw new java.io.IOException(
-                    "AOT 1.11 sem correção de espera ativa dos seis workers. Recompile em Ajustes → CPU.");
+                    "AOT 1.11 sem guards de estabilidade genéricos. Recompile em Ajustes → CPU.");
             JSONObject actual=new JSONObject(new String(Files.readAllBytes(
                     PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
-            if(expected==null || !expected.has("resolution") ||
-                    expected.optBoolean("job_sleep",false)!=actual.optBoolean("job_sleep",false))
-                throw new java.io.IOException(
-                    "Configuração AOT incompleta ou workers alterados. Recompile a CPU ARM64.");
+            if(expected==null || !expected.has("resolution"))
+                throw new java.io.IOException("Configuração AOT incompleta; recompile a CPU ARM64.");
             for(String effect:PortSettings.EFFECTS) {
                 if(!expected.has(effect))
                     throw new java.io.IOException(

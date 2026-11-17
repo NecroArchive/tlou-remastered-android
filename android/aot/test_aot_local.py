@@ -252,6 +252,15 @@ class TestBridge(unittest.TestCase):
                     out.read_text().splitlines(),
                     [f"+0x{x:x}" for x in extra])
 
+    def test_memory_aware_aot_workers_on_8gb_devices(self):
+        gib = 1024 ** 3
+        self.assertEqual(mod.select_compile_workers(3, 0), 3)
+        self.assertEqual(mod.select_compile_workers(3, 3 * gib), 1)
+        self.assertEqual(mod.select_compile_workers(3, 5 * gib), 2)
+        self.assertEqual(mod.select_compile_workers(3, 7 * gib), 3)
+        self.assertEqual(mod.select_compile_workers(1, 7 * gib), 1)
+        self.assertEqual(mod.select_compile_workers(2, 3 * gib), 1)
+
     def test_granular_native_miss_hotpaths_cover_unvisited_sibling_cases(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)

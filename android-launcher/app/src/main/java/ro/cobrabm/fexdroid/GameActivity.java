@@ -295,14 +295,20 @@ public final class GameActivity extends Activity {
                 }
             }
             File patches=new File(base,"patches.bin");
-            if(nativeAot==null && patches.isFile() && patches.length()>0) {
+            // AOT now has one native function-variant library for ALL verified
+            // effect/resolution options. Apply the selected G3PATCH2 writes
+            // before the first guest call; native guest_cpu_aot.cpp classifies
+            // changed function hashes and redirects directly to compiled
+            // alternatives. Never patch the user's original SELF or JNI .so.
+            if(patches.isFile() && patches.length()>0) {
                 args.add("--patches");
                 args.add(patches.getAbsolutePath());
-            } else if(nativeAot!=null && patches.isFile() && patches.length()>0) {
-                // The exact validated FEX patch selection has been compiled
-                // statically into the AOT guest image. --patches would rewrite
-                // it AGAIN after loading, invalidating the compiled units.
-                RunLog.write(this,"AOT: patches de estabilidade, efeitos e resolução já integrados no boot ARM64; não reaplicando patches.bin");
+                if(nativeAot!=null)RunLog.write(this,
+                    "AOT: aplicando patches da sessão via variantes ARM64; "+
+                    "resolução/efeitos alteráveis sem nova compilação.");
+            } else if(nativeAot!=null) {
+                throw new java.io.IOException(
+                    "Patches 1.11 não preparados; não iniciar uma sessão ARM64 com opções incompletas.");
             }
             ProcessBuilder builder=new ProcessBuilder(RuntimeProcess.command(args,runtimePidFile));
             Map<String,String> env=builder.environment();

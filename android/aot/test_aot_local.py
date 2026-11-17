@@ -9,6 +9,10 @@ import hashlib
 from unittest.mock import patch
 from pathlib import Path
 
+# The existing AOT CI executes this test module directly. Import the full
+# option-bank contract so every AOT check also tests all 11 patch groups.
+from test_patch_variants import AllPatchVariants
+
 spec = importlib.util.spec_from_file_location("tlou_aot_local", Path(__file__).with_name("aot_local.py"))
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)

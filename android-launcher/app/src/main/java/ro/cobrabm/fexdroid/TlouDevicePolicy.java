@@ -31,6 +31,46 @@ final class TlouDevicePolicy {
         return "enabled";
     }
 
+    /**
+     * Adreno 750 A/B: the logs render at 1280x720 but allocate AHB frames at
+     * 2480x1116. Native SurfaceControl already scales the AHB source rect
+     * into the REAL Android window, so this only reduces the Vulkan output
+     * surface (and blit/present traffic), never the guest raster or AOT patches.
+     *
+     * No driver-selection changes. Other GPUs retain original dimensions.
+     */
+    static String configureCompactPresent(Map<String,String> env,
+            String mode, String eglRenderer, String effectiveGameResolution) {
+        if ("off".equals(mode)) return "disabled";
+        String gpu = eglRenderer == null ? "" : eglRenderer.toLowerCase(Locale.ROOT);
+        boolean a750 = gpu.contains("adreno") && gpu.matches(".*750([^0-9]|$).*");
+        if (!a750 && !"on".equals(mode)) return "auto-not-adreno750";
+        final String resolution = effectiveGameResolution == null ? "" :
+            effectiveGameResolution.toLowerCase(Locale.ROOT);
+        final String size;
+        switch(resolution) {
+            case "720": size = "1280x720"; break;
+            case "540": size = "960x540"; break;
+            case "360": size = "640x360"; break;
+            case "original": size = "1920x1080"; break;
+            default: return "unknown-guest-raster";
+        }
+        String[] wh=size.split("x");
+        int wantW=Integer.parseInt(wh[0]), wantH=Integer.parseInt(wh[1]);
+        try {
+            int currentW=Integer.parseInt(env.get("GOW3_SCREEN_W"));
+            int currentH=Integer.parseInt(env.get("GOW3_SCREEN_H"));
+            // Never grow the presentation buffer or change orientation.
+            if(currentW<currentH || currentW<=wantW || currentH<=wantH)
+                return "not-smaller";
+        } catch(RuntimeException ex) {
+            return "display-size-unavailable";
+        }
+        env.put("GOW3_SCREEN_W",Integer.toString(wantW));
+        env.put("GOW3_SCREEN_H",Integer.toString(wantH));
+        return "compact-"+size;
+    }
+
     static boolean isEightGiBClass(long totalMemBytes) {
         // 8 GB Android devices typically report 7.2-8.0 GiB physical RAM.
         // Fail open on missing information; never alter 12/16 GiB devices.

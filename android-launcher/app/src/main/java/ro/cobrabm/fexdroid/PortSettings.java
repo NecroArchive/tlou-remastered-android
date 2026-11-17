@@ -26,7 +26,8 @@ final class PortSettings {
             "prep_pool","cpu_trims","prefetch_pipelines","parallel_pipelines",
             "prep_workers","frames_ahead","descriptor_bulk","readback","sotc_precise_narrow",
             "hud_gpu","hud_cpu",
-            "compute_wait_fast","relaxed_skinning_fp"}) edit.remove(key);
+            "compute_wait_fast","relaxed_skinning_fp",
+            "gpu_turbo","fast_render_cores","aot_gpu_prime_split_v2","adpf"}) edit.remove(key);
         String limit=prefs(context).getString("fps_limit","60");
         if(!"30".equals(limit) && !"60".equals(limit))edit.putString("fps_limit","60");
         // Preserve an explicit old OFF preference while making Auto the default
@@ -53,11 +54,10 @@ final class PortSettings {
         // Never silently change the saved resolution.
         final String resolution=p.getString("resolution","original");
         options.put("resolution",resolution);
-        // F5 regression isolation (2026-11-08): return SM7475/23049PCD8G
-        // to the same sleeping-worker patch already used on other devices.
-        // The previously observed HALT after 806 s remains unproven to be
-        // caused by this patch; validate both FPS and >806 s stability.
-        options.put("job_sleep",true);
+        // Remove the older SM7475-specific worker-wakeup override. Recompile
+        // static AOT with the original guest job/sleep conditions; FEX is
+        // re-patched from its immutable original image on each launch.
+        options.put("job_sleep",false);
         for(String key:EFFECTS) options.put(key,p.getBoolean(key,false));
         File file=new File(context.getFilesDir(),"patch-options.json");
         Files.write(file.toPath(),options.toString().getBytes(StandardCharsets.UTF_8));
@@ -177,19 +177,12 @@ final class PortSettings {
         // policy; do not keep the speculative normal-priority scanner or
         // per-5-second hit instrumentation running in gameplay.
         env.put("GOW3_PREP_WORKERS","0");
-        // Real NDK ADPF hint session belongs to the separate Bionic game PID,
-        // not the Java launcher. OFF by default for reproducible A/B tests.
-        // Optional, always OFF by default. Changes thread affinity, never the CPU frequency ceiling.
-        // Do not enable automatically: command, draw and recorder threads could contend on two prime cores.
-        env.put("TLOU_FAST_RENDER_CORES",p.getBoolean("fast_render_cores",false)?"1":"0");
-        // Optional AOT-only A/B: GPU command and draw recorder get separate
-        // PRIME cores if (and only if) the allowed CPU topology has exactly
-        // two PRIME cores. The six PS4 job workers retain the launch mask.
-        // FEX always ignores this preference to preserve the benchmark base.
-        final boolean nativeAot="aot".equals(p.getString("cpu_backend","fex"));
-        env.put("TLOU_AOT_SPLIT_PRIME",nativeAot &&
-                p.getBoolean("aot_gpu_prime_split_v2",false) ? "1" : "0");
-        env.put("GOW3_ADPF", p.getBoolean("adpf",false) ? "1" : "0");
+        // Retire every device-specific power and CPU-affinity experiment.
+        // In particular, previously saved ADPF/PRIME prefs must not reactivate
+        // performance policies while validating native ARM64 control flow.
+        env.put("TLOU_FAST_RENDER_CORES","0");
+        env.put("TLOU_AOT_SPLIT_PRIME","0");
+        env.put("GOW3_ADPF","0");
         env.remove("TLOU_PREP_NORMAL_PRIORITY");
         env.remove("TLOU_PREP_HIT_STATS");
         env.put("GOW3_DEFERRED_READBACK","0");
@@ -242,7 +235,7 @@ final class PortSettings {
         result.append("; aot-split-prime=").append(env.getOrDefault("TLOU_AOT_SPLIT_PRIME","0"));
         result.append("; compute-exact-memo=").append(env.getOrDefault("GOW3_TLOU_COMPUTE_MEMO","0"));
         result.append("; host-copy-batching=").append(env.getOrDefault("GOW3_TLOU_HOST_COPY_BATCH","0"));
-        result.append("; guest-job-worker-wake=patched-sleep");
+        result.append("; guest-job-worker-wake=original");
         return result.toString();
     }
 

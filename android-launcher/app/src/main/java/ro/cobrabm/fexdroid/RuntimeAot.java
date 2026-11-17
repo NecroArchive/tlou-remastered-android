@@ -84,8 +84,7 @@ final class RuntimeAot {
     }
 
     static Ready prepare(Context context,File prepared) throws Exception {
-        String tsoProfile=TsoProfile.selected(context);
-        File work=TsoProfile.work(context,tsoProfile);
+        File work=TsoProfile.work(context);
         File so=new File(work,"aot/libtlouaot.so");
         File json=new File(work,"aot/libtlouaot.json");
         File report=new File(work,"aot-report.json");
@@ -97,14 +96,11 @@ final class RuntimeAot {
         JSONObject source=new JSONObject(new String(Files.readAllBytes(report.toPath()),StandardCharsets.UTF_8));
         if(meta.optInt("abi_version",-1)!=2)
             throw new java.io.IOException("ABI da biblioteca AOT incompatível");
-        if(!TsoProfile.version(tsoProfile).equals(meta.optString("compiler_version")) ||
+        if(!TsoProfile.version(TsoProfile.RELAXED).equals(meta.optString("compiler_version")) ||
                 !"aarch64_generated_native_ready".equals(source.optString("status")))
-            throw new java.io.IOException("TSO "+tsoProfile+" não compilado ou incompatível. "
-                +"Compile o perfil selecionado em Ajustes → CPU.");
-        if(TsoProfile.RELAXED.equals(tsoProfile))
-            RunLog.write(context,"AVISO: AOT TSO DESLIGADO, experimento ARM64 sem validação de estabilidade ou saves.");
-        RunLog.write(context,"TSO AOT selecionado: "+tsoProfile+
-            " • compilador="+meta.optString("compiler_version")+
+            throw new java.io.IOException("Biblioteca ARM64 não compilada ou incompatível. "
+                +"Recompile em Ajustes → CPU.");
+        RunLog.write(context,"AOT ARM64: compilador="+meta.optString("compiler_version")+
             " • biblioteca="+so.getAbsolutePath());
         // Guest PS4 fibers can replace RBX/RBP/R12-R15 in HostCall. Old native
         // libraries trusted SysV callee-saved registers and are not safe here.
@@ -116,19 +112,16 @@ final class RuntimeAot {
             if("--tso".equals(flag))nativeTso=true;
             if("--resume-entries".equals(flag))fiberResumes=true;
         }
-        boolean relaxed=TsoProfile.RELAXED.equals(tsoProfile);
-        if(!reloadAfterCall || nativeTso == relaxed || !fiberResumes ||
+        if(!reloadAfterCall || nativeTso || !fiberResumes ||
            !"reload_after_calls_for_fibers".equals(source.optString("callee_saved_policy")))
             throw new java.io.IOException(
-                "AOT incompatível com perfil TSO/fibers selecionado. Recompile em Ajustes → CPU.");
-        if(relaxed && (!"off".equals(source.optString("tso_profile")) ||
-           !"relaxed_ARM64_no_TSO_UNSAFE".equals(source.optString("guest_memory_model"))))
-            throw new java.io.IOException("Biblioteca sem comprovação de compilação TSO OFF. Recompile.");
-        if(!relaxed && !"conservative_TSO".equals(source.optString("guest_memory_model")))
-            throw new java.io.IOException("AOT sem TSO, mas perfil TSO está selecionado.");
+                "Biblioteca ARM64 com ABI incompatível. Recompile em Ajustes → CPU.");
+        if(!TsoProfile.RELAXED.equals(source.optString("tso_profile")) ||
+           !"relaxed_ARM64_no_TSO_UNSAFE".equals(source.optString("guest_memory_model")))
+            throw new java.io.IOException("Biblioteca ARM64 antiga incompatível. Recompile.");
         JSONObject quality=source.optJSONObject("coverage");
         if(quality==null || quality.optDouble("unsupported_percent",100)>0.25)
-            throw new java.io.IOException("Biblioteca AOT incompleta; recompile com o compilador TSO corrigido");
+            throw new java.io.IOException("Biblioteca ARM64 incompleta; recompile em Ajustes → CPU.");
         String expectedBoot=source.optString("input_boot_sha256");
         if(expectedBoot.length()!=64 || !expectedBoot.equalsIgnoreCase(sha256(boot)))
             throw new java.io.IOException("O jogo preparado mudou após a compilação ARM64");
@@ -165,7 +158,7 @@ final class RuntimeAot {
                         source.optString("runtime_patch_contract")))
                 throw new java.io.IOException(
                     "CPU ARM64 1.11 antiga (LLVM -O1). Recompile para ativar -O2 e o perfil estático otimizado.");
-            RunLog.write(context,"TLOU AOT 1.11 codegen: LLVM -O2, immutable code, dirty-unit entry checks removed, TSO/fibers retained.");
+            RunLog.write(context,"TLOU AOT 1.11 codegen: LLVM -O2, immutable code, native fiber resume enabled.");
             if(!"tlou-111-static-v2".equals(source.optString("native_patch_profile")) ||
                     !hasAnimationGuard || !hasTimeout || expected==null ||
                     (expected.optBoolean("job_sleep",true) && !hasIdleBackoff))

@@ -1,0 +1,180 @@
+name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
+on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - '.github/workflows/tlou-v020-aotnative-release.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: tlou-v020-aotnative-original-signer
+  cancel-in-progress: false
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TLOU_JOBS: '3'
+      TLOU_ANDROID_API: '30'
+      TLOU_CPU_BACKEND: 'aot'
+    steps:
+      - name: Checkout the EXACT v0.2.0 RELEASE branch, not experimental application code
+        uses: actions/checkout@v4
+        with:
+          ref: tlou-v020-from-stable-011
+          submodules: recursive
+      - name: Record source revision and reject a misrouted release
+        run: |
+          set -euo pipefail
+          echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
+          test "$(git branch --show-current)" = "tlou-v020-from-stable-011"
+          grep -Fq "versionName '0.2.0'" android-launcher/app/build.gradle
+          grep -Fq "applicationIdSuffix '.aotnative2'" android-launcher/app/build.gradle
+          test -s android/bionic/package_aotnative_v020.sh
+      - name: Restore exact EXISTING AOTNative v2 private signing identity
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-development-signing-v1
+          restore-keys: |
+            tlou-aotnative-v2-signer-backup-20261118-a
+            tlou-aotnative-v2-signer-backup-20261118-b
+          fail-on-cache-miss: true
+      - name: Certify signer; never auto-create a debug key
+        run: |
+          set -euo pipefail
+          test -s "$HOME/.android/debug.keystore"
+          cert=$(keytool -exportcert -alias androiddebugkey -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | sha256sum | cut -d ' ' -f1)
+          test "$cert" = "adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c" || {
+            echo "::error::AOTNative v2 signer mismatch; no new identity may be shipped"; exit 8;
+          }
+          echo "Original AOTNative v2 signer verified; private key stays inside GitHub Actions caches"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+          cache-read-only: true
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: ci/environment.yml
+          cache-environment: false
+          init-shell: bash
+      - name: Test CPU, patches, control and game preparation contracts
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          python3 -m pip install unicorn==2.1.4
+          bash android/bionic/test_runtime_contracts.sh
+          python3 -m unittest discover -s android/tests -v
+          python3 gow3_pc/tests/test_srt_arm64.py -v
+      - name: Restore pinned Bionic native dependencies read-only
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .local-deps/android/bionic-prefix
+            .local-deps/android/bionic-src
+            .local-deps/android/bionic-build
+            .local-deps/FEX
+            ~/.cache/ccache
+          key: tlou-bionic-arm64-v2-${{ runner.os }}-${{ hashFiles('android/bionic/build_deps.sh', 'android/bionic/build_fex.sh') }}
+      - name: Set native cross-compiler environment
+        shell: bash -el {0}
+        run: |
+          bash ci/setup-deps.sh "$CONDA_PREFIX"
+          echo "TLOU_BIONIC_HEADERS=$CONDA_PREFIX" >> "$GITHUB_ENV"
+          echo "TLOU_NDK=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+      - name: Build current Bionic dependency libraries
+        shell: bash -el {0}
+        run: bash android/bionic/build_deps.sh
+      - name: Build real ARM64 AOT CPU (never build or stage FEX CPU)
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          bash android/bionic/build_aot_cpu.sh
+          mkdir -p out/android-bionic/lib
+          cp out/android-bionic/aot-backend/libgow3cpu.so out/android-bionic/lib/libgow3cpu.so
+          cp "$TLOU_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" out/android-bionic/lib/
+          cmp out/android-bionic/aot-backend/libgow3cpu.so out/android-bionic/lib/libgow3cpu.so
+      - name: Build source-native Vulkan renderer
+        shell: bash -el {0}
+        run: |
+          bash android/bionic/build_gpu.sh --configure-only
+          bash android/bionic/build_gpu.sh
+      - name: Link the actual native TLOU executable AGAINST AOT CPU
+        shell: bash -el {0}
+        run: bash android/bionic/build_runtime.sh --link-only
+      - name: Restore Python / Rust tooling read-only
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .local-deps/android/bionic-src/python-3.13.7
+            .local-deps/android/bionic-build/python-host-isolated-v1
+            .local-deps/android/bionic-build/python-android-isolated-v1
+            out/android-bionic/python
+            out/android-bionic/orbis-cargo
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tlou-install-tools-v1-${{ hashFiles('android/bionic/build_python.sh', 'android/bionic/build_pkg.sh') }}
+      - name: Build current on-phone game preparer and PKG installer
+        shell: bash -el {0}
+        run: |
+          bash android/bionic/build_python.sh
+          bash android/bionic/build_pkg.sh
+      - name: Retrieve immutable tested ARM64 TSO v3 compiler, no large LLVM cache created
+        uses: actions/download-artifact@v4
+        with:
+          name: TLOU-bb-recomp-1.3.0-TSO-STR-ARM64
+          path: out/android-bionic/aot-tso-compiler
+          run-id: '43347558246'
+          github-token: ${{ github.token }}
+      - name: Verify pinned ARM64 patched TSO compiler (mandatory, no fallback)
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          archive=out/android-bionic/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz
+          test -s "$archive"
+          echo "fed33b282195034ce0da405b3ad60f513451786c6fda59767344cbedb219e7c0  $archive" | sha256sum -c
+          export TLOU_TSO_REQUIRED=1
+          export TLOU_AOT_COMPILER_ARCHIVE="$PWD/$archive"
+          bash android/bionic/stage_aot_compiler.sh
+          grep -aFq '3-tlou-string' out/android-bionic/aot-compiler/bin/libbbrecomp.so
+      - name: Verify full native binary and application source identity
+        shell: bash -el {0}
+        run: |
+          python3 android/bionic/verify_bionic.py --ndk "$TLOU_NDK" --root out/android-bionic
+          cmp out/android-bionic/lib/libgow3cpu.so out/android-bionic/aot-backend/libgow3cpu.so
+          gradle -p android-launcher :app:testDebugUnitTest :app:lintVitalRelease --no-daemon --max-workers=2
+      - name: Package 0.2.0 with AOTNative v2 package and ORIGINAL debug signing certificate
+        shell: bash -el {0}
+        run: bash android/bionic/package_aotnative_v020.sh
+      - name: Publish verified installable v0.2.0 AOTNative APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64
+          path: |
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64.apk
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload native build errors and tests only, never the private signer
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-v020-AOTNative-release-failure
+          path: |
+            .local-deps/android/bionic-build/**/*.log
+            out/android-bionic/gpu/CMakeFiles/CMakeConfigureLog.yaml
+            out/android-bionic/gpu/CMakeCache.txt
+            android-launcher/app/build/reports/**
+          if-no-files-found: ignore

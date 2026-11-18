@@ -1,4 +1,4 @@
-name: TLOU 0.2.0 AOTNative v2 1.00 verified full-rebuild fallback
+name: TLOU 0.2.0 AOTNative v2 - 1.11 only
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -248,15 +248,15 @@ jobs:
             print('Verified',len(native),'native/driver assets unchanged and only 2 AOT tooling scripts updated')
           PY
           mkdir -p out/release
-          cp "$apk" out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64.apk
-          sha256sum out/release/*.apk > out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64.apk.sha256
+          cp "$apk" out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-ONLY-arm64.apk
+          sha256sum out/release/*.apk > out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-ONLY-arm64.apk.sha256
       - name: Publish corrected FINAL APK from current release source
         uses: actions/upload-artifact@v4
         with:
-          name: TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64
+          name: TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-ONLY-arm64
           path: |
-            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64.apk
-            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64.apk.sha256
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-ONLY-arm64.apk
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-ONLY-arm64.apk.sha256
             release-source-commit.txt
           if-no-files-found: error
           retention-days: 30

@@ -514,7 +514,9 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     // power-of-two arena pages for its 8 GiB A6xx low-memory profile.
     u64 requested_arena_page_size = u64{1} << MAX_ARENA_PAGE_BITS;
     if (const char* env = std::getenv("GOW3_ARENA_PAGE_MB")) {
-        if (std::string_view{env} == "1024") {
+        if (std::string_view{env} == "512") {
+            requested_arena_page_size = u64{1} << 29;
+        } else if (std::string_view{env} == "1024") {
             requested_arena_page_size = u64{1} << 30;
         } else if (std::string_view{env} == "2048") {
             requested_arena_page_size = u64{1} << 31;

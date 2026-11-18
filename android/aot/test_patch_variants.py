@@ -55,7 +55,12 @@ class AllPatchVariants(unittest.TestCase):
         compiler=(ROOT/"aot_local.py").read_text()
         self.assertIn("catalog_mode_100 = version == \"1.00\"",compiler)
         self.assertIn("create_catalog_100(",compiler)
-        self.assertIn('command.remove("--resume")',compiler)
+        # 1.00 must reuse verified intermediate shards when repairing
+        # missing native entry points, not force a full recompilation.
+        self.assertNotIn('command.remove("--resume")',compiler)
+        self.assertIn('"--progress", "--resume"',compiler)
+        self.assertIn('"repair_previous_100_aot": repair_100',compiler)
+        self.assertIn('"resume_enabled": "--resume" in command',compiler)
 
     def test_100_refuses_any_unverified_patch_bytes(self):
         originals={}

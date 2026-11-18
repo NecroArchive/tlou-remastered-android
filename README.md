@@ -2,12 +2,12 @@
 
 An Android adaptation of the PS4 **The Last of Us Remastered**, based on
 [ravencaio's PC port](https://github.com/ravencaio/tlou-remastered-pc).
-The game runs through an ARM64 Bionic runtime, FEX CPU translation and Vulkan rendering.
+The game runs through an ARM64 Bionic runtime, native ARM64 (AOT) CPU compilation and Vulkan rendering.
 
-**Version 0.1.1 · Android release update**
+**Version 0.2.0 · Native ARM64 Android release**
 
 [Português (Brasil)](README.pt-BR.md) · [Release notes](RELEASE_NOTES.md) ·
-[Releases](https://github.com/erickmendes22/tlou-remastered-android/releases) · [Android source](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-ui-approval-log32-20261105) ·
+[Releases](https://github.com/erickmendes22/tlou-remastered-android/releases) · [Android source](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-v020-from-stable-011) ·
 [YouTube — @daedalusemulator](https://www.youtube.com/@daedalusemulator)
 
 ## What is included
@@ -20,8 +20,8 @@ The game runs through an ARM64 Bionic runtime, FEX CPU translation and Vulkan re
 - Compact single-line FPS/GPU/CPU overlay, with position and visibility settings.
 - Original rendering resolution plus 720p, 540p and 360p patches; optional SSAO,
   motion blur, depth of field, bloom, sunlight-shadow and subsurface patches.
-- 30 or 60 FPS limit and VSync settings. Actual performance depends on the scene
-  and device; the 60 FPS limit is not a performance guarantee.
+- 30, 60 or 120 FPS limits and VSync settings. Actual performance depends on the scene
+  and device; the FPS limit is not a performance guarantee.
 - Bundled Vulkan drivers and driver import from ZIP or SO files.
 - Save import/export as ZIP, plus an in-game save selector with actual slot
   metadata and thumbnails when supplied by the game.
@@ -36,9 +36,10 @@ switches are not exposed in the public interface.
 ## Requirements and supported game
 
 - **Android 11 or later**, with a 64-bit ARM Android environment and Vulkan support.
-- Your own PS4 game dump. Recognized executable profiles include **01.00** and
-  **01.11**. Patches are selected by validated executable SHA-256, not by
-  CUSA alone.
+- Your own PS4 game dump, **updated to version 01.11**. **Version 01.00 is not
+  supported for gameplay or ARM64 compilation**; the launcher asks you to update
+  to 01.11. An original 01.00 folder may still be used to install/migrate a valid
+  01.11 update automatically. Executable patches use verified SHA-256, not CUSA alone.
 - **CUSA00552** is the primary reference; recognized regional IDs such as
   CUSA00556 must use a known, supported executable. A title ID alone does not
   establish patch compatibility.
@@ -64,14 +65,17 @@ constitute validation of every GPU in those families.
    build, install over it to retain app data and saves.
 2. Grant the requested file access, then choose the extracted game folder or
    install your PKG from the launcher.
-3. Let automatic preparation finish and select **Play**.
+3. If the game is 01.00, install its 01.11 update first. The launcher can
+   automatically migrate an existing valid 01.11 update. Then finish preparation
+   and compile the native ARM64 CPU before selecting **Play**.
 4. Adjust resolution, patches and controls as needed. Swipe right from the left
    edge during gameplay to open the menu.
 
 Use the app's save export before uninstalling or clearing its data.
 
-## Status of version 0.1.1
+## Status of version 0.2.0
 
+The CPU backend now requires native ARM64 (AOT) compilation of game version 01.11.
 This update improves UI polish and update handling; gameplay has been demonstrated
 on Android, but a complete playthrough and universal compatibility are not claimed.
 

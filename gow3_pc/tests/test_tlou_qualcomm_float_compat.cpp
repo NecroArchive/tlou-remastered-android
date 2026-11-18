@@ -50,7 +50,8 @@ int main() {
     assert(!Has(variant,17,4465) && !Has(variant,17,4466));
     assert(Has(variant,16,60));   // local size remains unchanged
     assert(variant[variant.size()-2] == 0x20013 && variant.back() == 1);
-    assert(!DropExplicitFloatControls(variant,variant)); // no flags left
+    Words second;
+    assert(!DropExplicitFloatControls(variant,second)); // no flags left
     Words malformed=src;
     malformed[5]=0;
     assert(!DropExplicitFloatControls(malformed,variant));

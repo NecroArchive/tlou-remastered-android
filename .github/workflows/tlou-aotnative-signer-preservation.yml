@@ -1,0 +1,40 @@
+name: TLOU AOTNative v2 signing identity preservation
+on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - '.github/workflows/tlou-aotnative-signer-preservation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  preserve:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Restore original AOTNative v2 signer (do not generate a new key)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-development-signing-v1
+          fail-on-cache-miss: true
+      - name: Verify original AOTNative v2 signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$HOME/.android/debug.keystore"
+          actual=$(keytool -exportcert -alias androiddebugkey -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | sha256sum | cut -d ' ' -f1)
+          test "$actual" = 'adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c'
+          echo "AOTNATIVE_V2_SIGNER_VALIDATED"
+      - name: Preserve independent AOTNative backup cache A
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-v2-signer-backup-20261118-a
+      - name: Preserve independent AOTNative backup cache B
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-v2-signer-backup-20261118-b
+      - name: Verify cache backup identifiers without publishing private key
+        run: echo "Preserved original key in AOTNative v2 primary and two redundant Actions caches. No keystore artifact is uploaded."

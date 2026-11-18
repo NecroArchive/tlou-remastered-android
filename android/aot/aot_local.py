@@ -120,7 +120,23 @@ TLOU_100_MIDCALL_CALLER = 0x8E4421
 TLOU_100_GRANULAR_CALL_FAMILY = (
     TLOU_100_MIDCALL_FUNCTION, TLOU_100_MIDCALL_PC,
     0x9105C0, 0x910670, TLOU_100_MIDCALL_CALLER,
+    # The actual 01.00 native CALL backtrace in the exported log.
+    0xFD27, 0xB266, 0xAAD921, 0xA8FFC2,
 )
+
+# Preemptively cover the related indirect-call families in ONE compilation,
+# not one newly discovered inner-function target per expensive AOT rebuild.
+# Same proven bounded instruction-offset sweep used for 01.11 worker hotspots.
+# 32+32+32+20+32 KiB ~148 KiB. Do not turn on whole-image granularity,
+# which could explode memory, native unit count and compilation time.
+TLOU_100_CALL_HOTSPOTS = (
+    (0x90C000, 0x914000),  # SIMD callback target (+0x910580)
+    (0x8E0000, 0x8E8000),  # indirect-call caller (+0x8e4421)
+    (0xA8C000, 0xA94000),  # callback backtrace (+0xa8ffc2)
+    (0xAAC000, 0xAB1000),  # callback backtrace (+0xaad921)
+    (0x9000, 0x11000),    # low-level dispatch (+0xb266,+0xfd27)
+)
+TLOU_100_CALL_HOTSPOT_STEP = 1
 TLOU_100_ENTRY_POLICY = "tlou-100-midcall-910580-v1"
 
 
@@ -230,6 +246,9 @@ def granular_risk_entries(eboot_sha: str, misses: Path | None,
         # Granularize its complete owner and the indirect caller; this is
         # not the expensive whole-image granularization.
         risk.update(TLOU_100_GRANULAR_CALL_FAMILY)
+        for first, last in TLOU_100_CALL_HOTSPOTS:
+            risk.update(range(first, min(last, image_size),
+                              TLOU_100_CALL_HOTSPOT_STEP))
     if eboot_sha == TLOU_111_SWITCH_SHA256:
         risk.update(TLOU_111_WORKER_JUMP_TARGETS)
         risk.update(TLOU_111_KNOWN_INDIRECT_CALLERS)
@@ -796,7 +815,10 @@ def main(argv=None):
                        verified_100_midcall_entries(staged, digest)]
                       if version == "1.00" else []),
                   "granular_risk_hint_count": len(granular_hints),
-                  "granular_policy": "verified-indirect-miss-owners-and-callers",
+                  "granular_policy": (
+                      "tlou-100-batched-call-hotspots-v1"
+                      if version == "1.00"
+                      else "verified-indirect-miss-owners-and-callers"),
                   "tso_profile": args.tso_profile,
                   "guest_memory_model": ("relaxed_ARM64_no_TSO_UNSAFE"
                                          if args.tso_profile == "off"

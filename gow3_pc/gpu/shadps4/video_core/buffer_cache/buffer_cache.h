@@ -114,7 +114,9 @@ class BufferCache {
     // gow3: arena pages are 4 GiB unless the driver's buffer size limit is lower (AMD's
     // Windows driver: 2 GiB); an arena spans up to two pages, so they shrink to half the limit.
     static constexpr u64 MAX_ARENA_PAGE_BITS = 32;
-    static constexpr u64 MIN_ARENA_PAGE_BITS = 30;
+    // Allow 512 MiB sparse pages on memory-constrained Adreno/KGSL devices.
+    // MAX_ARENA_PAGES also sizes the address_space lookup for the smaller granularity.
+    static constexpr u64 MIN_ARENA_PAGE_BITS = 29;
     static constexpr u64 MAX_ARENA_PAGES = u64{1} << (ADDRESS_SPACE_BITS - MIN_ARENA_PAGE_BITS);
     static constexpr u64 MIN_BLOCK_SIZE = 16_KB;
 

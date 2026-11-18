@@ -116,9 +116,9 @@ bool TryQualcommFloatControlVariant(vk::Device device, const vk::ComputePipeline
     }
     auto ci = original;
     ci.stage.module = *alt_module;
-    // The device's native subgroup width remains 64 even without an
-    // explicit required-size pNext; generic retry already tried both.
-    ci.stage.pNext = nullptr;
+    // Preserve the original required subgroup-size state. This retry changes
+    // only explicit floating-point controls in SPIR-V; group size, descriptors
+    // and Vulkan shader stage are byte-for-byte identical.
     auto [result, fallback] =
         device.createComputePipelineUnique(vk::PipelineCache{}, ci);
     if (result != vk::Result::eSuccess) {

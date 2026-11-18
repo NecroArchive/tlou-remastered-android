@@ -243,14 +243,10 @@ public final class MainActivity extends Activity {
             add(game,"Sair do aplicativo",false,this::finishAffinity);
         } else if(currentTab.equals("patches")) {
             LinearLayout box=card(root,"PATCHES");
-            box.addView(text("CPU ARM64: uma única compilação inclui todas as resoluções e patches validados da versão 1.11. Escolha qualquer combinação e reinicie o jogo; não é necessário recompilar. FEX também aplica os patches ao abrir. Recompile apenas ao mudar a versão do jogo ou atualizar o mecanismo AOT.",12,MUTED));
+            box.addView(text("CPU ARM64: uma única compilação inclui todas as resoluções e patches validados da versão 1.11. Escolha qualquer combinação e reinicie o jogo; não é necessário recompilar. Recompile apenas ao mudar a versão do jogo ou atualizar o compilador.",12,MUTED));
             choice(box,"resolution","Resolução interna",
                 new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                 new String[]{"original","720","540","360"},"original");
-            toggleSetting(box,"fps_unlock","Desbloquear FPS (até 120, experimental)",false);
-            toggleSetting(box,"shader_scan_scalar","Diagnóstico CPU: usar busca original (A/B)",false);
-            box.addView(text("Desligado = NEON; ligado = original. Reinicie o jogo entre os testes e exporte os logs.",12,MUTED));
-            box.addView(text("O desbloqueio desliga o VSync durante a sessão para evitar o teto de 60 FPS. Cinemáticas mantêm o ritmo de 60 Hz.",12,MUTED));
             toggleSetting(box,"ssao","Desativar SSAO",true);
             toggleSetting(box,"motion_blur","Desativar desfoque de movimento",true);
             toggleSetting(box,"depth_of_field","Desativar profundidade de campo",true);
@@ -262,25 +258,20 @@ public final class MainActivity extends Activity {
             add(box,"Restaurar patches e resolução",false,()->{
                 SharedPreferences.Editor edit=prefs.edit().putString("resolution","original");
                 for(String key:PortSettings.EFFECTS)edit.putBoolean(key,false);
-                edit.putBoolean("fps_unlock",false);
                 edit.apply();buildHome();
             });
         } else if(currentTab.equals("settings")) {
             LinearLayout video=card(root,"VÍDEO E TELA");
             screenChoice(video);
             choice(video,"fps_limit","Limite de FPS",
-                new String[]{"30 FPS","60 FPS"},
-                new String[]{"30","60"},"60");
+                new String[]{"30 FPS","60 FPS","120 FPS"},
+                new String[]{"30","60","120"},"60");
             toggleSetting(video,"vsync","VSync",true);
-            video.addView(text("Para desbloquear FPS até 120, abra a aba Patches. Quando ativo, o VSync é desativado na sessão sem alterar sua preferência salva.",12,MUTED));
+            video.addView(text("120 FPS desativa o VSync apenas durante a sessão. Cinemáticas preservam a cadência original.",12,MUTED));
             video.addView(text("Modo Unificado padrão: jogo, interface e mira na mesma resolução. Vídeos mantêm a decodificação original.",12,MUTED));
             video.addView(text("Sincronização da geometria: Completo (único modo). "
                 +"Correção de deformações mantida sem opções que não melhoraram o FPS.",12,MUTED));
-            choice(video,"adreno750_compact_present","Apresentação Vulkan compacta (8 Gen 3)",
-                new String[]{"Automático (somente Adreno 750)","Resolução original da tela","Compactar saída (teste em qualquer GPU)"},
-                new String[]{"auto","off","on"},"auto");
-            video.addView(text("Evita ampliar 720p para a resolução física antes de enviar a imagem ao Android. "
-                +"Não muda a resolução interna nem o driver. Reinicie o jogo para comparar FPS e estabilidade.",12,MUTED));
+            video.addView(text("Apresentação Vulkan: saída fixa em 1280 × 720 para Android em todos os processadores. A resolução interna do jogo permanece independente.",12,MUTED));
             LinearLayout drivers=card(root,"DRIVER VULKAN");
             driverInfo=text("",12,MUTED);drivers.addView(driverInfo);
             add(drivers,"Selecionar driver Vulkan",false,this::selectDriver);
@@ -294,32 +285,15 @@ public final class MainActivity extends Activity {
             toggleSetting(drivers,"gpu_turbo","Adreno Turbo (sem root)",false);
             drivers.addView(text("Política KGSL de máximo desempenho; a proteção térmica continua ativa. Pode não funcionar em todos os dispositivos.",12,MUTED));
             LinearLayout cpu=card(root,"CPU E DESEMPENHO");
-            toggleSetting(cpu,"fast_render_cores","Priorizar núcleos rápidos (experimental)",false);
-            cpu.addView(text("Não força o clock. Limita as threads críticas aos núcleos mais rápidos; reinicie o jogo para aplicar. Pode aumentar a disputa entre threads.",12,MUTED));
-            toggleSetting(cpu,"aot_gpu_prime_split_v2",
-                "AOT: usar os dois núcleos prime sem pinagem exclusiva (A/B)",false);
-            cpu.addView(text("Experimental, somente ARM64 AOT: se houver dois núcleos prime permitidos, "
-                +"permite comandos e draws em ambos os prime. Os seis workers permanecem "
-                +"com todos os núcleos disponíveis. Não habilite junto com 'Priorizar núcleos rápidos' "
-                +"no primeiro teste. Não aumenta clocks e pode piorar o FPS; reinicie o jogo.",12,MUTED));
             toggleSetting(cpu,"adpf","ADPF — ajuste dinâmico de desempenho",false);
-            choice(cpu,"cpu_backend","Processador do jogo",
-                new String[]{"ARM64 recompilado (AOT experimental)","FEX (estável)"},
-                new String[]{"aot","fex"},"fex");
+            cpu.addView(text("Processador: ARM64 recompilado (AOT). Compilação obrigatória antes de jogar.",13,TEXT));
             boolean nativeCompiled=RuntimeAot.hasCompletedVariantBuild(this);
             cpu.addView(text(TlouLanguage.t(this,"CPU ARM64: ")+TlouLanguage.t(this,
                 nativeCompiled?"já compilada":"ainda não compilada")
                 +TlouLanguage.t(this,". A compilação inclui todos os patches e resoluções 1.11. Alterar opções não exige recompilar; atualizações do jogo ou do compilador podem exigir."),12,MUTED));
             add(cpu,"Compilar CPU ARM64",false,
                 ()->withAccess(this::buildSelectedAot));
-            toggleSetting(cpu,"aot_detailed_diagnostics",
-                "Diagnóstico aprofundado AOT (reduz FPS)",false);
-            cpu.addView(text("Desligado por padrão: evita cronometrar milhões de chamadas ARM64; "
-                +"a coleta de CPU das seis threads, as falhas e os endereços AOT ausentes continuam ativos. "
-                +"Ligue somente para investigar um problema específico.",12,MUTED));
-            cpu.addView(text("ARM64 AOT executa o código recompilado diretamente. "
-                +"FEX continua disponível; funções não cobertas pelo AOT são registradas "
-                +"nos logs para recompilação incremental. Ainda é experimental.",12,MUTED));
+            cpu.addView(text("O ARM64 AOT executa código recompilado diretamente. O compilador prepara todas as variantes de patches da versão 1.11 e evita recompilações ao trocar opções.",12,MUTED));
             LinearLayout app=card(root,"IDIOMA E INTERFACE");
             languageChoice(app);
             app.addView(text("O idioma do jogo é escolhido no próprio The Last of Us.",12,MUTED));
@@ -537,21 +511,17 @@ public final class MainActivity extends Activity {
             saved.apply();
             update("Pronto para jogar.");
             if(launch) {
-                if("aot".equals(prefs.getString("cpu_backend","fex"))) {
-                    // ZIP A6xx: report status=staged, no libtlouaot.so. Check
-                    // BEFORE GameActivity creates a presenter or launches.
-                    try {
-                        RuntimeAot.Ready check=RuntimeAot.prepare(this,prepared);
-                        if(!check.pendingCodePatches.isEmpty())
-                            throw new IOException("Biblioteca ARM64 desatualizada.");
-                    } catch(Exception aotProblem) {
-                        RunLog.failure(this,"AOT não pronto; bloqueando inicialização",aotProblem);
-                        prefs.edit().putBoolean("launch_direct",false).apply();
-                        runOnUiThread(()->{
-                            if(!isDestroyed())showAotUnavailable(prepared,aotProblem);
-                        });
-                        return;
-                    }
+                try {
+                    RuntimeAot.Ready check=RuntimeAot.prepare(this,prepared);
+                    if(!check.pendingCodePatches.isEmpty())
+                        throw new IOException("Biblioteca ARM64 desatualizada.");
+                } catch(Exception aotProblem) {
+                    RunLog.failure(this,"AOT não pronto; compilação obrigatória",aotProblem);
+                    prefs.edit().putBoolean("launch_direct",false).apply();
+                    runOnUiThread(()->{
+                        if(!isDestroyed())showAotUnavailable(prepared,aotProblem);
+                    });
+                    return;
                 }
                 startPreparedGame(prepared);
             }
@@ -575,17 +545,13 @@ public final class MainActivity extends Activity {
     private void showAotUnavailable(File prepared,Exception reason) {
         if(isFinishing()||isDestroyed())return;
         final String message=TlouLanguage.t(this,
-            "A CPU ARM64 ainda não está pronta para este jogo. Compile a CPU uma vez, ou use FEX para iniciar sem esperar pela compilação.")+
+            "A CPU ARM64 ainda não está pronta para este jogo. É obrigatório compilar o jogo antes de iniciar.")+
             "\n\n"+TlouLanguage.t(this,
             "Motivo técnico (veja o log para detalhes):")+" "+reason.getMessage();
         TlouDialogs.show(this,new AlertDialog.Builder(this)
             .setTitle(TlouLanguage.t(this,"CPU ARM64 não disponível"))
             .setMessage(message)
             .setNegativeButton(TlouLanguage.t(this,"Cancelar"),null)
-            .setNeutralButton(TlouLanguage.t(this,"Usar FEX"),(d,w)->{
-                prefs.edit().putString("cpu_backend","fex").apply();
-                startPreparedGame(prepared);
-            })
             .setPositiveButton(TlouLanguage.t(this,"Compilar CPU ARM64"),(d,w)->
                 withAccess(()->compileSelectedAot(true))));
     }
@@ -630,8 +596,7 @@ public final class MainActivity extends Activity {
             RuntimeAot.Ready ready=RuntimeAot.prepare(this,prepared);
             if(!ready.pendingCodePatches.isEmpty())
                 throw new IOException("Patches ARM64 continuam pendentes. Não iniciando o jogo.");
-            prefs.edit().putString("cpu_backend","aot")
-                .putString("prepared_path",prepared.getAbsolutePath()).apply();
+            prefs.edit().putString("prepared_path",prepared.getAbsolutePath()).apply();
             String message=TlouLanguage.t(this,"CPU ARM64 atualizada: ")+valid+
                 TlouLanguage.t(this," unidades válidas, ")+unsupported+
                 TlouLanguage.t(this," ainda não suportadas. Todas as variantes de patches 1.11 disponíveis.");

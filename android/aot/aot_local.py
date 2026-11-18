@@ -140,24 +140,46 @@ TLOU_100_CALL_HOTSPOT_STEP = 1
 TLOU_100_ENTRY_POLICY = "tlou-100-batched-call-hotspots-v2"
 
 
-def verified_100_midcall_entries(boot: Path, eboot_sha: str) -> list[int]:
-    """Preseed the repeatable 01.00 mid-function CALL failure safely.
+def verified_100_midcall_status(boot: Path, eboot_sha: str) -> dict | None:
+    """Verify the target in the linked executable, not a brittle SELF hash.
 
-    The guest image can contain different linked code than its original SELF.
-    Refuse the seed when its exact 32-byte code signature differs.
+    main() already checks the game SHA-256 and compares ALL executable bytes
+    with the linked image via verify_eboot_image(). A 32-byte signature taken
+    from the SELF must not prevent compiling a valid linked image. If it does
+    not match, request a fresh build instead of reusing old compiled shards.
+    The compiler then proves +0x910580 exists using --check-entries.
     """
     if eboot_sha != TLOU_100_CALL_SELF_SHA256:
-        return []
-    size = check_boot(boot)["size"]
-    if TLOU_100_MIDCALL_PC + TLOU_100_MIDCALL_SIGNATURE_LEN > size:
-        raise ValueError("Verified 1.00 native CALL is outside linked image")
-    start = boot.stat().st_size - size
+        return None
+    try:
+        from .patch_variants import boot_layout
+    except ImportError:
+        from patch_variants import boot_layout
+    image_start, size, segments = boot_layout(boot)
+    address = TLOU_100_MIDCALL_PC
+    length = TLOU_100_MIDCALL_SIGNATURE_LEN
+    if address + length > size or not any(
+        start <= address and address + length <= end and executable
+        for start, end, executable in segments
+    ):
+        raise ValueError("1.00 AOT CALL address is outside executable linked code")
     with boot.open("rb") as stream:
-        stream.seek(start + TLOU_100_MIDCALL_PC)
-        signature = stream.read(TLOU_100_MIDCALL_SIGNATURE_LEN)
-    if hashlib.sha256(signature).hexdigest() != TLOU_100_MIDCALL_SIGNATURE_SHA256:
-        raise ValueError("1.00 mid-function CALL signature mismatch; refuse unsafe AOT entry")
-    return [TLOU_100_MIDCALL_PC]
+        stream.seek(image_start + address)
+        code = stream.read(length)
+    if len(code) != length:
+        raise ValueError("Truncated linked CALL instruction data")
+    return {
+        "entry": address,
+        "signature_matches": (
+            hashlib.sha256(code).hexdigest() ==
+            TLOU_100_MIDCALL_SIGNATURE_SHA256
+        ),
+    }
+
+
+def verified_100_midcall_entries(boot: Path, eboot_sha: str) -> list[int]:
+    status = verified_100_midcall_status(boot, eboot_sha)
+    return [status["entry"]] if status else []
 
 
 
@@ -786,6 +808,28 @@ def main(argv=None):
                                   != TLOU_100_ENTRY_POLICY
                                   or previous.get("granular_policy")
                                   != "tlou-100-batched-call-hotspots-v1")
+        midcall_status = (
+            verified_100_midcall_status(staged, digest)
+            if catalog_mode_100 else None
+        )
+        # If the historical signature mismatches, do not consume potentially
+        # incompatible intermediate code. Recompile fully ONCE. A subsequent
+        # build with the same input and the compiler-verified entry policy may
+        # safely resume; --check-entries remains mandatory on every run.
+        previously_proven_100 = bool(
+            previous_100_report is not None and
+            previous_100_report.get("verified_100_entry_policy")
+                == TLOU_100_ENTRY_POLICY and
+            previous_100_report.get("entry_check_completed") is True and
+            previous_100_report.get("status") == "aarch64_generated_native_ready"
+        )
+        full_rebuild_100 = bool(
+            catalog_mode_100 and midcall_status is not None
+            and not midcall_status["signature_matches"]
+            and not previously_proven_100
+        )
+        if full_rebuild_100:
+            command.remove("--resume")
         # All 11 entries of the verified 1.11 scheduler switch are seeded at
         # once. This avoids repeated full recompilation as new cases execute.
         seed_file = aot / "verified-extra-entries.txt"
@@ -839,6 +883,11 @@ def main(argv=None):
                   "verified_switch_targets": [f"+0x{x:x}" for x in seed_targets],
                   "extra_entry_count": len(added_entries),
                   "resume_enabled": "--resume" in command,
+                  "full_rebuild_100": full_rebuild_100,
+                  "linked_midcall_signature_matches": (
+                      midcall_status["signature_matches"]
+                      if midcall_status is not None else None),
+                  "entry_check_completed": False,
                   "repair_previous_100_aot": repair_100,
                   "repair_previous_100_units": (
                       previous_100_report.get("unit_count",0)
@@ -894,13 +943,16 @@ def main(argv=None):
                 if not reuse:
                     reuse = re.search(
                         r"resume:\s*reused (\d+) of (\d+) shards", stats)
-                if not reuse:
-                    raise ValueError("Native 01.00 resume statistics missing")
-                reused, total = (int(reuse.group(1)), int(reuse.group(2)))
-                if not (0 <= reused <= total == args.shards):
-                    raise ValueError("Invalid native shard reuse counters")
-                report["reuse_shards"] = reused
-                report["rebuilt_shards"] = total - reused
+                if reuse:
+                    reused, total = (int(reuse.group(1)), int(reuse.group(2)))
+                    if 0 <= reused <= total == args.shards:
+                        report["reuse_shards"] = reused
+                        report["rebuilt_shards"] = total - reused
+                elif full_rebuild_100:
+                    report["reuse_shards"] = 0
+                    report["rebuilt_shards"] = args.shards
+                # Reuse counts are informative, never a blocker if the
+                # compiler has successfully checked all requested entries.
                 report["repair_status"] = (
                     "verified-native-100-entry-repaired"
                     if repair_100 else "verified-native-100-entry-ready")
@@ -910,6 +962,7 @@ def main(argv=None):
                     aot / "compile.txt", variant_info)
                 if int(meta.get("abi_flags", 0)) & 6 != 6:
                     raise ValueError("Native variant ABI lacks dirty-entry and variant flags")
+            report["entry_check_completed"] = bool(checked_entries)
             report["status"] = "aarch64_generated_native_ready"
             report["runtime_integrated"] = True
             report["unit_count"] = meta.get("unit_count")

@@ -46,15 +46,24 @@ class Release011(unittest.TestCase):
         self.assertIn('RunLog.export(this,output)',(JAVA/"GameActivity.java").read_text())
         self.assertIn('TlouDialogs.showLogs(this,RunLog.summary(this),this::exportLogs)',(JAVA/"MainActivity.java").read_text())
 
-    def test_release_artifacts_use_new_filename_but_keep_pinned_source_identity(self):
-        name="TheLastOfUsRemastered-Android-v0.1.1-arm64.apk"
-        package=(ROOT/"android/bionic/package_apk.sh").read_text()
+    def test_stable_020_release_preserves_original_package_and_certificate(self):
+        build=(ANDROID/"build.gradle").read_text()
         workflow=(ROOT/".github/workflows/tlou-native-apk.yml").read_text()
-        self.assertIn(name,package)
-        self.assertIn(name,workflow)
-        self.assertIn('out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk',workflow)
-        self.assertIn('name: TheLastOfUsRemastered-Android-v0.1.1-arm64',workflow)
-        self.assertIn('v0.1.1',(ROOT/"RELEASE_NOTES.md").read_text())
+        self.assertIn("applicationId 'com.daedalus.tlou.remastered'",build)
+        self.assertIn("versionName '0.2.0'",build)
+        self.assertIn("versionCode 200",build)
+        self.assertIn("branches: [android-bionic-stage1]",workflow)
+        self.assertIn("name: TLOU-Android-v0.2.0-Stable-Release-APK",workflow)
+        self.assertIn("TheLastOfUsRemastered-Android-v0.2.0-arm64.apk",workflow)
+        self.assertIn("TheLastOfUsRemastered-Android-v0.1.1-arm64.apk",workflow)
+        self.assertIn("key: tlou-development-signing-v2",workflow)
+        self.assertIn('diff -u out/old-cert out/new-cert',workflow)
+        self.assertIn("app:assembleRelease",workflow)
+        self.assertIn("out/native-gpu/gow3-probe",workflow)
+        self.assertIn("out/android-bionic/apk-assets/runtime/gow3-probe",workflow)
+        self.assertNotIn("name: TLOU-v011-Complete-AOT-Patch-Variants-APK",workflow)
+        self.assertNotIn("app:assembleDebug",workflow)
+        self.assertIn("v0.2.0",(ROOT/"RELEASE_NOTES.md").read_text())
 
 if __name__=="__main__":
     unittest.main()

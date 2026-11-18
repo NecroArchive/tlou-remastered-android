@@ -1,3 +1,56 @@
+# The Last of Us Remastered — Daedalus Android v0.2.0
+
+## Português (Brasil)
+
+Versão **0.2.0** do APK estável, compilada na branch `android-bionic-stage1`
+com o mesmo identificador de pacote e certificado de assinatura do release 0.1.1.
+
+- CPU ARM64 recompilada (AOT) obrigatória. A compilação inicial inclui todas
+  as variantes de patches da atualização 1.11; não é preciso recompilar por
+  mudança de resolução ou de opção de patch.
+- Atualizações 1.11 que ainda usam o método antigo de overlay são migradas
+  para a pasta do jogo antes da compilação, com cópia transacional e validação.
+- Saída Vulkan fixa em 1280 × 720 para o Android, independentemente do SoC
+  (sem alterar a resolução interna do jogo).
+- Limite de 120 FPS movido para Vídeo; opções de teste A/B, afinidade manual
+  dos núcleos, alternância FEX e diagnóstico profundo AOT removidas.
+- Distribuição automática de threads nos processadores Oryon.
+- **L3 + R3 no controle físico** simula a agitação do DualShock para a recarga
+  da lanterna. Botão **AGITAR** independente e reposicionável na tela.
+- GPU Vulkan atualizada com tentativas de compatibilidade para drivers
+  Qualcomm; funcionamento nesses drivers ainda não confirmado em todos os aparelhos.
+
+A assinatura é conferida automaticamente contra o APK original 0.1.1 no
+GitHub Actions. A instalação experimental `.aotnative2` é separada e
+**não** pode ser atualizada diretamente pelo APK estável.
+Nenhum arquivo do jogo é incluído. A campanha completa e o comportamento
+da lanterna no aparelho ainda precisam de validação.
+
+## English
+
+Stable **v0.2.0** APK built from `android-bionic-stage1`, retaining the
+original stable 0.1.1 package name and signing certificate.
+
+- Mandatory native ARM64 AOT backend, compiling all supported 1.11 patch
+  variants together; no recompilation for changing patch or resolution.
+- Transactional migration of older 1.11 overlay updates into the game folder
+  before compilation, with version verification.
+- Fixed 1280 × 720 Vulkan output to Android on supported devices while
+  retaining independently selected internal game resolution.
+- 120 FPS option moved to Video; removed FEX backend selection, manual
+  fast-core switches, and experimental CPU/AOT benchmark controls.
+- Automatic Oryon CPU scheduling.
+- Physical **L3 + R3** combination and movable **SHAKE** touchscreen button
+  simulate DualShock motion for flashlight recharging.
+- New Qualcomm proprietary Vulkan compatibility attempts; device-specific
+  gameplay success is not yet established.
+
+CI verifies the release APK's certificate against the original 0.1.1 APK.
+The experimental `.aotnative2` package is a separate installation and cannot
+be updated directly with this stable APK. Game assets are not included.
+
+---
+
 # v0.1 — First public Android build / Primeiro lançamento Android
 
 ## Português (Brasil)

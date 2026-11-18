@@ -85,46 +85,27 @@ public final class TlouDevicePolicyTest {
         e=env();
         ok("normal".equals(TlouDevicePolicy.configureMemory(e,0)),
             "unavailable RAM information must fail open");
-        // 8 Gen 3 logs: native 720p raster but Vulkan allocated 2480x1116
-        // AHB output. Preserve the real Android window, only shrink Vulkan
-        // color/present surfaces for A750 (unless explicitly opted out).
-        e=env();
-        e.put("GOW3_SCREEN_W","2480"); e.put("GOW3_SCREEN_H","1116");
-        ok("compact-1280x720".equals(TlouDevicePolicy.configureCompactPresent(
-            e,"auto","Adreno (TM) 750","720")), "A750 should use 720p output");
-        ok("1280".equals(e.get("GOW3_SCREEN_W")) &&
-           "720".equals(e.get("GOW3_SCREEN_H")), "real AHB resolution 720p");
-        e=env();
-        e.put("GOW3_SCREEN_W","2480"); e.put("GOW3_SCREEN_H","1116");
-        ok("disabled".equals(TlouDevicePolicy.configureCompactPresent(
-            e,"off","Adreno 750","720")), "A/B off must retain original surface");
-        ok("2480".equals(e.get("GOW3_SCREEN_W")), "opt-out preserves output");
-        for(String gpu:new String[]{"Adreno 740","Adreno 730","Adreno 830",
-                                    "Adreno 840","Mali-G720"}) {
-            e=env();
-            e.put("GOW3_SCREEN_W","2480"); e.put("GOW3_SCREEN_H","1116");
-            ok("auto-not-adreno750".equals(TlouDevicePolicy.configureCompactPresent(
-                e,"auto",gpu,"720")), "other GPUs must remain unchanged: "+gpu);
-            ok("2480".equals(e.get("GOW3_SCREEN_W")),gpu+" output preserved");
+        ok(TlouDevicePolicy.isOryonSoc("SM8750"),"8 Elite Oryon");
+        ok(TlouDevicePolicy.isOryonSoc("SM8850"),"Elite Gen 5 Oryon");
+        ok(TlouDevicePolicy.isOryonSoc("Snapdragon Oryon"),"Oryon name");
+        ok(!TlouDevicePolicy.isOryonSoc("SM8650"),"8 Gen 3 is not Oryon");
+        ok(!TlouDevicePolicy.isOryonSoc("SM8475"),"older Snapdragon not Oryon");
+        for(String gpu:new String[]{"Adreno 750","Adreno 830","Adreno 840","Mali-G720"}) {
+            e=env();e.put("GOW3_SCREEN_W","2480");e.put("GOW3_SCREEN_H","1116");
+            ok("fixed-1280x720".equals(TlouDevicePolicy.configureCompactPresent(e)),
+                "720p output independent of GPU: "+gpu);
+            ok("1280".equals(e.get("GOW3_SCREEN_W")) &&
+               "720".equals(e.get("GOW3_SCREEN_H")), "exact output size");
         }
-        e=env(); e.put("GOW3_SCREEN_W","2480");e.put("GOW3_SCREEN_H","1116");
-        ok("compact-960x540".equals(TlouDevicePolicy.configureCompactPresent(
-            e,"auto","Adreno 750","540")), "540p follows compiled AOT patch");
-        e=env(); e.put("GOW3_SCREEN_W","2480");e.put("GOW3_SCREEN_H","1116");
-        ok("compact-640x360".equals(TlouDevicePolicy.configureCompactPresent(
-            e,"auto","Adreno 750","360")), "360p follows compiled AOT patch");
-        e=env(); e.put("GOW3_SCREEN_W","2480");e.put("GOW3_SCREEN_H","1116");
-        ok("compact-1920x1080".equals(TlouDevicePolicy.configureCompactPresent(
-            e,"auto","Adreno 750","original")), "native raster when unpatched");
-        e=env(); e.put("GOW3_SCREEN_W","2480");e.put("GOW3_SCREEN_H","1116");
-        ok("unknown-guest-raster".equals(TlouDevicePolicy.configureCompactPresent(
-            e,"auto","Adreno 750","unknown")), "fail open to original surface");
-        e=env(); e.put("GOW3_SCREEN_W","1280");e.put("GOW3_SCREEN_H","720");
-        ok("not-smaller".equals(TlouDevicePolicy.configureCompactPresent(
-            e,"auto","Adreno 750","720")), "do not create larger buffers");
-        e=env(); e.put("GOW3_SCREEN_W","1116");e.put("GOW3_SCREEN_H","2480");
-        ok("not-smaller".equals(TlouDevicePolicy.configureCompactPresent(
-            e,"auto","Adreno 750","720")), "portrait surfaces must be untouched");
-        System.out.println("TlouDevicePolicyTest: PASS (A740 UBWC, A750 AHB, A6xx/A8xx unchanged, 8 GB RAM)");
+        e=env();e.put("GOW3_SCREEN_W","1280");e.put("GOW3_SCREEN_H","720");
+        ok("fixed-1280x720".equals(TlouDevicePolicy.configureCompactPresent(e)),
+            "already compact");
+        e=env();e.put("GOW3_SCREEN_W","960");e.put("GOW3_SCREEN_H","540");
+        ok("display-smaller-than-720p".equals(TlouDevicePolicy.configureCompactPresent(e)),
+            "do not upscale smaller physical screen");
+        e=env();e.put("GOW3_SCREEN_W","1116");e.put("GOW3_SCREEN_H","2480");
+        ok("display-smaller-than-720p".equals(TlouDevicePolicy.configureCompactPresent(e)),
+            "portrait display unchanged");
+        System.out.println("TlouDevicePolicyTest: PASS (A740 UBWC, 720p all SoCs, Oryon automatic, A6xx/A8xx memory, 8 GB RAM)");
     }
 }

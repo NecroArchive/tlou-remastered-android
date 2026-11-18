@@ -17,17 +17,25 @@ public class TsoProfileUpdateVersionTest {
             .put("version","01.00")
             .put("update_version","01.11");
         assertEquals("111",TsoProfile.gameCode(marker));
+        TsoProfile.requireSupported111(marker);
     }
 
     @Test public void physical111Remains111() throws Exception {
         JSONObject marker=new JSONObject()
             .put("version","01.11").put("update_version",JSONObject.NULL);
         assertEquals("111",TsoProfile.gameCode(marker));
+        TsoProfile.requireSupported111(marker);
     }
 
     @Test public void base100Remains100() throws Exception {
         JSONObject marker=new JSONObject().put("version","01.00");
         assertEquals("100",TsoProfile.gameCode(marker));
+        try {
+            TsoProfile.requireSupported111(marker);
+            fail("1.00 must be blocked before launching or compiling AOT");
+        } catch(java.io.IOException expected) {
+            assertTrue(expected.getMessage().contains("Atualize o jogo para 1.11"));
+        }
     }
 
     @Test public void unknownDoesNotSelectLegacyCompilerDirectory() throws Exception {

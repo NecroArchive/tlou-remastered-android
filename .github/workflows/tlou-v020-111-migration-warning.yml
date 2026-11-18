@@ -1,0 +1,220 @@
+name: TLOU 0.2.0 AOTNative v2 1.11 preserved + 1.00 warning
+on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - '.github/workflows/tlou-v020-111-migration-warning.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout current 0.2.0 release code (all UI corrections)
+        uses: actions/checkout@v4
+        with:
+          ref: tlou-v020-from-stable-011
+      - name: Validate ALL requested release features before using original native engine
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD | tee release-source-commit.txt
+          grep -Fq "versionName '0.2.0'" android-launcher/app/build.gradle
+          ! grep -Fq "versionNameSuffix '-AOT-native-v2'" android-launcher/app/build.gradle
+          # Assert clean UI actually ships instead of just changing an unused source file.
+          ! grep -Fq 'CPU ARM64: uma única compilação inclui' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          ! grep -Fq 'Modo Unificado padrão:' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          ! grep -Fq 'Sincronização da geometria: Completo' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          ! grep -Fq 'row(credits,"Execução da CPU"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/AboutPanel.java
+          ! grep -Fq 'Patches validados para o eboot reconhecido' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortMenu.java
+          grep -Fq "applicationIdSuffix '.aotnative2'" android-launcher/app/build.gradle
+          grep -Fq 'controlSizeSetting(controls)' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          grep -Fq 'slider("control_size"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortMenu.java
+          grep -Fq 'keys.contains("l3") && keys.contains("r3")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PadBridge.java
+          grep -Fq '"shake"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TouchControllerOverlay.java
+          grep -Fq 'RuntimeAot.prepare(this,base)' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          ! grep -Fq 'FEX_APP_CONFIG_LOCATION' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'TlouDevicePolicy.configureCompactPresent(env)' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'choice(video,"fps_limit"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          grep -Fq 'TLOU_AOT_SPLIT_PRIME' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+          # Ensure 1.00/1.11 is read from REAL PS4 param.sfo,
+          # not from old user preferences or the 1.00 base when a 1.11
+          # update is selected.
+          grep -Fq 'Ps4SfoVersion.fromFolder(game)' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          grep -Fq 'installPhysicalUpdate(game,installedUpdate,true)' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          grep -Fq 'MigrationWouldInvalidateAot' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          grep -Fq 'Versão 1.00 — desempenho inferior' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          grep -Fq 'Recomendamos atualizar o jogo para a versão 1.11' android-launcher/app/src/main/assets/ui-translations.tsv
+          grep -Fq 'tlou-aot-work-off-100' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TsoProfile.java
+      - name: Restore original AOTNative v2 certificate (never create a new key)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-development-signing-v1
+          restore-keys: |
+            tlou-aotnative-v2-signer-backup-20261118-a
+            tlou-aotnative-v2-signer-backup-20261118-b
+          fail-on-cache-miss: true
+      - name: Verify original AOTNative v2 signer
+        run: |
+          set -euo pipefail
+          actual=$(keytool -exportcert -alias androiddebugkey -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | sha256sum | cut -d ' ' -f1)
+          test "$actual" = adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - name: Download FULL NATIVE AOT 0.2.0 produced by original release build
+        uses: actions/download-artifact@v4
+        with:
+          name: TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64
+          path: out/source-apk
+          github-token: ${{ github.token }}
+          run-id: '44285939433'
+      - name: Reuse ONLY verified Bionic AOT CPU/GPU, tools, drivers and 720p runtime (not old launcher)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib
+          root=Path('out/source-apk')
+          apk=root/'TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64.apk'
+          assert apk.is_file() and apk.stat().st_size>60_000_000,'Signed AOTNative v0.2.0 native base missing'
+          sha=Path(str(apk)+'.sha256').read_text().split()[0]
+          assert hashlib.file_digest(apk.open('rb'),'sha256').hexdigest()==sha,'Pinned AOT APK digest mismatch'
+          stage=Path('out/android-bionic')
+          allowed=('assets/runtime/','assets/runtime-aot/','assets/drivers/','assets/tools.zip')
+          count=0
+          with zipfile.ZipFile(apk) as z:
+            names=set(z.namelist())
+            required={'lib/arm64-v8a/libgow3cpu.so','lib/arm64-v8a/libgow3gpu.so','lib/arm64-v8a/libgow3present.so','assets/runtime/gow3-probe','assets/runtime-aot/libgow3cpu.so','assets/runtime-aot/libbbcpu.so','assets/tools.zip'}
+            assert required.issubset(names),'Native AOT base is incomplete'
+            assert z.read('lib/arm64-v8a/libgow3cpu.so')==z.read('assets/runtime-aot/libgow3cpu.so'),'Native CPU and AOT CPU differ'
+            for member in z.infolist():
+              n=member.filename
+              if member.is_dir():continue
+              if n.startswith('lib/arm64-v8a/'):
+                dest=stage/'apk-jni/arm64-v8a'/n.split('/',2)[2]
+              elif n.startswith('assets/') and (n.startswith(allowed)):
+                dest=stage/'apk-assets'/n[len('assets/'):]
+              else:continue
+              dest.parent.mkdir(parents=True,exist_ok=True)
+              dest.write_bytes(z.read(member))
+              count+=1
+          assert count>=10, 'No native runtime staged'
+          print('Reused byte-identical full native AOT v0.2.0 payload',count,'APK files')
+          PY
+      - name: Test complete 1.00 AOT patch variant source before packaging
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s android/aot -p test_patch_variants.py -v
+          grep -Fq 'catalog_mode_100 = version == "1.00"' android/aot/aot_local.py
+          grep -Fq 'create_catalog_100' android/aot/patch_variants.py
+          grep -Fq '"tlou-100-variants-v1"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java
+      - name: Replace ONLY the two on-device AOT scripts inside tools.zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          from tempfile import NamedTemporaryFile
+          import os
+          archive=Path('out/android-bionic/apk-assets/tools.zip')
+          assert archive.is_file()
+          replacement={
+              'source/android/aot/aot_local.py':Path('android/aot/aot_local.py').read_bytes(),
+              'source/android/aot/patch_variants.py':Path('android/aot/patch_variants.py').read_bytes(),
+          }
+          with NamedTemporaryFile(dir=archive.parent,suffix='.zip',delete=False) as temp:
+              temporary=Path(temp.name)
+          try:
+              with ZipFile(archive,'r') as source, ZipFile(temporary,'w',allowZip64=True) as target:
+                  actual=set(source.namelist())
+                  assert set(replacement).issubset(actual)
+                  for info in source.infolist():
+                      if info.is_dir():
+                          target.writestr(info,b'')
+                          continue
+                      target.writestr(info,replacement.get(info.filename,source.read(info.filename)))
+              with ZipFile(archive) as original,ZipFile(temporary) as updated:
+                  assert set(original.namelist())==set(updated.namelist())
+                  for name in original.namelist():
+                      if name in replacement:
+                          assert updated.read(name)==replacement[name]
+                      else:
+                          assert original.read(name)==updated.read(name),name
+              os.replace(temporary,archive)
+          finally:
+              temporary.unlink(missing_ok=True)
+          print('AOT 1.00 patched-function variants shipped in APK; all other tools.zip members identical')
+          PY
+      - name: Generate native save-choice fixture used by actual launcher tests
+        run: python3 gow3_pc/tests/test_android_save_choice.py
+      - name: Compile and test CORRECTED 0.2.0 launcher UI and settings
+        run: gradle -p android-launcher :app:testDebugUnitTest :app:assembleDebug --no-daemon --max-workers=2
+      - name: Verify native equality, actual package, version and original signing cert
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          base=out/source-apk/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64.apk
+          apk=android-launcher/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$apk"
+          "$tools/apksigner" verify --verbose "$apk"
+          "$tools/apksigner" verify --print-certs "$apk" | grep -Fq adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c
+          "$tools/aapt" dump badging "$apk" | grep -E "package: name='com.daedalus.tlou.remastered.aotnative2' versionCode='200' versionName='0.2.0'"
+          python3 android/bionic/check_tools_apk.py "$apk"
+          python3 - "$base" "$apk" <<'PY'
+          from zipfile import ZipFile
+          import sys,hashlib
+          with ZipFile(sys.argv[1]) as original,ZipFile(sys.argv[2]) as updated:
+            native=[n for n in original.namelist() if n.startswith(('lib/arm64-v8a/','assets/runtime/','assets/runtime-aot/','assets/drivers/'))]
+            assert len(native)>=9
+            for n in native:
+              assert updated.read(n)==original.read(n), 'Changed native payload: '+n
+            from io import BytesIO
+            from pathlib import Path
+            replace={
+                'source/android/aot/aot_local.py':Path('android/aot/aot_local.py').read_bytes(),
+                'source/android/aot/patch_variants.py':Path('android/aot/patch_variants.py').read_bytes()
+            }
+            with ZipFile(BytesIO(original.read('assets/tools.zip'))) as before,ZipFile(BytesIO(updated.read('assets/tools.zip'))) as after:
+              assert set(before.namelist())==set(after.namelist())
+              for n in before.namelist():
+                if n in replace:
+                  assert after.read(n)==replace[n], 'AOT 1.00 patch fix is not packaged'
+                else:
+                  assert after.read(n)==before.read(n), 'Unexpected tooling change: '+n
+            assert updated.read('lib/arm64-v8a/libgow3cpu.so')==updated.read('assets/runtime-aot/libgow3cpu.so')
+            print('Verified',len(native),'native/driver assets unchanged and only 2 AOT tooling scripts updated')
+          PY
+          mkdir -p out/release
+          cp "$apk" out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-MIGRATION-FIX-arm64.apk
+          sha256sum out/release/*.apk > out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-MIGRATION-FIX-arm64.apk.sha256
+      - name: Publish corrected FINAL APK from current release source
+        uses: actions/upload-artifact@v4
+        with:
+          name: TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-MIGRATION-FIX-arm64
+          path: |
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-MIGRATION-FIX-arm64.apk
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-111-MIGRATION-FIX-arm64.apk.sha256
+            release-source-commit.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Save failure diagnostics only, no private keystore
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-v020-AOTNative-finalize-diagnostics
+          path: android-launcher/app/build/reports/**
+          if-no-files-found: ignore

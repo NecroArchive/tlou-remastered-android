@@ -111,9 +111,10 @@ jobs:
               esac
             done < /tmp/expected-conflicts.txt
           fi
-          echo "Checking unresolved entries"
-          test -z "$(git diff --name-only --diff-filter=U)"
+          # Git retains unmerged index stages until the resolved files are staged.
           git add -A
+          echo "Checking unresolved index entries"
+          test -z "$(git diff --name-only --diff-filter=U)"
           git commit -m "wip(tlou): integrate v0.2 features onto signed v0.1.1 release lineage"
           echo "New merged source $(git rev-parse HEAD)"
           git log -1 --format='%P'

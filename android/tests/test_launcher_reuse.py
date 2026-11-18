@@ -8,15 +8,18 @@ reuse = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reuse)
 
 class LauncherReuseTests(unittest.TestCase):
-    def test_only_packaging_changes_allow_reuse(self):
-        with patch.object(reuse.subprocess,"check_output",return_value="android/bionic/reuse_apk.py\n"):
-            self.assertTrue(reuse.unchanged())
-        for change in ("android/tlou_patches.py", "android/tests/test_submesh_bounds.py"):
-            with patch.object(reuse.subprocess,"check_output",return_value=change+"\n"):
-                self.assertTrue(reuse.unchanged(),change)
-        for change in ("gow3_pc/gpu/shim.cpp", "android/device_prepare.py", "ci/environment.yml", ".gitmodules", "android-launcher/app/src/main/java/ro/cobrabm/fexdroid/Gow3Present.java"):
-            with patch.object(reuse.subprocess,"check_output",return_value=change+"\n"):
+    def test_v020_always_requires_full_native_release_even_for_launcher_only_changes(self):
+        gradle=(reuse.ROOT/"android-launcher/app/build.gradle").read_text()
+        self.assertIn("versionName '0.2.0'",gradle)
+        for change in ("android/bionic/reuse_apk.py",
+                       "android/tlou_patches.py",
+                       "android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortMenu.java",
+                       "gow3_pc/gpu/shim.cpp"):
+            with patch.object(reuse.subprocess,"check_output",return_value=change+"\\n") as mocked:
                 self.assertFalse(reuse.unchanged(),change)
+                # Release 0.2.0 must reject the old fast path before git diff.
+                mocked.assert_not_called()
+
     def test_current_ui_is_never_replaced_by_old_apk(self):
         self.assertIsNone(reuse.payload("assets/ui-translations.tsv"))
         self.assertIsNone(reuse.payload("classes.dex"))

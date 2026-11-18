@@ -751,11 +751,37 @@ def main(argv=None):
             command += ["--variant-report"]
             if "--no-dirty-check" in command:
                 raise ValueError("Native patch variants require dirty-entry checks")
-            if catalog_mode_100:
-                # The existing 1.00 shard cache was built without variants.
-                # Never reuse its unpatched native code when enabling the new
-                # patch catalog for the first time. Build all units correctly.
-                command.remove("--resume")
+            # Preserve --resume for 01.00 even when repairing an older,
+            # already compiled library missing an indirect CALL entry.
+            # bb-recomp's per-shard .stat keys verify image, unit set,
+            # granular selections and codegen. Incompatible shards are
+            # recompiled; compatible ones are reused. The old unconditional
+            # --resume removal forced all 64 shards on every 01.00 build.
+        # A valid 01.00 AOT from the previous APK may already contain all
+        # thirteen patch variants but lack the indirect CALL entry coverage.
+        # Reuse its original work directory and the compiler's compatible
+        # intermediate objects; never trust the previous final .so as repaired.
+        previous_100_report = None
+        repair_100 = False
+        if catalog_mode_100:
+            previous_path = out / "aot-report.json"
+            if previous_path.is_file():
+                try:
+                    previous = json.loads(previous_path.read_text(encoding="utf-8"))
+                except (ValueError, OSError):
+                    previous = None
+                if (isinstance(previous, dict)
+                    and previous.get("version") == "1.00"
+                    and previous.get("input_boot_sha256") == sha256(boot)
+                    and previous.get("status") == "aarch64_generated_native_ready"
+                    and isinstance(previous.get("variant_catalog"), dict)
+                    and previous["variant_catalog"].get("profile")
+                        == "tlou-100-variants-v1"):
+                    previous_100_report = previous
+                    repair_100 = (previous.get("verified_100_entry_policy")
+                                  != TLOU_100_ENTRY_POLICY
+                                  or previous.get("granular_policy")
+                                  != "tlou-100-batched-call-hotspots-v1")
         # All 11 entries of the verified 1.11 scheduler switch are seeded at
         # once. This avoids repeated full recompilation as new cases execute.
         seed_file = aot / "verified-extra-entries.txt"
@@ -808,6 +834,11 @@ def main(argv=None):
                   "runtime_integrated": False, "status": "staged",
                   "verified_switch_targets": [f"+0x{x:x}" for x in seed_targets],
                   "extra_entry_count": len(added_entries),
+                  "resume_enabled": "--resume" in command,
+                  "repair_previous_100_aot": repair_100,
+                  "repair_previous_100_units": (
+                      previous_100_report.get("unit_count",0)
+                      if previous_100_report is not None else 0),
                   "verified_100_entry_policy": (
                       TLOU_100_ENTRY_POLICY if version == "1.00" else ""),
                   "verified_100_midcall_entries": (
@@ -847,6 +878,28 @@ def main(argv=None):
                 raise ValueError("Output is not AArch64")
             if meta.get("abi_version") != 2 or meta.get("so_sha256") != sha256(so):
                 raise ValueError("Unexpected AOT ABI or .so hash")
+            if catalog_mode_100:
+                # Confirm the compile completed before advertising the repair.
+                # --check-entries is a compiler quality gate (nonzero exit
+                # means no complete native library may be considered ready).
+                # Record the actual reuse count for users instead of claiming
+                # that all 64 shards could necessarily be reused.
+                stats = (aot / "compile.txt").read_text(
+                    encoding="utf-8", errors="replace")
+                reuse = re.search(r"reuse:\\s*(\\d+) of (\\d+) shards kept", stats)
+                if not reuse:
+                    reuse = re.search(
+                        r"resume:\\s*reused (\\d+) of (\\d+) shards", stats)
+                if not reuse:
+                    raise ValueError("Native 01.00 resume statistics missing")
+                reused, total = (int(reuse.group(1)), int(reuse.group(2)))
+                if not (0 <= reused <= total == args.shards):
+                    raise ValueError("Invalid native shard reuse counters")
+                report["reuse_shards"] = reused
+                report["rebuilt_shards"] = total - reused
+                report["repair_status"] = (
+                    "verified-native-100-entry-repaired"
+                    if repair_100 else "verified-native-100-entry-ready")
             report["coverage"] = verify_aot_coverage(aot / "compile.txt", meta)
             if variant_info:
                 report["variant_build"] = verify_native_variant_coverage(

@@ -280,6 +280,9 @@ public final class GameActivity extends Activity {
             args.add(user.getAbsolutePath());
             // 0.2.0: strict native ARM64 AOT; never boot an x86-64 fallback.
             RuntimeAot.Ready nativeAot;
+            // Defensive guard for old shortcuts/direct intents, not only the launcher.
+            // A 1.00 base with an active 1.11 update is supported as effective 1.11.
+            TsoProfile.requireSupported111(base);
             try {
                 nativeAot=RuntimeAot.prepare(this,base);
                 args.set(1,nativeAot.bootImage.getAbsolutePath());

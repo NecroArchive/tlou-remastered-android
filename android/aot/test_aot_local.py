@@ -120,6 +120,10 @@ class TestBridge(unittest.TestCase):
                 stream.seek(8)
                 stream.write(struct.pack("<Q",image_size))
                 stream.truncate(image_start+image_size)
+                # Expand the synthetic executable segment so the
+                # indirect target is inside real RX code, not a data hole.
+                stream.seek(image_start-24)
+                stream.write(struct.pack("<3Q",0,image_size,5))
                 stream.seek(image_start+mod.TLOU_100_MIDCALL_PC)
                 stream.write(fake_signature)
             digest=mod.TLOU_100_CALL_SELF_SHA256
@@ -144,7 +148,17 @@ class TestBridge(unittest.TestCase):
                 with boot.open("r+b") as stream:
                     stream.seek(image_start+mod.TLOU_100_MIDCALL_PC)
                     stream.write(b"\\xcc")
-                with self.assertRaisesRegex(ValueError,"CALL signature mismatch"):
+                # A different 32-byte signature is evidence that --resume
+                # may be unsafe, NOT a reason to prohibit recompilation.
+                status=mod.verified_100_midcall_status(boot,digest)
+                self.assertFalse(status["signature_matches"])
+                self.assertEqual(mod.verified_100_midcall_entries(boot,digest),
+                                 [0x910580])
+                # Only a genuine executable segment can be a native entry.
+                with boot.open("r+b") as stream:
+                    stream.seek(image_start-24)
+                    stream.write(struct.pack("<3Q",0,image_size,4))
+                with self.assertRaisesRegex(ValueError,"outside executable"):
                     mod.verified_100_midcall_entries(boot,digest)
 
     def test_100_midfunction_call_log_is_granularized_with_callers(self):

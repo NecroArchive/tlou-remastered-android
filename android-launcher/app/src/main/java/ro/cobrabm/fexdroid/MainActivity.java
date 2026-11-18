@@ -506,7 +506,7 @@ public final class MainActivity extends Activity {
         File installedUpdate=updateForGame(game);
         if(installedUpdate==null) {
             File prepared=tools.prepare(game,null,this::update);
-            RunLog.write(this,"Jogo 1.00: desempenho inferior; atualização 1.11 recomendada.");
+            RunLog.write(this,"Jogo 1.00 sem update 1.11: execução e compilação não suportadas.");
             return prepared;
         }
         if(!"1.11".equals(Ps4SfoVersion.fromFolder(installedUpdate)))

@@ -57,6 +57,12 @@ final class RunLog {
             for(String filename:new String[]{
                 "aot-report.json","aot/compile.txt","aot/libtlouaot.json"})
                 paths.add("tlou-aot-work-off/"+filename);
+            // A Qualcomm VK_ERROR_UNKNOWN can occur after the Vulkan instance
+            // starts but before gameplay. Include only the bounded failing
+            // shader binaries, not the private shader cache or whole game.
+            paths.add("tlou/qualcomm-compute-failed.txt");
+            for(int i=0;i<8;i++)
+                paths.add("tlou/qualcomm-compute-failed-"+i+".spv");
             for(String path:paths) {
                 File file=new File(c.getFilesDir(),path);if(!file.isFile())continue;
                 zip.putNextEntry(new ZipEntry(path));

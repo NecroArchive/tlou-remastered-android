@@ -507,11 +507,32 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     AmdGpu::g_read_wait_label = [](uintptr_t address) {
         return wait_label_cache->ReadWaitLabel(static_cast<VAddr>(address));
     };
+    // Android A6xx Turnip can return VK_ERROR_OUT_OF_DEVICE_MEMORY directly from
+    // vkCreateBuffer when creating a 4-8 GiB *sparse* arena. The sparse buffer
+    // reserves GPU virtual address space even before any VkDeviceMemory is bound.
+    // Keep the original size unless the launcher explicitly selects smaller
+    // power-of-two arena pages for its 8 GiB A6xx low-memory profile.
+    u64 requested_arena_page_size = u64{1} << MAX_ARENA_PAGE_BITS;
+    if (const char* env = std::getenv("GOW3_ARENA_PAGE_MB")) {
+        if (std::string_view{env} == "1024") {
+            requested_arena_page_size = u64{1} << 30;
+        } else if (std::string_view{env} == "2048") {
+            requested_arena_page_size = u64{1} << 31;
+        }
+    }
     while (arena_page_bits > MIN_ARENA_PAGE_BITS &&
-           (u64{2} << arena_page_bits) > instance.GetMaxBufferSize()) {
+           ((u64{2} << arena_page_bits) > instance.GetMaxBufferSize() ||
+            (u64{1} << arena_page_bits) > requested_arena_page_size)) {
         --arena_page_bits;
     }
     arena_page_size = u64{1} << arena_page_bits;
+    if (requested_arena_page_size != (u64{1} << MAX_ARENA_PAGE_BITS)) {
+        std::printf("GPU: sparse buffer arena page=%llu MiB, merged maximum=%llu MiB "
+                    "(GOW3_ARENA_PAGE_MB; guest direct memory unchanged)\n",
+                    static_cast<unsigned long long>(arena_page_size >> 20),
+                    static_cast<unsigned long long>((arena_page_size * 2) >> 20));
+        std::fflush(stdout);
+    }
     num_arena_pages = u64{1} << (ADDRESS_SPACE_BITS - arena_page_bits);
     if (arena_page_bits != MAX_ARENA_PAGE_BITS) {
         LOG_INFO(Render_Vulkan, "Buffer arenas of {} MiB (driver buffer limit {} MiB)",

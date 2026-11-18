@@ -11,10 +11,26 @@ api=${TLOU_ANDROID_API:-30}
 out=$root/out/android-bionic
 prefix=$root/.local-deps/android/bionic-prefix
 llvm=$ndk/toolchains/llvm/prebuilt/linux-x86_64
+# 0.2.0 native release: link the launcher against the verified ARM64 AOT
+# CPU backend, never against a FEX fallback library. The legacy FEX path
+# remains available only to explicit non-release developer builds.
 if [[ ${1:-} != --link-only ]]; then
   bash android/bionic/build_deps.sh
-  bash android/bionic/build_fex.sh
+  if [[ ${TLOU_CPU_BACKEND:-fex} == aot ]]; then
+    bash android/bionic/build_aot_cpu.sh
+    mkdir -p "$out/lib"
+    cp "$out/aot-backend/libgow3cpu.so" "$out/lib/libgow3cpu.so"
+    cp "$ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$out/lib/"
+  else
+    bash android/bionic/build_fex.sh
+  fi
   bash android/bionic/build_gpu.sh
+fi
+if [[ ${TLOU_CPU_BACKEND:-fex} == aot ]]; then
+  test -s "$out/aot-backend/libgow3cpu.so" || { echo "Missing native ARM64 AOT engine" >&2; exit 2; }
+  cmp -s "$out/aot-backend/libgow3cpu.so" "$out/lib/libgow3cpu.so" || {
+    echo "Refusing link: FEX or stale CPU differs from AOT engine" >&2; exit 2;
+  }
 fi
 for path in "$out/lib/libgow3gpu.so" "$out/lib/libgow3cpu.so" "$prefix/lib/libavcodec.a"; do
   [[ -f $path ]] || { echo "Missing Bionic build dependency: $path" >&2; exit 2; }

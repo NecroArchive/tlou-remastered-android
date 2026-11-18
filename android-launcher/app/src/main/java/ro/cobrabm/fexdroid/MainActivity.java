@@ -436,32 +436,26 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * 0.2.0 migration: older launchers kept 01.11 in a separate --update
-     * folder. Before starting the native compiler, merge that update into the
-     * original game directory, transactionally, and prepare WITHOUT --update.
-     * Save data and external update sources are never removed. No silent
-     * downgrade to 01.00 and no partial copy on failure.
+     * Preserve existing 1.11 AOT builds across APK upgrades. A separate 1.11
+     * update overlay is valid and MUST NOT be physically merged into the game
+     * merely because the user pressed Play or Compile CPU.
+     *
+     * The previous automatic migration regenerated boot-linked.bin and made
+     * the already compiled library fail its input_boot_sha256 validation,
+     * even without compiling or selecting 1.00. Physical update installation
+     * remains an explicit user action in installPhysicalUpdate().
      */
     private File prepareForNativeAot(File game) throws Exception {
-        File legacy=updateForGame(game);
-        if(legacy!=null) {
-            update("Migrando atualização antiga 1.11 para a pasta do jogo…");
-            RunLog.write(this,"Migrando update legado: "+legacy+" -> "+game);
-            File preview=tools.prepare(game,legacy,this::update);
-            org.json.JSONObject marker=GameInstallState.marker(preview);
-            if(marker==null || !"01.11".equals(marker.optString("update_version","")))
-                throw new IOException("A atualização antiga não é 1.11; migração automática recusada.");
-            installPhysicalUpdate(game,legacy);
-            RunLog.write(this,"Migração 1.11 concluída; preparando sem --update.");
-        }
-        // A physically merged game must always be prepared from its base
-        // folder; the previous --update path is no longer used.
-        File prepared=tools.prepare(game,null,this::update);
-        if(legacy!=null) {
-            org.json.JSONObject marker=GameInstallState.marker(prepared);
-            if(marker==null || !"01.11".equals(marker.optString("version","")))
-                throw new IOException("Atualização 1.11 não confirmada após migração.");
-        }
+        File installedUpdate=updateForGame(game);
+        File prepared=tools.prepare(game,installedUpdate,this::update);
+        org.json.JSONObject marker=GameInstallState.marker(prepared);
+        if(marker==null)throw new IOException("Preparação sem identificação do jogo.");
+        String effective=TsoProfile.gameCode(marker);
+        if(installedUpdate!=null && !"111".equals(effective))
+            throw new IOException("Atualização selecionada não corresponde ao jogo 1.11.");
+        RunLog.write(this,"Preparação AOT preservada: versão efetiva="+effective+
+            " • atualização separada="+(installedUpdate!=null)+
+            " • nenhuma migração física durante inicialização.");
         return prepared;
     }
 

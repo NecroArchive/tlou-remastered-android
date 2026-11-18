@@ -184,8 +184,11 @@ final class PortSettings {
         // fast-core subset. Oryon is detected from the SoC identifier; the
         // native AOT split policy still verifies the allowed CPU topology.
         env.put("TLOU_FAST_RENDER_CORES","0");
-        env.put("TLOU_AOT_SPLIT_PRIME",
-                TlouDevicePolicy.isOryonDevice()?"1":"0");
+        String soc="";
+        if(android.os.Build.VERSION.SDK_INT>=31) soc=android.os.Build.SOC_MODEL;
+        final boolean oryon=TlouDevicePolicy.isOryonSoc(
+                (soc==null?"":soc)+" "+android.os.Build.HARDWARE+" "+android.os.Build.BOARD);
+        env.put("TLOU_AOT_SPLIT_PRIME",oryon?"1":"0");
         env.put("GOW3_ADPF", p.getBoolean("adpf",false) ? "1" : "0");
         env.remove("TLOU_PREP_NORMAL_PRIORITY");
         env.remove("TLOU_PREP_HIT_STATS");

@@ -47,6 +47,17 @@ final class TsoProfile {
         throw new java.io.IOException("Versão do jogo não suportada pelo AOT: "+gameVersion);
     }
 
+    /** Runtime and compiler policy: the prepared effective game must be 1.11.
+     * A 1.00 base with a valid 1.11 update overlay resolves to "111".
+     * Never delete existing 1.11 AOT data when refusing a 1.00 image.
+     */
+    static void requireSupported111(File prepared) throws Exception {
+        if(!"111".equals(gameCode(GameInstallState.marker(prepared))))
+            throw new java.io.IOException(
+                "The Last of Us Remastered 1.00 não é suportado nesta versão. "+
+                "Atualize o jogo para 1.11 para jogar.");
+    }
+
     static File workForPrepared(Context context,File prepared) throws Exception {
         String game=gameCode(GameInstallState.marker(prepared));
         // Only 1.00 gets a new directory. 1.11 reuses its original

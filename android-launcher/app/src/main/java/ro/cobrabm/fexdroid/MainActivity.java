@@ -251,20 +251,18 @@ public final class MainActivity extends Activity {
             LinearLayout game=card(root,"SEU JOGO");
             gameInfo=text("",13,TEXT);gameInfo.setMaxLines(3);game.addView(gameInfo);
             add(game,"JOGAR",true,()->withAccess(()->prepareSelected(true)));
-            game.addView(text("PKG ou pasta extraída. Preparação automática no celular.",12,MUTED));
             add(game,"Escolher pasta do jogo",false,()->withAccess(()->pickFolder(PICK_GAME)));
             add(game,"Instalar por PKG",false,()->withAccess(()->pickFile(PICK_PKG)));
             TextView manual=text("Informar caminho da pasta",12,ACCENT);
             manual.setOnClickListener(v->{if(!busy)manualPath();});game.addView(manual);
             toggleSetting(game,"launch_direct","Entrar direto no jogo",false);
             LinearLayout updates=card(root,"ATUALIZAÇÃO DO JOGO");
-            updates.addView(text("Atualizações por PKG ou pasta são instaladas diretamente na pasta do jogo selecionado. Os arquivos originais substituídos não ficam disponíveis após a instalação; mantenha seu próprio backup.",12,MUTED));
+            updates.addView(text("A atualização substitui arquivos do jogo. Faça backup antes.",12,MUTED));
             add(updates,"Atualizar por PKG",false,()->withAccess(()->pickFile(PICK_UPDATE_PKG)));
             add(updates,"Atualizar por pasta",false,()->withAccess(()->pickFolder(PICK_UPDATE_FOLDER)));
             add(game,"Sair do aplicativo",false,this::finishAffinity);
         } else if(currentTab.equals("patches")) {
             LinearLayout box=card(root,"PATCHES");
-            box.addView(text("CPU ARM64: uma única compilação inclui todas as resoluções e patches validados da versão 1.11. Escolha qualquer combinação e reinicie o jogo; não é necessário recompilar. Recompile apenas ao mudar a versão do jogo ou atualizar o compilador.",12,MUTED));
             choice(box,"resolution","Resolução interna",
                 new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                 new String[]{"original","720","540","360"},"original");
@@ -288,11 +286,6 @@ public final class MainActivity extends Activity {
                 new String[]{"30 FPS","60 FPS","120 FPS"},
                 new String[]{"30","60","120"},"60");
             toggleSetting(video,"vsync","VSync",true);
-            video.addView(text("120 FPS desativa o VSync apenas durante a sessão. Cinemáticas preservam a cadência original.",12,MUTED));
-            video.addView(text("Modo Unificado padrão: jogo, interface e mira na mesma resolução. Vídeos mantêm a decodificação original.",12,MUTED));
-            video.addView(text("Sincronização da geometria: Completo (único modo). "
-                +"Correção de deformações mantida sem opções que não melhoraram o FPS.",12,MUTED));
-            video.addView(text("Apresentação Vulkan: saída fixa em 1280 × 720 para Android em todos os processadores. A resolução interna do jogo permanece independente.",12,MUTED));
             LinearLayout drivers=card(root,"DRIVER VULKAN");
             driverInfo=text("",12,MUTED);drivers.addView(driverInfo);
             add(drivers,"Selecionar driver Vulkan",false,this::selectDriver);
@@ -301,23 +294,16 @@ public final class MainActivity extends Activity {
                 "Correção UBWC do Turnip (tela/DeX)",
                 new String[]{"Automático (somente Adreno 740)","Forçar para Turnip (teste)","Desativado"},
                 new String[]{"auto","on","off"},"auto");
-            drivers.addView(text("Corrige possível piscada e quadros pretos com controles/DeX no Snapdragon 8 Gen 2. "
-                +"Não altera o driver do sistema; A6xx fica inalterada no automático.",12,MUTED));
             toggleSetting(drivers,"gpu_turbo","Adreno Turbo (sem root)",false);
-            drivers.addView(text("Política KGSL de máximo desempenho; a proteção térmica continua ativa. Pode não funcionar em todos os dispositivos.",12,MUTED));
             LinearLayout cpu=card(root,"CPU E DESEMPENHO");
             toggleSetting(cpu,"adpf","ADPF — ajuste dinâmico de desempenho",false);
-            cpu.addView(text("Processador: ARM64 recompilado (AOT). Compilação obrigatória antes de jogar.",13,TEXT));
             boolean nativeCompiled=RuntimeAot.hasCompletedVariantBuild(this);
             cpu.addView(text(TlouLanguage.t(this,"CPU ARM64: ")+TlouLanguage.t(this,
-                nativeCompiled?"já compilada":"ainda não compilada")
-                +TlouLanguage.t(this,". A compilação inclui todos os patches e resoluções 1.11. Alterar opções não exige recompilar; atualizações do jogo ou do compilador podem exigir."),12,MUTED));
+                nativeCompiled?"já compilada":"ainda não compilada"),12,MUTED));
             add(cpu,"Compilar CPU ARM64",false,
                 ()->withAccess(this::buildSelectedAot));
-            cpu.addView(text("O ARM64 AOT executa código recompilado diretamente. O compilador prepara todas as variantes de patches da versão 1.11 e evita recompilações ao trocar opções.",12,MUTED));
             LinearLayout app=card(root,"IDIOMA E INTERFACE");
             languageChoice(app);
-            app.addView(text("O idioma do jogo é escolhido no próprio The Last of Us.",12,MUTED));
             LinearLayout controls=card(root,"CONTROLES E HUD");
             toggleSetting(controls,"hud_visible","Mostrar FPS",true);
             choice(controls,"hud_mode","Estilo do HUD",
@@ -337,8 +323,7 @@ public final class MainActivity extends Activity {
                 new String[]{"Verde oliva","Âmbar","Branco","Vermelho","Azul"},
                 new String[]{"olive","amber","white","red","blue"},"olive");
             controlSizeSetting(controls);
-            controls.addView(text("O tamanho de todos os botões e das áreas de toque muda sem alterar as posições salvas.",12,MUTED));
-            controls.addView(text("Editar posição dos botões: deslize da borda esquerda para abrir o menu.",12,MUTED));
+            controls.addView(text("Para mover botões, abra o menu durante o jogo.",12,MUTED));
             toggleSetting(app,"launch_direct","Entrar direto no jogo",false);
             LinearLayout data=card(root,"SAVES");
             add(data,"Exportar saves ZIP",false,this::exportSaves);

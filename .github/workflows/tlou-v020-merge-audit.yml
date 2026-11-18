@@ -156,6 +156,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.14.3'
+      - name: Generate actual native save-choice test fixture
+        run: python3 gow3_pc/tests/test_android_save_choice.py
       - name: Compile launcher and run release unit tests
         run: gradle -p android-launcher :app:testReleaseUnitTest :app:lintVitalRelease --no-daemon --max-workers=2
       - name: Publish tested merge only to temporary integration branch

@@ -71,6 +71,10 @@ public final class TlouDevicePolicyTest {
         ok("0".equals(e.get("GOW3_STAGING_KEEP_VRAM_MB")), "A640 idle VRAM");
         ok("0".equals(e.get("GOW3_STAGING_LARGE_MB")), "no A640 pinned scratch");
         ok("2".equals(e.get("GOW3_STAGING_PREWARM_BLOCKS")), "two 16 MiB prewarm blocks");
+        ok("1024".equals(e.get("GOW3_ARENA_PAGE_MB")),
+            "A640 sparse arena page cap must prevent 4-8 GiB vkCreateBuffer objects");
+        ok("768".equals(e.get("GOW3_ARENA_LIMIT_MB")),
+            "A640 physical arena retention budget");
         ok(!e.containsKey("GOW3_DMEM_MB") && !e.containsKey("GOW3_DMEM_REPORT_MB"),
             "A640 must keep guest PS4 virtual memory unchanged");
         for(String gpu:new String[]{"Adreno (TM) 750","Adreno (TM) 830","Mali-G720"}) {

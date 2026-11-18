@@ -3,15 +3,71 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <system_error>
+#include <vector>
 
 #include <boost/container/small_vector.hpp>
 
 #include "shader_recompiler/info.h"
+#include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
 namespace Vulkan {
+
+namespace {
+// Only entered when the proprietary Qualcomm compiler fails every non-shader-
+// altering pipeline retry. Preserve the actual SPIR-V generated for this
+// shader so a future log contains reproducible input, not just ErrorUnknown.
+// Normal shaders and Turnip never enumerate or read the on-disk shader cache.
+// Limit both candidate count and size; never dump the game's whole shader DB.
+void CaptureQualcommComputeFailure(u64 shader_hash, u64 pipeline_key) {
+    const char* user_dir = std::getenv("GOW3_GPU_USER_DIR");
+    if (!user_dir || !*user_dir) return;
+    auto& db = Storage::DataBase::Instance();
+    if (!db.IsOpened()) return;
+    const std::string prefix = fmt::format("{:#018x}_", shader_hash);
+    std::vector<std::string> names;
+    db.ForEachBlobName(Storage::BlobType::ShaderBinary, [&](const std::string& name) {
+        if (name.starts_with(prefix) && names.size() < 8) names.push_back(name);
+    });
+    if (names.empty()) {
+        std::fprintf(stderr,
+                     "Qualcomm compute: shader=%016llx has no saved SPIR-V blob\\n",
+                     static_cast<unsigned long long>(shader_hash));
+        return;
+    }
+    std::error_code ec;
+    const auto output = std::filesystem::path(user_dir);
+    std::filesystem::create_directories(output, ec);
+    if (ec) return;
+    std::ofstream manifest(output / "qualcomm-compute-failed.txt",
+                           std::ios::out | std::ios::trunc);
+    manifest << fmt::format("shader={:016x} pipeline_key={:016x} variants={}\\n",
+                            shader_hash, pipeline_key, names.size());
+    u32 saved = 0;
+    for (const auto& name : names) {
+        std::vector<u32> spv;
+        db.Load(Storage::BlobType::ShaderBinary, name, spv);
+        if (spv.size() < 5 || spv[0] != 0x07230203 || spv.size() > 1024 * 1024) continue;
+        const auto file = fmt::format("qualcomm-compute-failed-{}.spv", saved);
+        std::ofstream binary(output / file, std::ios::out | std::ios::binary | std::ios::trunc);
+        if (!binary) continue;
+        binary.write(reinterpret_cast<const char*>(spv.data()),
+                     std::streamsize(spv.size() * sizeof(u32)));
+        if (!binary) continue;
+        manifest << name << " => " << file << " " << (spv.size() * sizeof(u32))
+                 << " bytes\\n";
+        std::fprintf(stderr, "Qualcomm compute: saved %s from %s (%zu bytes)\\n",
+                     file.c_str(), name.c_str(), spv.size() * sizeof(u32));
+        ++saved;
+    }
+}
+} // namespace
 
 ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                                  DescriptorHeap& desc_heap, const Shader::Profile& profile,
@@ -186,6 +242,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         std::fflush(stderr);
     }
     if (pipeline_result != vk::Result::eSuccess) {
+        if (qualcomm) CaptureQualcommComputeFailure(info_.pgm_hash, compute_key.value);
         std::fprintf(stderr, "GPU compute pipeline unrecoverable: shader=%016llx "
                              "key=%016llx vendor=%#x error=%s\n",
                      static_cast<unsigned long long>(info_.pgm_hash),

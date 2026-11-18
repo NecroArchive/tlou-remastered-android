@@ -89,6 +89,13 @@ final class TlouDevicePolicy {
             env.put("GOW3_STAGING_KEEP_VRAM_MB","0");
             env.put("GOW3_STAGING_LARGE_MB","0");
             env.put("GOW3_STAGING_PREWARM_BLOCKS","2");
+            // A6xx Turnip: vkCreateBuffer for a default 4-8 GiB sparse GPU arena can
+            // fail with VK_ERROR_OUT_OF_DEVICE_MEMORY before any sparse pages are bound.
+            // Use 1 GiB arena pages (at most 2 GiB after adjacent-page merging).
+            // This changes GPU virtual buffer object sizes, not the PS4 guest pool.
+            env.put("GOW3_ARENA_PAGE_MB","1024");
+            // Reclaim inactive physical arena memory on the existing safe GPU-fence path.
+            env.put("GOW3_ARENA_LIMIT_MB","768");
             return "8gb-a6xx-low-memory";
         }
         return "8gb-balanced";

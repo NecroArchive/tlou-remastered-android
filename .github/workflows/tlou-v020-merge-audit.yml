@@ -1,0 +1,45 @@
+name: TLOU v0.2.0 release-base merge audit
+on:
+  push:
+    branches: [tlou-v020-from-stable-011]
+    paths: ['.github/workflows/tlou-v020-merge-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    name: Three-way merge with signed 0.1.1 release base
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Audit merge without changing either release branch
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p out/merge-audit
+          git config user.name "TLOU Merge Audit"
+          git config user.email "tlou-merge-audit@users.noreply.github.com"
+          git fetch --no-tags origin android-bionic-stage1
+          echo "Stable baseline: $(git rev-parse HEAD)" | tee out/merge-audit/heads.txt
+          echo "Development tip: $(git rev-parse FETCH_HEAD)" | tee -a out/merge-audit/heads.txt
+          set +e
+          git merge --no-commit --no-ff FETCH_HEAD > out/merge-audit/merge-output.txt 2>&1
+          result=$?
+          set -e
+          echo "Merge exit status: $result"
+          cat out/merge-audit/merge-output.txt
+          git diff --name-only --diff-filter=U | tee out/merge-audit/conflicts.txt
+          git status --short > out/merge-audit/changes.txt
+          echo "Conflicts: $(wc -l < out/merge-audit/conflicts.txt)"
+          echo "Changed files: $(wc -l < out/merge-audit/changes.txt)"
+          echo "--- conflicted paths ---"
+          cat out/merge-audit/conflicts.txt
+          if [ -f .git/MERGE_HEAD ]; then git merge --abort; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tlou-v020-three-way-merge-report
+          path: out/merge-audit/
+          if-no-files-found: error

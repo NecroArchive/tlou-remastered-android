@@ -636,7 +636,7 @@ public final class MainActivity extends Activity {
             prefs.edit().putString("prepared_path",prepared.getAbsolutePath()).apply();
             String message=TlouLanguage.t(this,"CPU ARM64 atualizada: ")+valid+
                 TlouLanguage.t(this," unidades válidas, ")+unsupported+
-                TlouLanguage.t(this," ainda não suportadas. Todas as variantes de patches 1.11 disponíveis.");
+                TlouLanguage.t(this," ainda não suportadas. Variantes de patches da versão do jogo disponíveis.");
             RunLog.write(this,"CPU ARM64 recompilada e patches conferidos: "+
                 message+" biblioteca="+result);
             update(message);

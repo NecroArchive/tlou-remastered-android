@@ -124,7 +124,11 @@ final class RuntimeAot {
      * prepared-game checks in prepare() remain mandatory before launch.
      * A stale .so or an interrupted compiler is never shown as completed. */
     static boolean hasCompletedVariantBuild(Context context) {
-        File work=TsoProfile.work(context);
+        File work;
+        try {
+            work=TsoProfile.workForPrepared(
+                context,new File(context.getFilesDir(),"tlou-prepared"));
+        } catch(Exception noPreparedGame) { return false; }
         File so=new File(work,"aot/libtlouaot.so");
         File metaFile=new File(work,"aot/libtlouaot.json");
         File reportFile=new File(work,"aot-report.json");
@@ -134,6 +138,10 @@ final class RuntimeAot {
             JSONObject report=new JSONObject(new String(Files.readAllBytes(
                 reportFile.toPath()),StandardCharsets.UTF_8));
             String profile=report.optString("version");
+            String selectedGame=TsoProfile.gameCode(GameInstallState.marker(
+                new File(context.getFilesDir(),"tlou-prepared")));
+            if(!("100".equals(selectedGame)&&"1.00".equals(profile) ||
+                 "111".equals(selectedGame)&&"1.11".equals(profile)))return false;
             File catalog=new File(work,"1.00".equals(profile)?
                 "aot/tlou-100-all-variants.txt":"aot/tlou-111-all-variants.txt");
             if(!catalog.isFile())return false;
@@ -156,8 +164,8 @@ final class RuntimeAot {
         }
     }
 
-    static String pendingSelectedPatches(Context context) throws Exception {
-        File report=new File(TsoProfile.work(context),"aot-report.json");
+    static String pendingSelectedPatches(Context context,File prepared) throws Exception {
+        File report=new File(TsoProfile.workForPrepared(context,prepared),"aot-report.json");
         if(!report.isFile())return "";
         JSONObject source=new JSONObject(new String(Files.readAllBytes(
             report.toPath()),StandardCharsets.UTF_8));
@@ -175,7 +183,7 @@ final class RuntimeAot {
     }
 
     static Ready prepare(Context context,File prepared) throws Exception {
-        File work=TsoProfile.work(context);
+        File work=TsoProfile.workForPrepared(context,prepared);
         File so=new File(work,"aot/libtlouaot.so");
         File json=new File(work,"aot/libtlouaot.json");
         File report=new File(work,"aot-report.json");
@@ -185,6 +193,13 @@ final class RuntimeAot {
         }
         JSONObject meta=new JSONObject(new String(Files.readAllBytes(json.toPath()),StandardCharsets.UTF_8));
         JSONObject source=new JSONObject(new String(Files.readAllBytes(report.toPath()),StandardCharsets.UTF_8));
+        String selectedGame=TsoProfile.gameCode(GameInstallState.marker(prepared));
+        String compiledVersion=source.optString("version","");
+        if(!("100".equals(selectedGame)&&"1.00".equals(compiledVersion) ||
+             "111".equals(selectedGame)&&"1.11".equals(compiledVersion)))
+            throw new java.io.IOException(
+                "Esta CPU ARM64 foi compilada para outra versão do jogo ("+
+                compiledVersion+"). Compile a versão selecionada, sem apagar os dados.");
         if(meta.optInt("abi_version",-1)!=2)
             throw new java.io.IOException("ABI da biblioteca AOT incompatível");
         if(!TsoProfile.version(TsoProfile.RELAXED).equals(meta.optString("compiler_version")) ||

@@ -104,6 +104,46 @@ TLOU_111_KNOWN_INDIRECT_CALLERS = (
     0xA1EA44, 0x9DB103, 0x9DBB8C,
 )
 
+# CUSA00556 01.00: the user's verified SELF and AOT runtime log show
+# miss +0x910580 kind=call from +0x8e4421. Disassembly confirms
+# +0x910580 starts an x86 instruction INSIDE the function at +0x910510.
+# Exact extra entry alone can miss a mid-function call continuation;
+# --granular-funcs must cover the containing function as well.
+# Signature digests are derived from the supplied 01.00 SELF; no game bytes
+# are embedded in the repository. Never apply these offsets to 01.11.
+TLOU_100_CALL_SELF_SHA256 = "e5f0aa322f60bd90637cc10d83de08c77885b1921084021c630e04ed3d6febf7"
+TLOU_100_MIDCALL_PC = 0x910580
+TLOU_100_MIDCALL_SIGNATURE_LEN = 32
+TLOU_100_MIDCALL_SIGNATURE_SHA256 = "df49c03be784fb3f0fcaaab7471be3da6ad977595c75ab399a198093079692a2"
+TLOU_100_MIDCALL_FUNCTION = 0x910510
+TLOU_100_MIDCALL_CALLER = 0x8E4421
+TLOU_100_GRANULAR_CALL_FAMILY = (
+    TLOU_100_MIDCALL_FUNCTION, TLOU_100_MIDCALL_PC,
+    0x9105C0, 0x910670, TLOU_100_MIDCALL_CALLER,
+)
+TLOU_100_ENTRY_POLICY = "tlou-100-midcall-910580-v1"
+
+
+def verified_100_midcall_entries(boot: Path, eboot_sha: str) -> list[int]:
+    """Preseed the repeatable 01.00 mid-function CALL failure safely.
+
+    The guest image can contain different linked code than its original SELF.
+    Refuse the seed when its exact 32-byte code signature differs.
+    """
+    if eboot_sha != TLOU_100_CALL_SELF_SHA256:
+        return []
+    size = check_boot(boot)["size"]
+    if TLOU_100_MIDCALL_PC + TLOU_100_MIDCALL_SIGNATURE_LEN > size:
+        raise ValueError("Verified 1.00 native CALL is outside linked image")
+    start = boot.stat().st_size - size
+    with boot.open("rb") as stream:
+        stream.seek(start + TLOU_100_MIDCALL_PC)
+        signature = stream.read(TLOU_100_MIDCALL_SIGNATURE_LEN)
+    if hashlib.sha256(signature).hexdigest() != TLOU_100_MIDCALL_SIGNATURE_SHA256:
+        raise ValueError("1.00 mid-function CALL signature mismatch; refuse unsafe AOT entry")
+    return [TLOU_100_MIDCALL_PC]
+
+
 
 
 def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
@@ -185,6 +225,11 @@ def granular_risk_entries(eboot_sha: str, misses: Path | None,
     """
     import re
     risk = set()
+    if eboot_sha == TLOU_100_CALL_SELF_SHA256:
+        # The observed 01.00 AOT miss is a CALL inside a SIMD function.
+        # Granularize its complete owner and the indirect caller; this is
+        # not the expensive whole-image granularization.
+        risk.update(TLOU_100_GRANULAR_CALL_FAMILY)
     if eboot_sha == TLOU_111_SWITCH_SHA256:
         risk.update(TLOU_111_WORKER_JUMP_TARGETS)
         risk.update(TLOU_111_KNOWN_INDIRECT_CALLERS)
@@ -199,7 +244,7 @@ def granular_risk_entries(eboot_sha: str, misses: Path | None,
         with misses.open("r", encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 match = re.match(
-                    r"^\s*miss\s+\+(?:0x)?([0-9a-fA-F]+)\b.*\bkind=jump\b", line)
+                    r"^\s*miss\s+\+(?:0x)?([0-9a-fA-F]+)\b.*\bkind=(?:jump|call)\b", line)
                 if not match:
                     continue
                 risk.add(int(match.group(1), 16))
@@ -230,6 +275,9 @@ def prepare_extra_entries(boot: Path, eboot_sha: str, misses: Path | None,
     image_size = check_boot(boot)["size"]
     observed = (list(TLOU_111_WORKER_JUMP_TARGETS)
                 if eboot_sha == TLOU_111_SWITCH_SHA256 else [])
+    # Always include the reproducible 01.00 native mid-function CALL,
+    # including on clean installs with no exported aot-misses.log.
+    observed += verified_100_midcall_entries(boot, eboot_sha)
     if any(target >= image_size for target in observed):
         raise ValueError("Validated 1.11 worker entry outside the linked image")
     missed = verified_miss_entries(misses, image_size)
@@ -741,6 +789,12 @@ def main(argv=None):
                   "runtime_integrated": False, "status": "staged",
                   "verified_switch_targets": [f"+0x{x:x}" for x in seed_targets],
                   "extra_entry_count": len(added_entries),
+                  "verified_100_entry_policy": (
+                      TLOU_100_ENTRY_POLICY if version == "1.00" else ""),
+                  "verified_100_midcall_entries": (
+                      [f"+0x{x:x}" for x in
+                       verified_100_midcall_entries(staged, digest)]
+                      if version == "1.00" else []),
                   "granular_risk_hint_count": len(granular_hints),
                   "granular_policy": "verified-indirect-miss-owners-and-callers",
                   "tso_profile": args.tso_profile,

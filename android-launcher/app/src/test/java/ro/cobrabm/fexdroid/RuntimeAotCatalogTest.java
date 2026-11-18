@@ -64,6 +64,7 @@ public class RuntimeAotCatalogTest {
             .put("+0x910580"));
         report.put("extra_entry_count",1);
         report.put("granular_risk_hint_count",151560);
+        report.put("entry_check_completed",true);
         report.put("resume_enabled",true);
         report.put("translation_command",new JSONArray()
             .put("--variants").put("all.txt")
@@ -79,6 +80,12 @@ public class RuntimeAotCatalogTest {
         report.put("granular_risk_hint_count",5);
         assertFalse(RuntimeAot.hasVerified100MidCall(report));
         report.put("granular_risk_hint_count",151560);
+        report.put("resume_enabled",false);
+        report.put("full_rebuild_100",true);
+        assertTrue(RuntimeAot.hasVerified100MidCall(report));
+        report.put("full_rebuild_100",false);
+        assertFalse(RuntimeAot.hasVerified100MidCall(report));
+        report.put("resume_enabled",true);
         report.put("verified_100_entry_policy","tlou-100-midcall-910580-v1");
         assertFalse(RuntimeAot.hasVerified100MidCall(report));
     }
@@ -90,6 +97,7 @@ public class RuntimeAotCatalogTest {
         report.put("verified_100_entry_policy","tlou-100-batched-call-hotspots-v2");
         report.put("granular_policy","tlou-100-batched-call-hotspots-v1");
         report.put("resume_enabled",true);
+        report.put("entry_check_completed",true);
         report.put("verified_100_midcall_entries",new JSONArray()
             .put("+0x910580"));
         report.put("extra_entry_count",1);

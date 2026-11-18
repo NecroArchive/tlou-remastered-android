@@ -14,6 +14,7 @@
 #include "shader_recompiler/info.h"
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
+#include "video_core/renderer_vulkan/vk_qualcomm_float_compat.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -66,6 +67,74 @@ void CaptureQualcommComputeFailure(u64 shader_hash, u64 pipeline_key) {
                      file.c_str(), name.c_str(), spv.size() * sizeof(u32));
         ++saved;
     }
+}
+
+// ZIP32, Adreno 840: shader 0x4a705408 has one available SPIR-V
+// permutation and uses SPV_KHR_float_controls with explicit 32-bit FTZ
+// and signed-zero mode. The original valid module fails all driver-side
+// retries. Try an alternate module without only those FP control promises.
+// Do not change descriptor types, 1D storage image, workgroup dimensions,
+// shader instructions, or the global GPU shader cache. This can alter FP
+// denormal/signed-zero behavior, so log exactly when the workaround is used.
+bool TryQualcommFloatControlVariant(vk::Device device, const vk::ComputePipelineCreateInfo& original,
+                                   u64 shader_hash, vk::UniquePipeline& pipeline) {
+    auto& db = Storage::DataBase::Instance();
+    if (!db.IsOpened()) return false;
+    const auto prefix = fmt::format("{:#018x}_", shader_hash);
+    std::vector<std::string> names;
+    db.ForEachBlobName(Storage::BlobType::ShaderBinary, [&](const std::string& name) {
+        if (name.starts_with(prefix) && names.size() < 2) names.push_back(name);
+    });
+    // Never attach a different specialization's SPIR-V to this pipeline.
+    if (names.size() != 1) {
+        std::fprintf(stderr,
+                     "Qualcomm compute FP fallback: %zu shader variants found; "
+                     "refusing ambiguous shader=%016llx\n",
+                     names.size(), static_cast<unsigned long long>(shader_hash));
+        return false;
+    }
+    std::vector<u32> spirv;
+    db.Load(Storage::BlobType::ShaderBinary, names[0], spirv);
+    std::vector<u32> alternative;
+    if (!QualcommFloatCompat::DropExplicitFloatControls(spirv, alternative)) {
+        std::fprintf(stderr, "Qualcomm compute FP fallback: no supported "
+                             "float-controls-only transform shader=%016llx\n",
+                     static_cast<unsigned long long>(shader_hash));
+        return false;
+    }
+    const vk::ShaderModuleCreateInfo module_info{
+        .codeSize = alternative.size() * sizeof(u32),
+        .pCode = alternative.data(),
+    };
+    auto [module_result, alt_module] = device.createShaderModuleUnique(module_info);
+    if (module_result != vk::Result::eSuccess) {
+        std::fprintf(stderr, "Qualcomm compute FP fallback: alternate module "
+                             "rejected shader=%016llx result=%s\n",
+                     static_cast<unsigned long long>(shader_hash),
+                     vk::to_string(module_result).c_str());
+        return false;
+    }
+    auto ci = original;
+    ci.stage.module = *alt_module;
+    // The device's native subgroup width remains 64 even without an
+    // explicit required-size pNext; generic retry already tried both.
+    ci.stage.pNext = nullptr;
+    auto [result, fallback] =
+        device.createComputePipelineUnique(vk::PipelineCache{}, ci);
+    if (result != vk::Result::eSuccess) {
+        std::fprintf(stderr, "Qualcomm compute FP fallback: alternate SPIR-V "
+                             "also rejected shader=%016llx result=%s\n",
+                     static_cast<unsigned long long>(shader_hash),
+                     vk::to_string(result).c_str());
+        return false;
+    }
+    pipeline = std::move(fallback);
+    std::fprintf(stderr,
+                 "Qualcomm compute recovered: FP control modes disabled for "
+                 "shader=%016llx (%zu -> %zu bytes); numerical FP behavior may differ\n",
+                 static_cast<unsigned long long>(shader_hash),
+                 spirv.size() * sizeof(u32), alternative.size() * sizeof(u32));
+    return true;
 }
 } // namespace
 
@@ -177,7 +246,9 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     // assertion previously hid the shader hash and supplied no alternatives.
     // Do not retry for Turnip, which has a different shader compiler, or for
     // OOM/unsupported-feature results. Never drop compute output.
-    const bool qualcomm = instance.GetVendorID() == 0x5143;
+    // VK_VENDOR_ID_QUALCOMM is shared by Turnip and the proprietary ICD.
+    // The retry is NOT intended for Mesa: use Vulkan's actual driver ID.
+    const bool qualcomm = instance.GetDriverID() == vk::DriverId::eQualcommProprietary;
     const char* retry_env = std::getenv("GOW3_QUALCOMM_COMPUTE_RETRY");
     const bool retry_enabled = qualcomm && !(retry_env && retry_env[0] == '0');
     if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled) {
@@ -240,6 +311,14 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
             }
         }
         std::fflush(stderr);
+    }
+    if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled) {
+        const char* float_retry = std::getenv("GOW3_QUALCOMM_FLOAT_CONTROLS_RETRY");
+        if (!(float_retry && float_retry[0] == '0') &&
+            TryQualcommFloatControlVariant(device, compute_pipeline_ci,
+                                          info_.pgm_hash, pipe)) {
+            pipeline_result = vk::Result::eSuccess;
+        }
     }
     if (pipeline_result != vk::Result::eSuccess) {
         if (qualcomm) CaptureQualcommComputeFailure(info_.pgm_hash, compute_key.value);

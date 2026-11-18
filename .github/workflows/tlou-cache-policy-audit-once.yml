@@ -1,0 +1,28 @@
+name: TLOU readonly cache policy audit
+on:
+  push:
+    branches: [tlou-ui-approval-log32-20261105]
+    paths:
+      - '.github/workflows/tlou-cache-policy-audit-once.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Read GitHub cache retention policy, storage policy and inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          for endpoint in actions/cache/retention-limit actions/cache/storage-limit actions/cache/usage; do
+            echo "AUDIT_ENDPOINT=$endpoint"
+            gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GH_REPO/$endpoint" 2>&1 | head -c 2000 || true
+            echo
+          done
+          echo "AUDIT_CURRENT_CACHES"
+          gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GH_REPO/actions/caches?per_page=100" --jq '.actions_caches[] | [.key,.ref,.created_at,.last_accessed_at,.size_in_bytes] | @tsv' | sort || true

@@ -1,0 +1,51 @@
+name: TLOU one-time parallel signer backup scan
+on:
+  push:
+    branches: [tlou-ui-approval-log32-20261105]
+    paths: ['.github/workflows/tlou-signer-fast-artifact-scan-once.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Parallel scan old artifacts for private-key backup file names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os,subprocess,json,zipfile,io,re
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          repo=os.environ['GH_REPO']; arts=[]
+          for page in range(1,20):
+            p=subprocess.run(['gh','api',f'repos/{repo}/actions/artifacts?per_page=100&page={page}'],capture_output=True,text=True,check=True)
+            batch=json.loads(p.stdout)['artifacts'];arts+=batch
+            if len(batch)<100:break
+          tasks=[a for a in arts if a['size_in_bytes']<=1_200_000 and not a['expired']]
+          print('TARGET_COUNT',len(tasks),flush=True)
+          def check(a):
+            try:
+              p=subprocess.run(['gh','api',f'repos/{repo}/actions/artifacts/{a["id"]}/zip'],capture_output=True,timeout=45)
+              if p.returncode: return 'failed',a['id'],p.stderr.decode(errors='ignore')[:80]
+              with zipfile.ZipFile(io.BytesIO(p.stdout)) as z:
+                found=[n for n in z.namelist() if 'experimental-development' in n.lower() or re.search(r'(^|/)[^/]+\.(jks|keystore|p12|pfx|pem|key)$',n,re.I)]
+                if found: return 'found',a['id'],(a['name'],found[:15])
+              return 'checked',a['id'],None
+            except Exception as e: return 'failed',a['id'],str(e)[:80]
+          counts={'found':0,'checked':0,'failed':0};found=[]
+          with ThreadPoolExecutor(max_workers=8) as pool:
+            pending=[pool.submit(check,a) for a in tasks]
+            for n,f in enumerate(as_completed(pending),1):
+              typ,aid,detail=f.result();counts[typ]+=1
+              if typ=='found':
+                found.append((aid,detail))
+                print('POSSIBLE_PRIVATE_KEY_FILE_IN_ARTIFACT',aid,json.dumps(detail),flush=True)
+              if n%50==0:print('PROGRESS',n,'OF',len(tasks),json.dumps(counts),flush=True)
+          print('FINAL',json.dumps(counts),'FOUND_DETAILS',json.dumps(found),flush=True)
+          PY

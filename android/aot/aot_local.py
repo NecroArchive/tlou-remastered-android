@@ -262,8 +262,12 @@ def granular_risk_entries(eboot_sha: str, misses: Path | None,
     if misses and misses.is_file():
         with misses.open("r", encoding="utf-8", errors="replace") as stream:
             for line in stream:
+                # 1.00 has a verified indirect CALL into the middle of a
+                # native function. Keep the proven 1.11 jump-only selector
+                # unchanged to avoid an unrelated 1.11 recompilation.
+                kind = "(?:jump|call)" if eboot_sha == TLOU_100_CALL_SELF_SHA256 else "jump"
                 match = re.match(
-                    r"^\s*miss\s+\+(?:0x)?([0-9a-fA-F]+)\b.*\bkind=(?:jump|call)\b", line)
+                    r"^\s*miss\s+\+(?:0x)?([0-9a-fA-F]+)\b.*\bkind=" + kind + r"\b", line)
                 if not match:
                     continue
                 risk.add(int(match.group(1), 16))

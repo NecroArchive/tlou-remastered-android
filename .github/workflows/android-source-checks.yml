@@ -31,6 +31,8 @@ jobs:
           python-version: '3.12'
       - name: Validate syntax
         run: python3 -m compileall -q android
+      - name: Verify 01.00 and 01.11 AOT variant catalog generation
+        run: python3 -m unittest discover -s android/aot -p test_patch_variants.py -v
       - name: Native PID fallback and process ownership
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread gow3_pc/tests/test_tlou_native_pid_publish.c -o /tmp/tlou-pid-test

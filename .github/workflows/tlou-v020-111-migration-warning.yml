@@ -160,8 +160,41 @@ jobs:
           PY
       - name: Generate native save-choice fixture used by actual launcher tests
         run: python3 gow3_pc/tests/test_android_save_choice.py
+      - name: Prefer independent Maven Central mirror to bypass 429 throttling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android-launcher/settings.gradle')
+          s=p.read_text()
+          original_plugin="repositories { google(); mavenCentral(); gradlePluginPortal() }"
+          original_deps="repositories { google(); mavenCentral() }"
+          assert s.count(original_plugin)==1 and s.count(original_deps)==1
+          mirror="maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }"
+          s=s.replace(original_plugin,"repositories { google(); "+mirror+"; mavenCentral(); gradlePluginPortal() }")
+          s=s.replace(original_deps,"repositories { google(); "+mirror+"; mavenCentral() }")
+          p.write_text(s)
+          print("Maven Central Google Storage mirror added BEFORE rate-limited Apache endpoint")
+          PY
       - name: Compile and test CORRECTED 0.2.0 launcher UI and settings
-        run: gradle -p android-launcher :app:testDebugUnitTest :app:assembleDebug --no-daemon --max-workers=2
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Maven Central may respond HTTP 429 to ephemeral Actions runners.
+          # Prefer Google's mirror, back off between retries without changing
+          # the compiler, signing identity or app version.
+          for attempt in 1 2 3; do
+            if gradle -p android-launcher :app:testDebugUnitTest :app:assembleDebug --no-daemon --max-workers=2 --console=plain; then
+              echo "Android tests and APK build passed on attempt $attempt"
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "::error::Gradle dependency resolution failed after 3 attempts"
+              exit 1
+            fi
+            sleep "$((attempt * 45))"
+          done
       - name: Verify native equality, actual package, version and original signing cert
         shell: bash
         run: |

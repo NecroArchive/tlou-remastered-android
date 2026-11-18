@@ -142,7 +142,6 @@ final class PortMenu {
             }
         });
         content.addView(spinner,new LinearLayout.LayoutParams(-1,dp(50)));
-        note("O idioma do jogo é escolhido no próprio The Last of Us.");
     }
     private void setScreenMode(boolean fill) {
         prefs.edit().putBoolean("fullscreen",fill).apply();
@@ -156,7 +155,6 @@ final class PortMenu {
             ()->setScreenMode(false));
         row((full?"● ":"○ ")+tr("Tela cheia (preencher a tela)"),
             ()->setScreenMode(true));
-        note("O modo muda durante o jogo, sem reiniciar.");
     }
     private void slider(String key,String label,int min,int max,int fallback) {
         TextView title=text(tr(label)+": "+prefs.getInt(key,fallback),13,INK);
@@ -203,21 +201,15 @@ final class PortMenu {
                     new String[]{"30 FPS","60 FPS","120 FPS"},
                     new String[]{"30","60","120"},"60");
                 toggle("vsync","VSync",true);
-                note("120 FPS desativa VSync na sessão, sem alterar a preferência salva.");
-                note("Modo Unificado ativo: cena, interface e mira na mesma resolução.");
-                note("Sincronização da geometria: Completo (único modo). "
-                     +"Preserva a correção das deformações.");
                 break;
             case "patches":
                 heading("PATCHES");
-                note("Patches validados para o eboot reconhecido. Reinicie para aplicar.");
                 toggle("ssao","Desativar SSAO",false);
                 toggle("motion_blur","Desativar desfoque de movimento",false);
                 toggle("depth_of_field","Desativar profundidade de campo",false);
                 toggle("bloom","Desativar bloom",false);
                 toggle("sunlight_shadows","Desativar sombras solares",false);
                 toggle("subsurface","Desativar subsurface",false);
-                note("Patches experimentais 1.11: luzes sem sombras continuam ativas.");
                 toggle("omni_light_shadows","Desativar sombras de luzes omni (1.11)",false);
                 toggle("spot_light_shadows","Desativar sombras de holofotes (1.11)",false);
                 row("Restaurar patches e resolução",()->{
@@ -231,10 +223,6 @@ final class PortMenu {
                 language();
                 toggle("gpu_turbo","Adreno Turbo (sem root)",false);
                 toggle("adpf","ADPF — ajuste dinâmico de desempenho",false);
-                note("Usa dicas de desempenho na thread nativa de comandos. "
-                     +"Compatível com Android 13+ quando suportado pelo aparelho. "
-                     +"Reinicie o jogo para aplicar; não desativa os limites térmicos.");
-                note("Usa KGSL sem root; respeita limites térmicos. Pode ser ativado ou desativado durante o jogo.");
                 toggle("launch_direct","Entrar direto no jogo",false);
                 break;
             case "hud":

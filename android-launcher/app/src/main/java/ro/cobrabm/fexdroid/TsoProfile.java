@@ -52,7 +52,11 @@ final class TsoProfile {
      * Never delete existing 1.11 AOT data when refusing a 1.00 image.
      */
     static void requireSupported111(File prepared) throws Exception {
-        if(!"111".equals(gameCode(GameInstallState.marker(prepared))))
+        requireSupported111(GameInstallState.marker(prepared));
+    }
+
+    static void requireSupported111(JSONObject marker) throws java.io.IOException {
+        if(!"111".equals(gameCode(marker)))
             throw new java.io.IOException(
                 "The Last of Us Remastered 1.00 não é suportado nesta versão. "+
                 "Atualize o jogo para 1.11 para jogar.");

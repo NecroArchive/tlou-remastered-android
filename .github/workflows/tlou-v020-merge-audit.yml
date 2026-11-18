@@ -59,11 +59,11 @@ jobs:
           git config user.name "TLOU Integration Bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --no-tags origin android-bionic-stage1
-          set +e
-          git merge --no-commit --no-ff FETCH_HEAD
-          merge_status=$?
-          set -e
-          if [ "$merge_status" -ne 0 ]; then
+          if git merge --no-commit --no-ff FETCH_HEAD; then
+            echo "Three-way merge completed without conflicts"
+          else
+            echo "Merge returned conflicts; selecting reviewed temporary resolutions"
+            git status --short | tail -30
             git diff --name-only --diff-filter=U | sort > /tmp/tlou-conflicts.txt
             # Only the 22 exact conflicts reviewed against the v0.1.1 and v0.2.0 trees.
             cat > /tmp/expected-conflicts.txt <<'EXPECTED'
@@ -91,7 +91,9 @@ jobs:
           gow3_pc/tests/test_memory_walk_cost.c
           EXPECTED
             sort -o /tmp/expected-conflicts.txt /tmp/expected-conflicts.txt
+            echo "Comparing expected conflict set"
             diff -u /tmp/expected-conflicts.txt /tmp/tlou-conflicts.txt
+            echo "Conflict set matches; applying temporary resolutions"
             # Keep old signed release workflow; it will be adapted only after
             # validating the source merge and preserving the 0.1.1 signer.
             git checkout --ours -- .github/workflows/tlou-native-apk.yml
@@ -109,6 +111,7 @@ jobs:
               esac
             done < /tmp/expected-conflicts.txt
           fi
+          echo "Checking unresolved entries"
           test -z "$(git diff --name-only --diff-filter=U)"
           git add -A
           git commit -m "wip(tlou): integrate v0.2 features onto signed v0.1.1 release lineage"

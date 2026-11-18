@@ -29,7 +29,7 @@ android {
         // never replace the user's stable signed installation or its saves.
         debug {
             applicationIdSuffix '.aotnative2'
-            versionNameSuffix '-AOT-native-v2'
+            // Keep the AOTNative v2 app ID and signing certificate, but show only 0.2.0.
             signingConfig signingConfigs.debug
         }
     }

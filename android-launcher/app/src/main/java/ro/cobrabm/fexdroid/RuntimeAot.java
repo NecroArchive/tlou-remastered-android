@@ -150,7 +150,9 @@ final class RuntimeAot {
         return extra && granular && checked &&
             report.optInt("extra_entry_count",0)>=1 &&
             report.optInt("granular_risk_hint_count",0)>=151552 &&
-            report.optBoolean("resume_enabled",false);
+            report.optBoolean("entry_check_completed",false) &&
+            (report.optBoolean("resume_enabled",false) ||
+             report.optBoolean("full_rebuild_100",false));
     }
 
     /**
@@ -379,7 +381,8 @@ final class RuntimeAot {
                 if("--no-dirty-check".equals(flag))noDirty=true;
                 if("--resume".equals(flag))resumable=true;
             }
-            if(!usesVariants||noDirty||!resumable ||
+            if(!usesVariants||noDirty||
+               !(resumable||source.optBoolean("full_rebuild_100",false)) ||
                !hasVerified100MidCall(source) ||
                (meta.optLong("abi_flags",0)&6)!=6 ||
                !hasCompleteVariantCatalog(source) ||

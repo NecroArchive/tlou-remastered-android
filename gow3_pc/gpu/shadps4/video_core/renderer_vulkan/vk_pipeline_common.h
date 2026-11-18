@@ -79,6 +79,7 @@ public:
 protected:
     [[nodiscard]] std::string GetDebugString() const;
     void RefreshTextureHelperEligibility();
+    void InitializeBufferDescriptorTemplate(u32 buffer_count);
 
     const Instance& instance;
     Scheduler& scheduler;
@@ -87,6 +88,8 @@ protected:
     vk::UniquePipeline pipeline;
     vk::UniquePipelineLayout pipeline_layout;
     vk::UniqueDescriptorSetLayout desc_layout;
+    vk::UniqueDescriptorUpdateTemplate buffer_descriptor_template;
+    u32 buffer_descriptor_count = 0;
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};
     bool uses_push_descriptors{};
     bool texture_helper_compatible = false;

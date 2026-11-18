@@ -38,6 +38,11 @@ for library in libgow3cpu.so libgow3gpu.so libgow3present.so libc++_shared.so; d
 done
 stage="$out/apk-jni/arm64-v8a"
 assets="$out/apk-assets/runtime"
+# Only experimental builds requested explicitly carry the approximately 50 MB
+# on-device recompilation tool. The stable FEX APK stays byte-for-byte unaffected.
+if [[ "${TLOU_EXPERIMENTAL_LOCAL_AOT:-0}" == "1" ]]; then
+  bash android/bionic/stage_aot_compiler.sh
+fi
 python3 android/bionic/stage_tools.py
 mkdir -p "$stage" "$assets" "$root/out/release"
 # Pinned official Turnip 27 R2 / Gen8 V39 patched. Never use a rolling Mesa

@@ -19,13 +19,13 @@ final class TouchControllerOverlay extends View {
     private static final String[] NAMES={
         "l2","l1","touchpad","options","r1","r2",
         "up","left","right","down","triangle","circle","cross","square",
-        "leftstick","l3","r3","rightstick"
+        "leftstick","l3","r3","rightstick","shake"
     };
     private static final float[][] DEFAULT={
         {87,105},{213,105},{640,105},{773,105},{1067,105},{1193,105},
         {160,395},{90,465},{230,465},{160,535},
         {1120,405},{1190,475},{1120,545},{1050,475},
-        {320,612},{420,614},{860,614},{960,612}
+        {320,612},{420,614},{860,614},{960,612},{640,636}
     };
     private final PadBridge pad;
     private final SharedPreferences preferences;
@@ -62,7 +62,8 @@ final class TouchControllerOverlay extends View {
     private static boolean stick(String name) { return name.equals("leftstick") || name.equals("rightstick"); }
     private static boolean rectangle(String name) {
         return name.equals("l1") || name.equals("l2") || name.equals("r1") ||
-               name.equals("r2") || name.equals("touchpad") || name.equals("options");
+               name.equals("r2") || name.equals("touchpad") || name.equals("options") ||
+               name.equals("shake");
     }
     private PointF dpadCenter() {
         PointF u=center("up"),l=center("left"),r=center("right"),d=center("down");
@@ -257,6 +258,7 @@ final class TouchControllerOverlay extends View {
         circle(c,"cross",39,"×",0xff88aaff); circle(c,"square",39,"□",0xffd6a0ce);
         drawStick(c,"leftstick"); drawStick(c,"rightstick");
         circle(c,"l3",29,"L3",0xffa0aec0); circle(c,"r3",29,"R3",0xffa0aec0);
+        rectangle(c,"shake",118,"AGITAR");
         if (editing) {
             paint.setStyle(Paint.Style.FILL); paint.setColor(0xcc15171d);
             c.drawRoundRect(548,9,732,62,13,13,paint);

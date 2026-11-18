@@ -18,6 +18,7 @@ final class HudTelemetry {
     private final long ticksPerSecond;
     private final File pidFile;
     private final Context context;
+    private final boolean detailedThreadDiagnostics;
     private String cpuSourceState="";
     private int sampledPid=-1;
     private final java.util.concurrent.atomic.AtomicBoolean resetPending=new java.util.concurrent.atomic.AtomicBoolean();
@@ -32,6 +33,9 @@ final class HudTelemetry {
     HudTelemetry(Context context) {this(context,null);}
     HudTelemetry(Context context,File pidFile) {
         this.pidFile=pidFile;this.context=context.getApplicationContext();
+        // Basic FPS/CPU/GPU remain available. Expensive per-TID scans are opt-in.
+        this.detailedThreadDiagnostics=context.getSharedPreferences("tlou",Context.MODE_PRIVATE)
+                .getBoolean("aot_detailed_diagnostics",false);
         long hz=100;
         try { hz=Os.sysconf(OsConstants._SC_CLK_TCK); }catch(Throwable ignored){}
         ticksPerSecond=hz>0?hz:100;
@@ -105,7 +109,7 @@ final class HudTelemetry {
     void sample(int pid,long nowNanos) {
         if(resetPending.getAndSet(false) || sampledPid!=pid){previousTicks=-1;previousAt=0;sampledPid=pid;}
         sampleGpu();
-        if(pid>0)sampleHotThreads(pid,nowNanos);
+        if(pid>0 && detailedThreadDiagnostics)sampleHotThreads(pid,nowNanos);
         if(pid<=0){cpuPercent=Double.NaN;memoryGiB=Double.NaN;return;}
         try {
             long ticks=processTicks(pid);

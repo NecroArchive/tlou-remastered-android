@@ -71,6 +71,28 @@ static inline int tlou_cpu_policy_enabled(void) {
     const char *value=getenv("TLOU_FAST_RENDER_CORES");
     return value && !strcmp(value,"1");
 }
+/* AOT-only shared-PRIME placement, replacing exclusive CPU6/CPU7 pins.
+ * The toggle name is retained for saved preference/ABI compatibility; both
+ * critical threads can migrate across allowed PRIME cores. Workers are never
+ * narrowed by this option, and FEX is unchanged. */
+static inline int tlou_aot_split_prime_enabled(void) {
+    const char *value=getenv("TLOU_AOT_SPLIT_PRIME");
+    const char *aot=getenv("BB_AOT");
+    return aot && *aot && value && !strcmp(value,"1");
+}
+static inline int tlou_aot_split_prime_mask(const char *role,
+                                            const cpu_set_t *fast,
+                                            cpu_set_t *out) {
+    if (!role || !fast || !out || CPU_COUNT(fast)!=2) return 0;
+    // TLOU log 2(5): draw pinned to CPU6 coincided with 56.9 -> 32.8
+    // flips/s, while GPU command dropped to ~38% and recorder stayed ~63%.
+    // Exclusive masks make CPU6 a serial bottleneck even when CPU7 is free.
+    // Both critical threads may use both PRIME cores; kernel schedules each
+    // runnable thread. Never include cores outside the original launch mask.
+    if (strcmp(role,"GPU command") && strcmp(role,"draw recording")) return 0;
+    *out = *fast;
+    return 1;
+}
 static inline uint64_t tlou_cpu_read(unsigned cpu,const char *field) {
     char path[192];snprintf(path,sizeof(path),"/sys/devices/system/cpu/cpu%u/%s",cpu,field);
     FILE *file=fopen(path,"r");if (!file) return 0;
@@ -78,14 +100,26 @@ static inline uint64_t tlou_cpu_read(unsigned cpu,const char *field) {
     int valid=fscanf(file,"%llu",&value)==1;fclose(file);
     return valid ? (uint64_t)value : 0;
 }
+// The Java shell wrapper may not publish its pid on some Android builds.
+// Publish from the real native runtime as well, once at startup (never per frame).
+// The path is an app-private file supplied by GameActivity.
+static inline void tlou_cpu_publish_native_pid(void) {
+    const char *path=getenv("TLOU_NATIVE_PID_FILE");
+    if (!path || !*path) return;
+    FILE *file=fopen(path,"w");
+    if (!file) return;
+    fprintf(file,"%ld\n",(long)getpid());
+    fclose(file);
+}
 static inline void tlou_cpu_policy_prepare(void) {
+    tlou_cpu_publish_native_pid();
     // Called once before FEX/GPU/helper threads exist. Environment is immutable afterwards.
     clockid_t clock;
     if (pthread_getcpuclockid(pthread_self(),&clock)==0) {
         char value[32];snprintf(value,sizeof(value),"%d",(int)clock);
         setenv("TLOU_MAIN_CPU_CLOCK",value,1);
     }
-    if (!tlou_cpu_policy_enabled()) return;
+    if (!tlou_cpu_policy_enabled() && !tlou_aot_split_prime_enabled()) return;
     cpu_set_t allowed,fast;
     if (sched_getaffinity(0,sizeof(allowed),&allowed)!=0) {
         printf("TLOU CPU placement: cannot read launch mask errno=%d\n",errno);return;
@@ -101,14 +135,23 @@ static inline void tlou_cpu_policy_prepare(void) {
     if (!tlou_cpu_mask_text(&allowed,baseline,sizeof(baseline)) ||
         !tlou_cpu_mask_text(&fast,selected,sizeof(selected))) return;
     if (setenv("TLOU_BASE_CPU_SET",baseline,1) || setenv("TLOU_FAST_CPU_SET",selected,1)) return;
-    printf("TLOU CPU placement: allowed=%s critical=%s metric=%s; workers keep launch mask\n",
-           baseline,selected,metric==1 ? "capacity" : metric==2 ? "maximum-frequency" : "unchanged/unknown");
+    printf("TLOU CPU placement: allowed=%s critical=%s metric=%s shared-prime=%d; workers keep launch mask\n",
+           baseline,selected,metric==1 ? "capacity" : metric==2 ? "maximum-frequency" : "unchanged/unknown",
+           tlou_aot_split_prime_enabled());
 }
 static inline void tlou_cpu_policy_apply(const char *role,int critical) {
-    if (!tlou_cpu_policy_enabled()) return;
-    cpu_set_t baseline,wanted,current;
+    const int legacy=tlou_cpu_policy_enabled();
+    const int split=tlou_aot_split_prime_enabled();
+    if(!legacy && !split)return;
+    cpu_set_t baseline,wanted,current,fast;
     if (!tlou_cpu_parse_mask(getenv("TLOU_BASE_CPU_SET"),&baseline) ||
-        !tlou_cpu_parse_mask(getenv(critical ? "TLOU_FAST_CPU_SET" : "TLOU_BASE_CPU_SET"),&wanted)) return;
+        !tlou_cpu_parse_mask(getenv("TLOU_FAST_CPU_SET"),&fast)) return;
+    wanted=critical && legacy ? fast : baseline;
+    cpu_set_t prime_choice;
+    const int split_role=split && tlou_aot_split_prime_mask(role,&fast,&prime_choice);
+    if(split_role) wanted=prime_choice;
+    // Do not pin guest-main/worker/helper threads when only split mode is on.
+    if(!legacy && !split_role)return;
     CPU_AND(&wanted,&wanted,&baseline);
     if (!CPU_COUNT(&wanted) || sched_getaffinity(0,sizeof(current),&current)) return;
     int result=0;

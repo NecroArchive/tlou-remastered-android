@@ -736,7 +736,16 @@ void BufferCache::SmallGuestCopy(const Gow3Copy::Item& item) {
         // no shader/readback coherency semantics are relaxed.
         static const bool batch = [] {
             const char* env = std::getenv("GOW3_TLOU_HOST_COPY_BATCH");
+#ifdef __ANDROID__
+            // A/B candidate for TLOU's saturated Vulkan recorder:
+            // each consecutive host copy shares one chunk command and one
+            // completion store.  Normal Vulkan commands still break the
+            // batch, and WaitHostCopies/guest-order barriers are unchanged.
+            // GOW3_TLOU_HOST_COPY_BATCH=0 restores exact previous behavior.
+            return !(env && env[0] == '0' && env[1] == 0);
+#else
             return env && env[0] == '1' && env[1] == 0;
+#endif
         }();
         if (batch) {
             scheduler.RecordHostCopyItem(item);
@@ -4728,14 +4737,22 @@ void BufferCache::SweepTracking() {
 void BufferCache::CompleteReadbacks(bool wait, u64 wait_until) {
     // Pages of a readback are read-protected once its submission is out: a read fault waits
     // for submitted work only (never for the command buffer this thread is still recording).
-    for (auto& readback : pending_readbacks) {
-        if (readback.watching || readback.watched.empty() || readback.tick >= scheduler.CurrentTick()) {
-            continue;
+    // The GPU recorder polls this path on every draw/dispatch. A queued
+    // readback has tick == CurrentTick(); its pages must be protected ONLY
+    // after the next submission. All older readbacks have already been swept
+    // on the last tick transition. Keep every GPU completion/fault poll below
+    // unchanged, including forced CompleteReadbacks(true) from CPU waits.
+    const u64 watch_tick = scheduler.CurrentTick();
+    if (readback_watch_sweep_gate.ShouldSweep(watch_tick)) {
+        for (auto& readback : pending_readbacks) {
+            if (readback.watching || readback.watched.empty() || readback.tick >= watch_tick) {
+                continue;
+            }
+            for (const auto& [address, size] : readback.watched) {
+                page_manager->UpdatePageWatchers<true, true>(address, size);
+            }
+            readback.watching = true;
         }
-        for (const auto& [address, size] : readback.watched) {
-            page_manager->UpdatePageWatchers<true, true>(address, size);
-        }
-        readback.watching = true;
     }
     // GOW3_TEST_READBACK_HOLD=<ms>:<seconds> (tests): every <seconds>, polled readbacks do not
     // land for <ms>, as on a GPU that fell behind (the FrameBegin m_gfxEopTick crash reports

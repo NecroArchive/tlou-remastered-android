@@ -22,6 +22,13 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD | tee release-source-commit.txt
           grep -Fq "versionName '0.2.0'" android-launcher/app/build.gradle
+          ! grep -Fq "versionNameSuffix '-AOT-native-v2'" android-launcher/app/build.gradle
+          # Assert clean UI actually ships instead of just changing an unused source file.
+          ! grep -Fq 'CPU ARM64: uma única compilação inclui' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          ! grep -Fq 'Modo Unificado padrão:' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          ! grep -Fq 'Sincronização da geometria: Completo' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          ! grep -Fq 'row(credits,"Execução da CPU"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/AboutPanel.java
+          ! grep -Fq 'Patches validados para o eboot reconhecido' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortMenu.java
           grep -Fq "applicationIdSuffix '.aotnative2'" android-launcher/app/build.gradle
           grep -Fq 'controlSizeSetting(controls)' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
           grep -Fq 'slider("control_size"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortMenu.java
@@ -111,7 +118,7 @@ jobs:
           test -s "$apk"
           "$tools/apksigner" verify --verbose "$apk"
           "$tools/apksigner" verify --print-certs "$apk" | grep -Fq adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c
-          "$tools/aapt" dump badging "$apk" | grep -E "package: name='com.daedalus.tlou.remastered.aotnative2' versionCode='200'"
+          "$tools/aapt" dump badging "$apk" | grep -E "package: name='com.daedalus.tlou.remastered.aotnative2' versionCode='200' versionName='0.2.0'"
           python3 android/bionic/check_tools_apk.py "$apk"
           python3 - "$base" "$apk" <<'PY'
           from zipfile import ZipFile

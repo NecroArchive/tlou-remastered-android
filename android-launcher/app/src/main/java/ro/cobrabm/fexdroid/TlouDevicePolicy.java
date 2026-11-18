@@ -9,6 +9,20 @@ final class TlouDevicePolicy {
 
     private TlouDevicePolicy() {}
 
+    /** Oryon cores: Snapdragon 8 Elite / Elite Gen 5; exclude 8 Gen 3 and older. */
+    static boolean isOryonDevice() {
+        String soc="";
+        if(android.os.Build.VERSION.SDK_INT>=31) soc=android.os.Build.SOC_MODEL;
+        if(soc==null) soc="";
+        return isOryonSoc(soc+" "+android.os.Build.HARDWARE+" "+android.os.Build.BOARD);
+    }
+    static boolean isOryonSoc(String soc) {
+        if(soc==null)return false;
+        String s=soc.toLowerCase(Locale.ROOT);
+        return s.contains("oryon") || s.contains("sm8750") ||
+               s.contains("sm8850") || s.contains("8 elite");
+    }
+
     /** Return a status for logging; never set Freedreno-only flags on the system driver. */
     static String configureUbwcHint(Map<String,String> env, String mode,
                                     String renderer, String driverPath, String driverName) {
@@ -32,43 +46,21 @@ final class TlouDevicePolicy {
     }
 
     /**
-     * Adreno 750 A/B: the logs render at 1280x720 but allocate AHB frames at
-     * 2480x1116. Native SurfaceControl already scales the AHB source rect
-     * into the REAL Android window, so this only reduces the Vulkan output
-     * surface (and blit/present traffic), never the guest raster or AOT patches.
-     *
-     * No driver-selection changes. Other GPUs retain original dimensions.
+     * Release 0.2.0 fixed 720p Android presentation across all SoCs.
+     * Native Android SurfaceControl scales this output to the physical screen,
+     * while guest raster/patched resolution remain independent.
      */
-    static String configureCompactPresent(Map<String,String> env,
-            String mode, String eglRenderer, String effectiveGameResolution) {
-        if ("off".equals(mode)) return "disabled";
-        String gpu = eglRenderer == null ? "" : eglRenderer.toLowerCase(Locale.ROOT);
-        boolean a750 = gpu.contains("adreno") && gpu.matches(".*750([^0-9]|$).*");
-        if (!a750 && !"on".equals(mode)) return "auto-not-adreno750";
-        final String resolution = effectiveGameResolution == null ? "" :
-            effectiveGameResolution.toLowerCase(Locale.ROOT);
-        final String size;
-        switch(resolution) {
-            case "720": size = "1280x720"; break;
-            case "540": size = "960x540"; break;
-            case "360": size = "640x360"; break;
-            case "original": size = "1920x1080"; break;
-            default: return "unknown-guest-raster";
-        }
-        String[] wh=size.split("x");
-        int wantW=Integer.parseInt(wh[0]), wantH=Integer.parseInt(wh[1]);
+    static String configureCompactPresent(Map<String,String> env) {
+        final int targetW=1280,targetH=720;
         try {
             int currentW=Integer.parseInt(env.get("GOW3_SCREEN_W"));
             int currentH=Integer.parseInt(env.get("GOW3_SCREEN_H"));
-            // Never grow the presentation buffer or change orientation.
-            if(currentW<currentH || currentW<=wantW || currentH<=wantH)
-                return "not-smaller";
-        } catch(RuntimeException ex) {
-            return "display-size-unavailable";
-        }
-        env.put("GOW3_SCREEN_W",Integer.toString(wantW));
-        env.put("GOW3_SCREEN_H",Integer.toString(wantH));
-        return "compact-"+size;
+            if(currentW<currentH || currentW<targetW || currentH<targetH)
+                return "display-smaller-than-720p";
+        } catch(RuntimeException ex) {return "display-size-unavailable";}
+        env.put("GOW3_SCREEN_W",Integer.toString(targetW));
+        env.put("GOW3_SCREEN_H",Integer.toString(targetH));
+        return "fixed-1280x720";
     }
 
     static boolean isEightGiBClass(long totalMemBytes) {

@@ -119,14 +119,16 @@ jobs:
           s=p.read_text()
           start=s.index('        self.assertIn("branches: [android-bionic-stage1]",workflow)')
           stop=s.index('        self.assertIn("v0.2.0",(ROOT/"RELEASE_NOTES.md").read_text())',start)
-          s=s[:start]+'''        self.assertIn("name: TLOU Bionic Full Native and APK",workflow)
-          self.assertIn("tlou-ui-approval-log32-20261105",workflow)
-          self.assertIn("key: tlou-development-signing-v2",workflow)
-          self.assertIn("bash android/bionic/package_apk.sh",workflow)
-          self.assertIn("Restore signing identity used by existing installations",workflow)
-          self.assertIn("app:assembleRelease",workflow)
-          self.assertNotIn("app:assembleDebug",workflow)
-          '''+s[stop:]
+          checks=[
+            'self.assertIn("name: TLOU Bionic Full Native and APK",workflow)',
+            'self.assertIn("tlou-ui-approval-log32-20261105",workflow)',
+            'self.assertIn("key: tlou-development-signing-v2",workflow)',
+            'self.assertIn("bash android/bionic/package_apk.sh",workflow)',
+            'self.assertIn("Restore signing identity used by existing installations",workflow)',
+            'self.assertIn("app:assembleRelease",workflow)',
+            'self.assertNotIn("app:assembleDebug",workflow)',
+          ]
+          s=s[:start]+''.join('        '+line+'\\n' for line in checks)+s[stop:]
           p.write_text(s)
           PY
           # Git retains unmerged index stages until the resolved files are staged.

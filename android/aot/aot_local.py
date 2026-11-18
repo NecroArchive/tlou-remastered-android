@@ -634,6 +634,9 @@ def main(argv=None):
         # Do not put any optional visual/resolution byte changes into the
         # baseline image; otherwise the 'off' version cannot be selected.
         catalog_mode = version == "1.11" and native_options is not None
+        catalog_mode_100 = version == "1.00"
+        if catalog_mode_100 and native_options is None:
+            raise ValueError("TLOU 1.00 native AOT requires explicit patch options")
         native_patches = prepare_native_animation_patch(
             boot, digest, native_boot, native_options, catalog_mode=catalog_mode)
         variant_info = None
@@ -644,6 +647,16 @@ def main(argv=None):
                 from patch_variants import create_catalog
             variant_info = create_catalog(
                 native_boot, digest, out / "aot" / "tlou-111-all-variants.txt")
+        elif catalog_mode_100:
+            # The 01.00 runtime applies the same guarded BBPATCH2 patches at
+            # every launch. Translating unpatched bytes without alternatives
+            # caused code 22 at +0x946180. Compile ALL choices once instead.
+            try:
+                from .patch_variants import create_catalog_100
+            except ImportError:
+                from patch_variants import create_catalog_100
+            variant_info = create_catalog_100(
+                boot, digest, out / "aot" / "tlou-100-all-variants.txt")
         staged = stage_boot(native_boot if native_patches else boot, out / "bb-prepared")
         aot = out / "aot"
         aot.mkdir(exist_ok=True)
@@ -671,6 +684,11 @@ def main(argv=None):
             command += ["--variant-report"]
             if "--no-dirty-check" in command:
                 raise ValueError("Native patch variants require dirty-entry checks")
+            if catalog_mode_100:
+                # The existing 1.00 shard cache was built without variants.
+                # Never reuse its unpatched native code when enabling the new
+                # patch catalog for the first time. Build all units correctly.
+                command.remove("--resume")
         # All 11 entries of the verified 1.11 scheduler switch are seeded at
         # once. This avoids repeated full recompilation as new cases execute.
         seed_file = aot / "verified-extra-entries.txt"
@@ -704,7 +722,10 @@ def main(argv=None):
                   "variant_catalog": variant_info,
                   "native_patches": native_patches,
                   "native_patch_options": native_options,
-                  "native_codegen_profile": AOT_111_PERFORMANCE_PROFILE if fast_111 else "conservative-O1",
+                  "native_codegen_profile": (
+                      AOT_111_PERFORMANCE_PROFILE if fast_111
+                      else "tlou-100-llvmO1-native-variants-v1" if catalog_mode_100
+                      else "conservative-O1"),
                   "native_codegen_flags": list(cpu_flags),
                   "runtime_code_immutable": not bool(variant_info),
                   "runtime_patch_contract": (

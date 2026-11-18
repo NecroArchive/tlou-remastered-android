@@ -618,7 +618,7 @@ public final class MainActivity extends Activity {
             File prepared=prepareForNativeAot(base);
             update("Compilando a CPU ARM64 com todos os patches disponíveis…");
             File result=tools.buildExperimentalAot(prepared,this::update);
-            File coverageFile=new File(TsoProfile.work(this),"aot-report.json");
+            File coverageFile=new File(TsoProfile.workForPrepared(this,prepared),"aot-report.json");
             org.json.JSONObject coverageReport=new org.json.JSONObject(
                 new String(Files.readAllBytes(coverageFile.toPath()),
                     java.nio.charset.StandardCharsets.UTF_8));
@@ -626,7 +626,7 @@ public final class MainActivity extends Activity {
             int valid=coverage.getInt("estimated_usable_units");
             int unsupported=coverage.getInt("unsupported_units");
             // Never advertise or launch a stale library after a recompilation.
-            String pending=RuntimeAot.pendingSelectedPatches(this);
+            String pending=RuntimeAot.pendingSelectedPatches(this,prepared);
             if(!pending.isEmpty())throw new IOException(
                 "A recompilação não aplicou todos os patches: "+pending+
                 ". Verifique o relatório antes de jogar.");

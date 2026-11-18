@@ -48,14 +48,14 @@ public class TouchControllerSizeTest {
 
     @Test public void globalSizeDoesNotMoveAnExistingCustomButton() throws Exception {
         SharedPreferences positions=context.getSharedPreferences("gow3",Context.MODE_PRIVATE);
-        positions.edit().putFloat("overlay_x_cross",1000f)
-                        .putFloat("overlay_y_cross",500f).commit();
+        positions.edit().putFloat("overlay_x_cross",800f)
+                        .putFloat("overlay_y_cross",300f).commit();
         overlay=new TouchControllerOverlay(context,null,false);
-        assertEquals("cross",hitAt(1000f,555f)); // 120%, persisted position
+        assertEquals("cross",hitAt(800f,355f)); // 120%, persisted position
         assertNull(hitAt(1120f,545f)); // no longer at its default location
         settings.edit().putInt("control_size",100).commit();
-        assertNull(hitAt(1000f,555f)); // same center, smaller radius
-        assertEquals("cross",hitAt(1000f,500f));
+        assertNull(hitAt(800f,355f)); // same center, smaller radius
+        assertEquals("cross",hitAt(800f,300f));
     }
 
     @Test public void scalePreferenceIsClampedWithoutErasingIt() throws Exception {
@@ -63,6 +63,6 @@ public class TouchControllerSizeTest {
         assertEquals("cross",hitAt(1120f,615f)); // capped at 160%
         settings.edit().putInt("control_size",-10).commit();
         assertNull(hitAt(1120f,599f)); // floored at 75%
-        assertEquals(1000,1000); // no preference migration is needed
+        assertEquals(-10,settings.getInt("control_size",0)); // keep preference intact
     }
 }

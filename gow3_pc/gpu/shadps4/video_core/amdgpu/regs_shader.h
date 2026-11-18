@@ -4,6 +4,8 @@
 #pragma once
 
 #include "gow3_movie.h"
+#include "video_core/amdgpu/tlou_shader_signature_scan.h"
+#include "video_core/amdgpu/tlou_shader_scan_profile.h"
 #include "common/assert.h"
 #include "common/types.h"
 #include "shader_recompiler/params.h"
@@ -233,17 +235,75 @@ static constexpr const BinaryInfo& SearchBinaryInfo(const u32* code) {
     constexpr u32 signature_size = sizeof(BinaryInfo::signature_ref) / sizeof(u8);
     constexpr u32 search_limit = 0x4000;
     const u32* end = code + search_limit;
-    for (const u32* it = code; it < end; ++it) {
-        if (const BinaryInfo* info = std::bit_cast<const BinaryInfo*>(it); info->Valid()) {
-            return *info;
-        }
+    // Experimental SIMD search: test 4 DWORD-aligned OrbShdr candidates at
+    // a time, always verify the full seven-byte signature in ascending order.
+    // No binary-info pointer or specialization is cached: shader code can be
+    // changed by the guest, and every call must use the CURRENT bytes.
+    // The original short token path above is unchanged.
+    static constexpr u32 first_word = 0x5362724fu; // "OrbS", little endian
+    if (const auto* hit = Detail::FindShaderSignature32(
+            code, end, first_word, [](const u32* candidate) {
+                const auto* info = std::bit_cast<const BinaryInfo*>(candidate);
+                return info->Valid();
+            })) {
+        return *std::bit_cast<const BinaryInfo*>(hit);
+    }
+    UNREACHABLE_MSG("Shader binary info not found.");
+}
+
+// The diagnostic original-path switch keeps the exact old search logic.
+static const BinaryInfo& SearchBinaryInfoScalar(const u32* code) {
+    if (code[0] == 0xBEEB03FF) {
+        const auto* quick=std::bit_cast<const BinaryInfo*>(
+            code + (code[1] + 1) * 2);
+        if (quick->Valid()) return *quick;
+    }
+    for (const u32* it=code; it<code+0x4000; ++it) {
+        const auto* info=std::bit_cast<const BinaryInfo*>(it);
+        if (info->Valid()) return *info;
     }
     UNREACHABLE_MSG("Shader binary info not found.");
 }
 
 static Shader::ShaderParams GetParams(const auto& sh) {
     const auto* code = sh.template Address<u32*>();
-    const auto& bininfo = SearchBinaryInfo(code);
+    static const bool force_original_scan = [] {
+        const char* v=std::getenv("TLOU_SHADER_SCAN_SCALAR");
+        return v && v[0]=='1' && v[1]=='\0';
+    }();
+    const auto& bininfo = force_original_scan
+        ? SearchBinaryInfoScalar(code) : SearchBinaryInfo(code);
+    // Experimental opt-in telemetry: time BOTH implementations on 1 in 256
+    // fallbacks, and count the actual direct-token and full-search calls.
+    // Guest bytecode is reread on every call. Never reuse metadata across
+    // draws/dispatches; no change to the returned shader or its bindings.
+    static const bool shader_scan_profile = [] {
+        const char* v = std::getenv("TLOU_SHADER_SCAN_PROFILE");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    if (shader_scan_profile) {
+        static thread_local Detail::ShaderScanProfiler cpu_profile{};
+        const auto* selected = std::bit_cast<const u32*>(&bininfo);
+        constexpr u32 quick_token = 0xBEEB03FF;
+        const bool direct = code[0] == quick_token &&
+                            selected == code + (code[1] + 1) * 2;
+        constexpr u32 prefix = 0x5362724fu;
+        constexpr u32 limit = 0x4000;
+        const auto valid = [](const u32* p) {
+            return std::bit_cast<const BinaryInfo*>(p)->Valid();
+        };
+        cpu_profile.Observe(code, selected, direct,
+                            [&]() -> const u32* {
+                                for (const u32* it = code; it < code + limit; ++it) {
+                                    if (valid(it)) return it;
+                                }
+                                return nullptr;
+                            },
+                            [&]() -> const u32* {
+                                return Detail::FindShaderSignature32(
+                                    code, code + limit, prefix, valid);
+                            });
+    }
     return {
         .user_data = sh.user_data,
         .code = std::span{code, bininfo.length / sizeof(u32)},

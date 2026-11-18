@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <style name="TlouTheme" parent="@android:style/Theme.Material.NoActionBar">
+    <item name="android:colorAccent">#C2CF96</item>
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:navigationBarColor">#101613</item>
+    <item name="android:windowBackground">#101613</item>
+    <item name="android:alertDialogTheme">@style/TlouAlertTheme</item>
+  </style>
+  <style name="TlouAlertTheme" parent="@android:style/Theme.Material.Dialog.Alert">
+    <item name="android:windowBackground">@drawable/tlou_dialog_background</item>
+    <item name="android:colorAccent">#C2CF96</item>
+    <item name="android:textColorPrimary">#E7E9DF</item>
+    <item name="android:textColorSecondary">#B7C0AF</item>
+  </style>
+</resources>

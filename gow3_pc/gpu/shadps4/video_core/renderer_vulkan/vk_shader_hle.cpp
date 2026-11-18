@@ -15,6 +15,7 @@
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
+#include "video_core/renderer_vulkan/tlou_large_scalar_copy.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -452,10 +453,34 @@ static bool ExecuteScalarCopyHLE(const Shader::Info& info, const AmdGpu::Compute
     const VAddr dst_addr = dst.base_address;
     const u64 size = count * 4;
     auto& buffer_cache = rasterizer.GetBufferCache();
-    // GPU-written source bytes: the GPU copies them in order (the SRT walker then downloads the
-    // destination when it reads it, Rasterizer::SyncSrtTables). Surface copies (depth, MiBs)
-    // stay on the GPU too.
+    // Large linear copies can be expressed as an ordered Vulkan transfer instead
+    // of running the scalar-copy compute shader. The destination is GPU-written
+    // IN COMMAND ORDER; a CPU memcpy here reads guest sources too early.
+    // Port of TLOU PC v0.1.7's water/pallet transfer-path fix.
     if (size > 64_KB) {
+        if (Detail::EligibleLargeScalarCopy(info.pgm_hash, TLOU_SCALAR_COPY64_SHADER_HASH,
+                                            count, readable, src_addr, dst_addr, size) &&
+            rasterizer.IsMapped(src_addr, size) && rasterizer.IsMapped(dst_addr, size)) {
+            auto& textures = rasterizer.GetTextureCache();
+            const bool stencil_copy = textures.FindStencilPlaneDepth(src_addr) &&
+                                      (textures.FindStencilPlaneDepth(dst_addr) ||
+                                       textures.FindStencilTexture(dst_addr));
+            if (!stencil_copy) {
+                const auto [src_buffer, src_offset] =
+                    buffer_cache.ObtainBuffer(src_addr, static_cast<u32>(size), false);
+                const auto [dst_buffer, dst_offset] =
+                    buffer_cache.ObtainBuffer(dst_addr, static_cast<u32>(size), true);
+                if (Detail::NonOverlappingVulkanCopy(
+                        src_buffer->Handle() == dst_buffer->Handle(),
+                        src_offset, dst_offset, size)) {
+                    const std::array copies{vk::BufferCopy{src_offset, dst_offset, size}};
+                    rasterizer.GetRuntime().CopyBuffer(src_buffer, dst_buffer, copies);
+                    return true;
+                }
+            }
+        }
+        // Overlapping/irregular/unmapped/stencil transfers retain the original
+        // shader path, including its GPU-side ordering and hazard behavior.
         return to_gpu("size", src_addr, dst_addr, size);
     }
     if (!rasterizer.IsMapped(dst_addr, size)) {

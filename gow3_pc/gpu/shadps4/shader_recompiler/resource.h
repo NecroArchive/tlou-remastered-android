@@ -37,6 +37,21 @@ struct SharpFetch {
     template <u32 num_dwords = N>
         requires(num_dwords <= N)
     constexpr bool Fetch(const u32* flatbuf, T* out) const {
+        // Read-only SRT descriptors are commonly four contiguous guest
+        // words. A direct 16-byte copy preserves the exact per-dispatch
+        // descriptor snapshot without assembling an intermediate array or
+        // branching over four load-mask bits. If any offset, immediate bit,
+        // or descriptor length differs, take the unchanged general path.
+        if constexpr (num_dwords == 4) {
+            if ((load_mask & 0xf) == 0xf && offsets[0] != UNKNOWN_LOCATION &&
+                static_cast<u32>(offsets[0]) + 3 < UNKNOWN_LOCATION &&
+                offsets[1] == offsets[0] + 1 &&
+                offsets[2] == offsets[0] + 2 &&
+                offsets[3] == offsets[0] + 3) {
+                std::memcpy(out, flatbuf + offsets[0], 4 * sizeof(u32));
+                return true;
+            }
+        }
         u8 mask = load_mask;
         for (u32 i = 0; i < num_dwords; i++) {
             if (offsets[i] == UNKNOWN_LOCATION) {
@@ -143,9 +158,14 @@ struct BufferResource {
         return buffer_type != BufferType::Guest;
     }
 
-    constexpr AmdGpu::Buffer GetSharp(const auto& info) const noexcept {
+    // The frame's flat user-data pointer does not change during one
+    // CollectRingBindings / BindBuffers stage. Reuse it for all descriptors
+    // instead of repeatedly resolving Info::Snapshot() for every V#.
+    // Each descriptor is still fetched afresh: never reuse its guest data
+    // between dispatches or before a GPU readback.
+    constexpr AmdGpu::Buffer GetSharp(const auto& info, const u32* flat_data) const noexcept {
         AmdGpu::Buffer buffer;
-        if (!sharp_fetch.Fetch(info.FlatUserData().data(), &buffer)) {
+        if (!sharp_fetch.Fetch(flat_data, &buffer)) {
             return AmdGpu::Buffer::Null();
         }
         if (post_op == SharpFetchPostOp::BitwiseOrDw1WithImm) {
@@ -157,6 +177,9 @@ struct BufferResource {
             return AmdGpu::Buffer::Null();
         }
         return buffer;
+    }
+    constexpr AmdGpu::Buffer GetSharp(const auto& info) const noexcept {
+        return GetSharp(info, info.FlatUserData().data());
     }
 };
 using BufferResourceList = boost::container::static_vector<BufferResource, NUM_BUFFERS>;

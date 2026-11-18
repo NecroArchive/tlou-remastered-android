@@ -1,5 +1,6 @@
 #include "gow3_movie.h"
 #include "gow3_movie_bridge.h"
+#include "tlou_movie_111_planes.h"
 #include "core/memory.h"
 
 #include <array>
@@ -89,16 +90,6 @@ std::uint32_t ScaledChromaPitch() {
 
 std::uint64_t ScaledFrameBytes() {
     return std::uint64_t(ScaledPitch()) * ScaledRows() + std::uint64_t(ScaledChromaPitch()) * ScaledRows() / 2;
-}
-
-// Avoid reserving extra guest flexible memory for a downscaled NV12 movie. Each decoder frame
-// already owns a 4 MiB guest buffer; a 1280x720 NV12 frame fits in the first 1,474,560 bytes.
-// Never overwrite a larger source with a larger target or cross the picture-info reservation.
-bool CanWriteInPlace(std::uint32_t source_width, std::uint32_t source_height,
-                     std::uint64_t available_bytes) {
-    const Size& display = Display();
-    return display.width && display.height && source_width >= display.width &&
-           source_height >= display.height && ScaledFrameBytes() <= available_bytes;
 }
 
 void RecordFrame(std::uint64_t base, std::uint32_t width, std::uint32_t height, std::uint32_t pitch,
@@ -216,8 +207,59 @@ bool MovieShaderConstant(std::uint32_t bits, float& patched) {
     }
 }
 
+// 01.00 and 01.11 may reference source/native or 16-row movie Y/UV
+// descriptors although the converted NV12 frame uses 64-row alignment.
+// Only addresses of successfully recorded decoder buffers can be changed.
+bool AlignedMoviePlanes() {
+    static const bool enabled=[] {
+        const char* env=std::getenv("TLOU_MOVIE_NV12_LAYOUT");
+        // Keep compatibility with older 01.11 launcher packages.
+        if (!env) env=std::getenv("TLOU_MOVIE_111_LAYOUT");
+        return env && env[0]=='1';
+    }();
+    return enabled;
+}
+
+bool RemapAligned(std::uint64_t& address, std::uint32_t& width,
+              std::uint32_t& height, std::uint32_t& pitch,std::uint32_t bits) {
+    if(!AlignedMoviePlanes() || (bits!=8 && bits!=16))return false;
+    const Size& size=Display();
+    if(!size.width)return false;
+    const bool maybeY=(bits==8 && TlouMovie111::LumaShape(width,height,size.width,size.height));
+    const bool maybeUV=(bits==16 && TlouMovie111::ChromaShape(width,height,size.width,size.height));
+    if(!maybeY && !maybeUV)return false;
+    for(auto& frame:frames) {
+        const std::uint64_t base=frame.base.load(std::memory_order_acquire);
+        if(!base)continue;
+        const std::uint64_t layout=frame.layout.load(std::memory_order_acquire);
+        const std::uint32_t w=layout & 0xffff, h=(layout>>16)&0xffff;
+        const std::uint32_t p=(layout>>32)&0xffff, rows=(layout>>48)&0xffff;
+        // Do not remap a source 1080p picture whose scale failed.
+        if(w!=size.width || h!=size.height || p!=ScaledPitch() || rows!=ScaledRows())
+            continue;
+        if((maybeY && address==base) ||
+           (maybeUV && TlouMovie111::ChromaAddress(address,base,w,h))) {
+            const bool uv=maybeUV;
+            address=uv ? base+std::uint64_t(p)*rows : base;
+            width=uv ? w/2 : w;
+            height=uv ? h/2 : h;
+            pitch=uv ? ScaledChromaPitch()/2 : p;
+            static std::atomic<unsigned> corrected{0};
+            if(corrected.fetch_add(1,std::memory_order_relaxed)<8) {
+                std::printf("TLOU movie aligned plane: %s -> NV12 %ux%u pitch %u at %#llx\n",
+                            uv?"UV":"Y",width,height,pitch,
+                            static_cast<unsigned long long>(address));
+                std::fflush(stdout);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Remap(std::uint64_t& address, std::uint32_t& width, std::uint32_t& height, std::uint32_t& pitch,
            std::uint32_t bits) {
+    if(RemapAligned(address,width,height,pitch,bits))return true;
     const Size& display = Display();
     if (!display.width) {
         return false;

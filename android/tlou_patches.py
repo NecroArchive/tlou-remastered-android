@@ -86,23 +86,103 @@ BASE_PATCHES_111 = {
         (0xC87D96, "741b", "9090"),
         (0xC873E1, "742d", "9090"),
     ],
+    # 01.11 guest SIGSEGV at 0xA623F5 (vblendps [r14]) in the animation
+    # update loop. r14 was 0x100000007: a non-guest-memory sentinel stored
+    # in the output-node pointer slot at [r15+rbx-0x68]. Redirect its 5-byte
+    # load to a verified 31-byte NOP cave, then skip only entries with pointers
+    # below the mapped guest arena (0x1000000000). The valid path returns with
+    # the original load and all other registers/stack preserved. Skip target
+    # 0xA625B0 restores rdi before the loop increment. Both 01.11 SELF hashes
+    # were checked against these exact original bytes; 01.00 is not changed.
+    "invalid-animation-output-pointer": [
+        (0xA623D3, "4d8b741f98", "e889d82300"),
+        (0xC9FC61, "90" * 31,
+         "4d8b741f98504c89f048c1e8244885c05875094883c408"
+         "e93329dcffc39090"),
+    ],
 }
 # Original-byte guards checked independently in BOTH supplied 01.11 ELFs.
+# In 01.11 the graphics settings are reconstructed from game/config data after
+# the constructor runs. Defaults alone can therefore be overwritten. Keep the
+# guarded defaults AND disable the relevant render consumers so that the effect
+# stays off even when a saved setting (re)enables the flag.
+#
+# 2026-11-08: checked every added original instruction against both user-owned
+# 01.11 SELF profiles (3cfa475f... and 31f3b0d1...). Consumer branches target
+# the same "effect off" block as their original JZ/JE, not arbitrary code.
+# Bloom's "xor al,al" preserves the three adjacent option bytes (including
+# tonemapping) rather than zeroing the packed four-byte configuration word.
 PERFORMANCE_EFFECTS_111 = {
-    "ssao": [(0xAEB0CC,"c7834b01000001010101","c7834b01000000010101")],
-    "motion_blur": [
-        (0xAEB14B,"c6836d01000001","c6836d01000000"),
-        (0x758691,"c6830e04000001","c6830e04000000"),
+    "ssao": [
+        (0xAEB0CC, "c7834b01000001010101", "c7834b01000000010101"),
+        # Render consumer: skip ambient-occlusion contribution irrespective
+        # of config reloads. JE 0xF911 -> JMP 0xF911.
+        (0xF907, "7408", "eb08"),
     ],
-    "depth_of_field": [(0xAEB167,"c6837101000001","c6837101000000")],
-    "bloom": [(0xAEB202,"c783b401000001010101","c783b401000001000101")],
+    "motion_blur": [
+        (0xAEB14B, "c6836d01000001", "c6836d01000000"),
+        (0x758691, "c6830e04000001", "c6830e04000000"),
+        # Motion reconstruction and postprocessing use the reloaded option.
+        (0xACB868, "0f849a090000", "e99b09000090"),
+        (0xAE09C0, "0f8485030000", "e98603000090"),
+        (0xAE0D7F, "7418", "eb18"),
+        (0xAE0DD6, "0f84fe000000", "e9ff00000090"),
+        (0xAE0F25, "0f8451010000", "e95201000090"),
+        # r15d is zero at 0xB87801; replace conditional move with the
+        # original disabled-value move while preserving flags.
+        (0xB8781E, "410f44c7", "4489f890"),
+        # The scene-start routine at 0x2F2000 directly resolves the global
+        # renderer state at 0x181A770 and writes 1 to [r13+0x16D],
+        # re-enabling motion blur after the patched 01.11 initializer.
+        # Other offset-0x16D accesses at 0x193B6A and 0xDA2BAF are on
+        # DIFFERENT objects; do NOT modify them merely by offset matching.
+        # Exact original bytes verified against both supplied 01.11 SELFs.
+        (0x2F2035, "41c6856d01000001", "41c6856d01000000"),
+    ],
+    "depth_of_field": [
+        (0xAEB167, "c6837101000001", "c6837101000000"),
+        # The bool getter loads AL and tests it; XOR AL,AL returns false
+        # without changing neighboring settings.
+        (0xA86FFE, "84c0", "30c0"),
+        (0xB87611, "740d", "eb0d"),
+        (0xB88604, "742b", "eb2b"),
+    ],
+    "bloom": [
+        (0xAEB202, "c783b401000001010101", "c783b401000001000101"),
+        # Packed flags at +0x1B4: bit/byte zero is "Use Bloom". Clear only
+        # AL at consumption, retaining "Use Tonemap" and subsequent flags.
+        (0xA86F8B, "84c0", "30c0"),
+    ],
     "sunlight_shadows": [
-        (0xA905B5,"0f85f6010000","e9f701000090"),
-        (0xA905AE,"80b89c000000000f85f6010000",None),
+        (0xA905B5, "0f85f6010000", "e9f701000090"),
+        (0xA905AE, "80b89c000000000f85f6010000", None),
     ],
     "subsurface": [
-        (0xA9250A,"0f840c060000","e90d06000090"),
-        (0xA92500,"488b0080b8942e0000000f840c060000",None),
+        (0xA9250A, "0f840c060000", "e90d06000090"),
+        (0xA92500, "488b0080b8942e0000000f840c060000", None),
+    ],
+    # Optional 01.11 light-category overrides, OFF by default.
+    # Real 01.11 disassembly (supplied eboot SHA 3cfa475f..., SELF file offsets
+    # = guest patch offset + 0xAC90) proves the previous "mov al,0" approach
+    # discarded the ENTIRE light: TEST AL; JE skip-all comes immediately
+    # after the shadowed consumer. Enabling the adjacent unshadowed flag
+    # cannot recover the skipped light (reported black scene, 2026-11-17).
+    # Instead set each per-light *classification* to zero before its category
+    # branch. This reaches the nonshadowed consumer and passes kind=0 to the
+    # light-output allocator. Preserve the render-state/shadow consumers and
+    # all following lighting arithmetic; never globally alter light objects.
+    # NOTE: structural fix validated against actual SELF bytes, not yet
+    # proven to remove every projected shadow in gameplay.
+    "omni_light_shadows": [
+        (0xA638C4, "4c8d25a56edb00", None),  # r12=render-state anchor
+        (0xA63BB6, "84c9", "30c9"),  # TEST CL,CL -> XOR CL,CL; branch to no-shadow; EDX=0
+        (0xA63BCA, "418a84244f010000", "b001" + "90"*6),  # no-shadow category enabled
+    ],
+    "spot_light_shadows": [
+        (0xA6445A, "4584ed", "4530ed"),  # TEST R13B,R13B -> XOR R13B,R13B
+        (0xA6446F, "418a842450010000", "b001" + "90"*6),  # no-shadow spot path #1
+        (0xA652A0, "85d2", "31d2"),  # TEST EDX,EDX -> XOR EDX,EDX; bypass shadow route
+        (0xA652B8, "418a842450010000", "b001" + "90"*6),  # no-shadow spot path #2
     ],
 }
 

@@ -109,9 +109,9 @@ final class SaveChoicePanel extends Dialog {
         if(!entry.detail.isEmpty())details.append(entry.detail).append('\n');
         if(!entry.directory.isEmpty())details.append(tr("Slot")).append(": ").append(entry.directory).append('\n');
         if(!entry.isNew && entry.timestamp>0)details.append(date(entry.timestamp));
-        new android.app.AlertDialog.Builder(activity)
+        TlouDialogs.show(activity,new android.app.AlertDialog.Builder(activity)
                 .setTitle(entry.heading()).setMessage(details.toString().trim())
-                .setPositiveButton(android.R.string.ok,null).show();
+                .setPositiveButton(android.R.string.ok,null));
     }
     private int dp(int n){return Math.round(n*activity.getResources().getDisplayMetrics().density);}
     private String tr(String value){return TlouLanguage.t(activity,value);}

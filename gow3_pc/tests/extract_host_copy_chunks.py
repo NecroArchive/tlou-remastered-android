@@ -26,6 +26,7 @@ prefix = '''#pragma once
 #include <vector>
 #include "video_core/renderer_vulkan/tlou_host_copy_batch.h"
 using u64=std::uint64_t;
+using u32=std::uint32_t;
 namespace Gow3Toggle {
 enum Flag {RecordPrefetch};
 inline bool prefetch_enabled=true;

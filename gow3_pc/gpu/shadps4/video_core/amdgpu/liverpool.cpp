@@ -40,6 +40,7 @@
 #include "video_core/amdgpu/pm4_packet_checksum.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/tlou_compute_drain_policy.h"
 #include "video_core/renderer_vulkan/vk_runtime.h" // gow3: GOW3_READBACK_WAKE (scheduler)
 
 namespace AmdGpu {
@@ -2736,14 +2737,95 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         // queue): compute drains were up to 35% of the command thread on a Ryzen
         // laptop. Off by default (see the graphics WaitRegMem).
         // 21 Oct 2026 (GOW3_SKIP_IB_DRAIN=1): nested buffers alone.
+        // TLOU Android: avoid a full Stage-A/Stage-B drain BEFORE every compute
+        // WAIT_REG_MEM on guest memory. The existing FewerDrains wait loop
+        // checks pending fence values, lands deferred readbacks, and yields
+        // other queues until the exact predicate is met. This is NOT a generic
+        // draw-barrier skip: register waits and other PM4 opcodes stay unchanged.
+        // TLOU_COMPUTE_WAIT_DEFER=0 restores the pre-drain for A/B debugging.
+        static const bool targeted_compute_wait_enabled = [] {
+#ifdef __ANDROID__
+            const char* env = std::getenv("TLOU_COMPUTE_WAIT_DEFER");
+            return !(env && env[0] == '0' && env[1] == '\0');
+#else
+            return false;
+#endif
+        }();
+        const bool targeted_compute_wait =
+            Vulkan::Detail::CanDeferComputeMemoryWait(
+                opcode,
+                opcode == PM4ItOpcode::WaitRegMem &&
+                    reinterpret_cast<const PM4CmdWaitRegMem*>(header)->mem_space.Value() ==
+                        PM4CmdWaitRegMem::MemSpace::Memory,
+                targeted_compute_wait_enabled);
         const bool pipelined_wait =
             (FewerDrains() &&
              (opcode == PM4ItOpcode::IndirectBuffer || opcode == PM4ItOpcode::WaitRegMem)) ||
-            (opcode == PM4ItOpcode::IndirectBuffer && SkipIbDrain());
-        if (rasterizer && opcode != PM4ItOpcode::Nop && opcode != PM4ItOpcode::SetShReg &&
+            (opcode == PM4ItOpcode::IndirectBuffer && SkipIbDrain()) ||
+            targeted_compute_wait;
+        const bool would_drain =
+            rasterizer && opcode != PM4ItOpcode::Nop && opcode != PM4ItOpcode::SetShReg &&
             opcode != PM4ItOpcode::SetQueueReg && opcode != PM4ItOpcode::DispatchDirect &&
             opcode != PM4ItOpcode::DispatchIndirect && opcode != PM4ItOpcode::ReleaseMem &&
-            !pipelined_wait) {
+            !pipelined_wait;
+        bool skip_pre_drain = false;
+#ifdef __ANDROID__
+        static const bool safe_nested_compute = [] {
+            const char* value = std::getenv("TLOU_SAFE_COMPUTE_IB");
+            return !(value && value[0] == '0' && value[1] == 0);
+        }();
+        const auto drain_kind = Vulkan::Detail::ClassifyComputePreDrain(opcode);
+        bool ib_pending_write = true;
+        if (would_drain && safe_nested_compute &&
+            drain_kind == Vulkan::Detail::ComputePreDrain::NestedBuffer) {
+            const auto* ib = reinterpret_cast<const PM4CmdIndirectBuffer*>(header);
+            const VAddr start = reinterpret_cast<VAddr>(ib->Address<const u32>());
+            const u64 bytes = u64(ib->ib_size) * sizeof(u32);
+            ib_pending_write = rasterizer->NeedsComputeIndirectBufferDrain(start, bytes);
+        }
+        if (would_drain) {
+            skip_pre_drain = Vulkan::Detail::CanSkipComputePreDrain(
+                drain_kind, ib_pending_write, safe_nested_compute);
+        }
+        // One counter per candidate, no per-command clock or lock.
+        // Report real guest opcode outcomes separately from synthetic tests.
+        struct DrainCounts {
+            u64 commands=0, baseline=0, nested_skips=0, ib_hazard_kept=0;
+            u64 inner_drains=0, still_drained=0, memory_waits_deferred=0;
+            std::chrono::steady_clock::time_point last{};
+        };
+        static thread_local DrainCounts counts{};
+        if (targeted_compute_wait) ++counts.memory_waits_deferred;
+        if (would_drain) {
+            ++counts.baseline;
+            if (!skip_pre_drain) ++counts.still_drained;
+            else if (drain_kind == Vulkan::Detail::ComputePreDrain::NestedBuffer)
+                ++counts.nested_skips;
+            else ++counts.inner_drains;
+            if (drain_kind == Vulkan::Detail::ComputePreDrain::NestedBuffer &&
+                safe_nested_compute && ib_pending_write) ++counts.ib_hazard_kept;
+        }
+        if ((++counts.commands & 32767ull) == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            if (counts.last == std::chrono::steady_clock::time_point{}) {
+                counts.last = now;
+            } else if (now - counts.last >= std::chrono::seconds(5)) {
+                std::printf("TLOU compute predrain (5 s): legacy=%llu "
+                            "ib-skipped=%llu ib-hazard-kept=%llu "
+                            "duplicate-inner=%llu "
+                            "still-drained=%llu memory-waits-deferred=%llu (counts, not FPS)\n",
+                            (unsigned long long)counts.baseline,
+                            (unsigned long long)counts.nested_skips,
+                            (unsigned long long)counts.ib_hazard_kept,
+                            (unsigned long long)counts.inner_drains,
+                            (unsigned long long)counts.still_drained,
+                            (unsigned long long)counts.memory_waits_deferred);
+                counts = {};
+                counts.last = now;
+            }
+        }
+#endif
+        if (would_drain && !skip_pre_drain) {
             rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonCompute);
             // GOW3_FRAME_STATS: which compute packets drain, per 5 s.
             static const bool stats = std::getenv("GOW3_FRAME_STATS") != nullptr;
@@ -2951,7 +3033,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         case PM4ItOpcode::WaitRegMem: {
             const auto* wait_reg_mem = reinterpret_cast<const PM4CmdWaitRegMem*>(header);
             ASSERT(wait_reg_mem->engine.Value() == PM4CmdWaitRegMem::Engine::Me);
-            if (FewerDrains()) {
+            if (FewerDrains() || targeted_compute_wait) {
                 // Not drained up front: as on the graphics queue, a fence handed to the draw
                 // recording thread counts as written, and an unmet wait lets it catch up first.
                 if (u32 value; wait_reg_mem->mem_space.Value() ==

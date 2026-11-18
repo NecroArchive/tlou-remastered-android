@@ -1,6 +1,7 @@
 package ro.cobrabm.fexdroid;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
@@ -9,6 +10,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import java.util.Locale;
 import android.view.Gravity;
+import android.view.InputDevice;
+import android.hardware.input.InputManager;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceView;
@@ -45,6 +48,15 @@ public final class GameActivity extends Activity {
     private SurfaceView surface;
     private TouchControllerOverlay touch;
     private PadBridge pad;
+    private InputManager inputManager;
+    private final InputManager.InputDeviceListener controllerListener=new InputManager.InputDeviceListener() {
+        @Override public void onInputDeviceAdded(int deviceId) { updateControllerVisibility(); }
+        @Override public void onInputDeviceRemoved(int deviceId) {
+            if(pad!=null)pad.reset();
+            updateControllerVisibility();
+        }
+        @Override public void onInputDeviceChanged(int deviceId) { updateControllerVisibility(); }
+    };
     private AudioBridge audio;
     private volatile Process game;
     private File logFile;
@@ -95,6 +107,8 @@ public final class GameActivity extends Activity {
         File input=new File(stateDir,"controller.state");
         RunLog.write(this,"Inicializando controle e áudio");
         pad=new PadBridge(input);
+        inputManager=(InputManager)getSystemService(INPUT_SERVICE);
+        if(inputManager!=null)inputManager.registerInputDeviceListener(controllerListener,handler);
         runtimePidFile=new File(stateDir,"runtime.pid");
         hudTelemetry=new HudTelemetry(this,runtimePidFile);
         edgeMenu=new EdgeMenuGesture(getResources().getDisplayMetrics().density);
@@ -205,8 +219,7 @@ public final class GameActivity extends Activity {
                 String mode=p.getString("hud_mode","full");
                 double cpu=hudTelemetry==null?Double.NaN:hudTelemetry.cpuPercent();
                 double gpu=hudTelemetry==null?Double.NaN:hudTelemetry.gpuPercent();
-                status.setText(HudPresentation.text(mode,fps,gpu,cpu,
-                    p.getBoolean("hud_gpu",true),p.getBoolean("hud_cpu",true)));
+                status.setText(HudPresentation.text(mode,fps,gpu,cpu,true,true));
             } else {
                 fpsMeter.reset();
                 if(hudTelemetry!=null)hudTelemetry.reset();
@@ -250,6 +263,7 @@ public final class GameActivity extends Activity {
             if(closing.get())return;
             if (!user.exists() && !user.mkdirs()) throw new IllegalStateException("Falha no usuário PS4");
             if (!app0.isDirectory()) throw new IllegalStateException("tlou-view ausente, rode o preparador TLOU");
+            RunLog.write(this,TlouApp0Assets.ensure(app0));
             List<String> args=new ArrayList<>();
             args.add(bin.getAbsolutePath());
             args.add(new File(base,"boot-linked.bin").getAbsolutePath());
@@ -264,10 +278,33 @@ public final class GameActivity extends Activity {
             args.add(app0.getAbsolutePath());
             args.add("--user");
             args.add(user.getAbsolutePath());
+            // 0.2.0: strict native ARM64 AOT; never boot an x86-64 fallback.
+            RuntimeAot.Ready nativeAot;
+            try {
+                nativeAot=RuntimeAot.prepare(this,base);
+                args.set(1,nativeAot.bootImage.getAbsolutePath());
+                RunLog.write(this,"CPU backend: native ARM64 AOT; library="+nativeAot.library);
+            } catch(Exception problem) {
+                RunLog.failure(this,"AOT obrigatório ainda não compilado",problem);
+                PortSettings.prefs(this).edit().putBoolean("launch_direct",false).apply();
+                throw new java.io.IOException(
+                    "CPU ARM64 não compilada. Compile em Ajustes antes de jogar.",problem);
+            }
             File patches=new File(base,"patches.bin");
-            if (patches.isFile() && patches.length()>0) {
+            // AOT now has one native function-variant library for ALL verified
+            // effect/resolution options. Apply the selected G3PATCH2 writes
+            // before the first guest call; native guest_cpu_aot.cpp classifies
+            // changed function hashes and redirects directly to compiled
+            // alternatives. Never patch the user's original SELF or JNI .so.
+            if(patches.isFile() && patches.length()>0) {
                 args.add("--patches");
                 args.add(patches.getAbsolutePath());
+                if(nativeAot!=null)RunLog.write(this,
+                    "AOT: aplicando patches da sessão via variantes ARM64; "+
+                    "resolução/efeitos alteráveis sem nova compilação.");
+            } else if(nativeAot!=null) {
+                throw new java.io.IOException(
+                    "Patches 1.11 não preparados; não iniciar uma sessão ARM64 com opções incompletas.");
             }
             ProcessBuilder builder=new ProcessBuilder(RuntimeProcess.command(args,runtimePidFile));
             Map<String,String> env=builder.environment();
@@ -282,7 +319,32 @@ public final class GameActivity extends Activity {
                 env.put("GOW3_AUDIO","none");
                 RunLog.write(this,"Áudio indisponível após 5 s: usando timer sem som nesta sessão");
             } else RunLog.write(this,"Áudio PCM pronto antes da execução");
-            env.put("LD_LIBRARY_PATH",getApplicationInfo().nativeLibraryDir);
+            String cpuLibraryPath=getApplicationInfo().nativeLibraryDir;
+            if(nativeAot!=null) {
+                cpuLibraryPath=nativeAot.engineDirectory.getAbsolutePath()+":"+cpuLibraryPath;
+                env.put("BB_AOT",nativeAot.library.getAbsolutePath());
+                // Native AOT units use the host ARM64 C++ call stack. The
+                // original 320 KiB pthreads are too small for nested calls;
+                // preload our already-verified AOT CPU to enlarge ONLY the
+                // 320 KiB worker stacks, leaving FEX/system stacks untouched.
+                String originalPreload=env.get("LD_PRELOAD");
+                String aotPreload=new File(nativeAot.engineDirectory,"libgow3cpu.so").getAbsolutePath();
+                env.put("LD_PRELOAD",aotPreload+(originalPreload==null||originalPreload.isEmpty()?"":" "+originalPreload));
+                RunLog.write(this,"AOT pthread stack policy preload: "+aotPreload+" (320 KiB → 2 MiB)");
+                env.put("BB_AOT_MISS_LOG",new File(state,"aot-misses.log").getAbsolutePath());
+                // The AOT backend counts EACH dispatched unit and samples
+                // CNTVCT around EACH host callback when these are present.
+                // The workers make millions of both calls per second. Do not
+                // leave expensive full tracing on during benchmark gameplay.
+                // A dedicated opt-in switch preserves crash investigations.
+                boolean detailedAotStats=false;
+                AotInstrumentation.configure(env,detailedAotStats);
+                RunLog.write(this,"AOT native: strict unit execution; misses and fault-entry logging always on; "
+                        +"full per-call stats/trace="+(detailedAotStats?"ON (diagnostic, slower)":"OFF (performance)"));
+                RunLog.write(this,"TLOU AOT performance markers: expensive thread scans="+(detailedAotStats?"ON":"OFF")+"; raw AOT stats="+detailedAotStats);
+                RunLog.write(this,"CPU ARM64 AOT obrigatório na versão 0.2.0");
+            }
+            env.put("LD_LIBRARY_PATH",cpuLibraryPath);
             env.put("GOW3_ANDROID_PORT","1");
             env.put("GOW3_ANDROID_INPUT","1");
             env.put("GOW3_PAD_FILE",new File(state,"controller.state").getAbsolutePath());
@@ -301,11 +363,49 @@ public final class GameActivity extends Activity {
             env.put("GOW3_OBJECT_MOTION","0");
             env.put("GOW3_FSR1","0");
             env.put("GOW3_RCAS","0");
-            PortSettings.environment(this,env);
-            // TLOU 01.11 interprets the reported 5056 MiB retail+debug pool
-            // as a devkit and reserves an EXTRA 768 MiB (the supplied device
-            // log fails here). Present the verified retail 4608 MiB size while
-            // preserving the full host backing pool and map layout.
+            PortSettings.environment(this,env,nativeAot==null?null:nativeAot.compiledResolution);
+            // Use the physical RAM class only for launch-time cache retention.
+            // Never shrink the emulated PS4 direct-memory pool: it is sparsely
+            // mapped, and changing its size breaks the guest memory contract.
+            long totalRam=0;
+            try {
+                ActivityManager manager=(ActivityManager)getSystemService(ACTIVITY_SERVICE);
+                if(manager!=null) {
+                    ActivityManager.MemoryInfo info=new ActivityManager.MemoryInfo();
+                    manager.getMemoryInfo(info);
+                    totalRam=info.totalMem;
+                }
+            } catch(RuntimeException e) {
+                RunLog.write(this,"RAM class unavailable: keeping the normal GPU budgets");
+            }
+            String memoryRenderer="";
+            if(TlouDevicePolicy.isEightGiBClass(totalRam)) {
+                try {memoryRenderer=BuiltinDrivers.renderer();}
+                catch(Throwable detectionFailure) {
+                    RunLog.write(this,"GPU memory-profile renderer detection failed: "+detectionFailure);
+                }
+            }
+            String memoryProfile=TlouDevicePolicy.configureMemory(env,totalRam,memoryRenderer);
+            RunLog.write(this,"GPU memory policy="+memoryProfile+
+                " • physical="+(totalRam/(1024L*1024L))+" MiB"+
+                " • stream="+env.getOrDefault("GOW3_STREAM_MB","512")+" MiB"+
+                " • staging-retain="+env.getOrDefault("GOW3_STAGING_KEEP_MB","512")+" MiB");
+            if(nativeAot!=null && !nativeAot.pendingCodePatches.isEmpty())
+                RunLog.write(this,"AOT: configurações pendentes="+nativeAot.pendingCodePatches+
+                    "; renderizador sincronizado com o perfil ARM64 compilado.");
+            // Repair Android 16 shell-wrapper PID publication failures without
+            // polling /proc from the renderer or game workers.
+            if (nativeAot!=null) {
+                env.put("TLOU_NATIVE_PID_FILE",runtimePidFile.getAbsolutePath());
+            }
+            // The guest interprets 5056 MiB as a devkit (and requests an extra
+            // 768 MiB "Game Debug" arena). This was correctly fixed for 01.11,
+            // but 01.00 CUSA00557 still reported 5056 and hit AllocateMemory
+            // assertion after 2713714688+2097152000 bytes reserved.
+            // Report retail 4608 MiB for BOTH releases, without reducing the
+            // actual backing pool or disabling any GPU correctness barriers.
+            env.put("GOW3_DMEM_REPORT_MB","4608");
+            RunLog.write(this,"TLOU retail direct memory reported=4608 MiB (pool unchanged)");
             File ready=new File(base,"device-ready.json");
             if(ready.isFile()) {
                 org.json.JSONObject profile=new org.json.JSONObject(new String(
@@ -313,9 +413,14 @@ public final class GameActivity extends Activity {
                 String gameVersion=profile.optString("update_version","");
                 if(gameVersion.isEmpty()||"null".equals(gameVersion))
                     gameVersion=profile.optString("version","");
-                if("01.11".equals(gameVersion)){
-                    env.put("GOW3_DMEM_REPORT_MB","4608");
-                    RunLog.write(this,"TLOU 01.11: retail direct memory reported=4608 MiB (pool capacity unchanged)");
+                if(("01.00".equals(gameVersion)||"01.11".equals(gameVersion)) &&
+                        env.containsKey("GOW3_MOVIE_SIZE")) {
+                    // Both versions can describe 16-row/native-size Y/UV textures
+                    // after the decoder has written 64-row-aligned scaled NV12.
+                    // The bridge remaps recorded movie buffers only, never game
+                    // scene textures. This restores the 01.00 green-movie path.
+                    env.put("TLOU_MOVIE_NV12_LAYOUT","1");
+                    RunLog.write(this,"TLOU movie NV12 aligned-plane compatibility: "+gameVersion);
                 }
             }
             RunLog.write(this,PortSettings.experimentReport(this,env));
@@ -325,27 +430,62 @@ public final class GameActivity extends Activity {
                 if(!custom.isFile()) throw new IllegalStateException("Driver selecionado ausente; selecione outro driver no menu");
                 DriverArchive.validateLibrary(custom);
                 env.put("GOW3_VULKAN_DRIVER",custom.getAbsolutePath());
-                env.put("LD_LIBRARY_PATH",custom.getParent()+":"+getApplicationInfo().nativeLibraryDir);
+                env.put("LD_LIBRARY_PATH",custom.getParent()+":"+cpuLibraryPath);
             }
+            String ubwcMode=PortSettings.prefs(this)
+                .getString("turnip_ubwc_hint_mode","auto");
+            String eglRenderer="";
+            try { eglRenderer=BuiltinDrivers.renderer(); }
+            catch(Throwable error) { RunLog.write(this,"GPU renderer detection failed: "+error); }
+            String displayBefore=env.get("GOW3_SCREEN_W")+"x"+env.get("GOW3_SCREEN_H");
+            String compactStatus=TlouDevicePolicy.configureCompactPresent(env);
+            RunLog.write(this,"Android 720p Vulkan presentation="+compactStatus+
+                " • output="+displayBefore+" -> "+
+                env.get("GOW3_SCREEN_W")+"x"+env.get("GOW3_SCREEN_H")+
+                " • SurfaceControl scales to physical screen");
+            String ubwcStatus=TlouDevicePolicy.configureUbwcHint(
+                env,ubwcMode,eglRenderer,env.get("GOW3_VULKAN_DRIVER"),
+                PortSettings.prefs(this).getString("driver_name",""));
+            RunLog.write(this,"Turnip UBWC compositor hint="+ubwcStatus+
+                " • EGL="+eglRenderer+" • driver="+
+                env.getOrDefault("GOW3_VULKAN_DRIVER","system"));
             builder.directory(app0);
             builder.redirectErrorStream(true);
             builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
             RunLog.write(this,"Comando: "+args+"\nLD_LIBRARY_PATH="+env.get("LD_LIBRARY_PATH")+"\nDriver="+env.get("GOW3_VULKAN_DRIVER"));
-            update("Iniciando TLOU x86-64 pelo FEX...");
+            update("Iniciando TLOU em ARM64 recompilado (AOT)…");
             if(closing.get())return;
-            RunLog.write(this,"ProcessBuilder.start • iniciando FEX • watchdog de teste desativado");
+            RunLog.write(this,"ProcessBuilder.start • CPU=ARM64 AOT • watchdog desativado");
             gpuTurbo.start(this); // root is optional; if unavailable gameplay still runs
             game=builder.start();
             if(closing.get()){game.destroyForcibly();game.waitFor();return;}
-            RunLog.write(this,"Processo FEX criado");
-            final int result=game.waitFor();
-            RunLog.write(this,"Processo FEX finalizado: código "+result);
+            final String backend="ARM64 AOT";
+            RunLog.write(this,"Processo "+backend+" criado");
+            // Full /proc/PID/task scans are diagnostic, not part of the FPS HUD.
+            // Avoid a second competing sampler during normal gameplay. The
+            // explicit detailed-diagnostics setting restores the old data.
+            final boolean scanThreads=false;
+            final TlouCpuThreads threadCpu=scanThreads
+                    ?new TlouCpuThreads(runtimePidFile,RuntimeProcess.readPid(runtimePidFile),backend,
+                            line->RunLog.write(this,line)):null;
+            if(threadCpu!=null)threadCpu.start();
+            final int result;
+            try {result=game.waitFor();}
+            finally {if(threadCpu!=null)threadCpu.close();}
+            RunLog.write(this,"Processo "+backend+" finalizado: código "+result);
+            if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(
+                    nativeAot!=null,result,closing.get())) {
+                // Keep the explicitly selected native backend for debugging.
+                // Avoid endless auto-launch crash loops. Compilation remains mandatory.
+                PortSettings.prefs(this).edit().putBoolean("launch_direct",false).apply();
+                RunLog.write(this,"AOT terminou sem sucesso: ARM64 nativo continua selecionado; inicialização direta desativada; aot-misses.log preservado.");
+            }
             if(!closing.get()) {
                 if(result==0)handler.post(this::stopAndExit);
                 else error("Runtime encerrou com código "+result);
             }
         } catch (Throwable err) {
-            RunLog.failure(this,"Falha ao executar FEX",err);
+            RunLog.failure(this,"Falha ao executar runtime TLOU",err);
             if(!closing.get()) error("Falha ao iniciar runtime TLOU: "+err+"\n"+tailLog());
         } finally {
             // Never release the transfer lock while a surviving child could still write saves.
@@ -361,12 +501,34 @@ public final class GameActivity extends Activity {
     }
 
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
+    private boolean hasHardwareController() {
+        for(int id:InputDevice.getDeviceIds()) {
+            InputDevice device=InputDevice.getDevice(id);
+            if(device==null || device.isVirtual())continue;
+            int sources=device.getSources();
+            if((sources&InputDevice.SOURCE_GAMEPAD)==InputDevice.SOURCE_GAMEPAD ||
+               (sources&InputDevice.SOURCE_JOYSTICK)==InputDevice.SOURCE_JOYSTICK)
+                return true;
+        }
+        return false;
+    }
+
+    private void updateControllerVisibility() {
+        if(touch!=null && !closing.get())applyLiveSettings();
+    }
+
     private void applyLiveSettings() {
         if(closing.get() || status==null || touch==null)return;
         SharedPreferences p=PortSettings.prefs(this);
         status.setVisibility(p.getBoolean("hud_visible",true)?View.VISIBLE:View.GONE);
         HudPresentation.style(status,p);
-        boolean show=p.getBoolean("touch_visible",true);if(!show)touch.release();touch.setVisibility(show?View.VISIBLE:View.GONE);touch.setAlpha(p.getInt("touch_opacity",55)/100f);touch.invalidate();
+        String controlMode=p.getString("touch_mode","auto");
+        boolean show=editingControls || "on".equals(controlMode) ||
+                ("auto".equals(controlMode) && !hasHardwareController());
+        if(!show)touch.release();
+        touch.setVisibility(show?View.VISIBLE:View.GONE);
+        touch.setAlpha(p.getInt("touch_opacity",55)/100f);
+        touch.invalidate();
         if(started)Gow3Present.fullscreen(p.getBoolean("fullscreen",false));
         if(started) {
             boolean turbo=p.getBoolean("gpu_turbo",false);
@@ -410,7 +572,7 @@ public final class GameActivity extends Activity {
         if(playerMenu!=null && playerMenu.isShowing())return;
         touch.release();pad.reset(); // release held inputs; keep the controller/provider connected
         playerMenu=new PortMenu(this,true,new PortMenu.Actions(){
-            public void logs(){showLog();}public void exportLogs(){}public void chooseGame(){}public void installPkg(){}
+            public void logs(){showLog();}public void exportLogs(){GameActivity.this.exportLogs();}public void chooseGame(){}public void installPkg(){}
             public void importDriver(){}public void selectDriver(){}
             public void editControls(){editingControls=true;touch.setVisibility(View.VISIBLE);touch.setAlpha(.9f);touch.edit(()->{editingControls=false;applyLiveSettings();});}
             public void resetControls(){touch.resetLayout();applyLiveSettings();}
@@ -437,10 +599,26 @@ public final class GameActivity extends Activity {
 
     private String tailLog() { return RunLog.tail(RunLog.runtime(this),12000); }
 
+    private static final int EXPORT_LOGS_REQUEST=811;
     private void showLog() {
-        android.widget.ScrollView scroll=new android.widget.ScrollView(this);
-        TextView text=new TextView(this);text.setText(RunLog.summary(this));text.setTextIsSelectable(true);text.setTextSize(12);text.setPadding(24,16,24,16);scroll.addView(text);
-        new AlertDialog.Builder(this).setTitle(TlouLanguage.t(this,"TLOU — logs")).setView(scroll).setPositiveButton(TlouLanguage.t(this,"Fechar"),null).show();
+        TlouDialogs.showLogs(this,RunLog.summary(this),this::exportLogs);
+    }
+    private void exportLogs() {
+        android.content.Intent save=new android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT);
+        save.setType("application/zip");
+        save.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+        save.putExtra(android.content.Intent.EXTRA_TITLE,"TLOU-Android-Logs.zip");
+        startActivityForResult(save,EXPORT_LOGS_REQUEST);
+    }
+    @Override protected void onActivityResult(int code,int resultCode,android.content.Intent data) {
+        super.onActivityResult(code,resultCode,data);
+        if(code!=EXPORT_LOGS_REQUEST || resultCode!=RESULT_OK || data==null || data.getData()==null)return;
+        try(java.io.OutputStream output=getContentResolver().openOutputStream(data.getData())) {
+            if(output==null)throw new IOException("Destino indisponível");
+            RunLog.export(this,output);
+        } catch(Exception error) {
+            android.widget.Toast.makeText(this,"Falha ao exportar logs: "+error.getMessage(),android.widget.Toast.LENGTH_LONG).show();
+        }
     }
 
     private void stopAndExit() { stopAndExit(false); }
@@ -490,6 +668,7 @@ public final class GameActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if(inputManager!=null)inputManager.unregisterInputDeviceListener(controllerListener);
         stopAndExit();
         if(playerMenu!=null)playerMenu.dismiss();
         if(gameChoices!=null)gameChoices.close();

@@ -35,6 +35,7 @@
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "shader_recompiler/backend/spirv/tlou_split_compute.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/tlou_compute_cached_hit_gate.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 extern thread_local bool gow3_assert_throws; // shim/common/assert.cpp
@@ -1247,6 +1248,46 @@ void PipelineCache::DrainPrefetch() {
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
                                                            const PreparedDraw* prepared) {
+    // TLOU records roughly 400k-550k graphics draws per 5 seconds. Publishing
+    // shader/graphics compilation queues on EVERY already-compiled hit made
+    // maintenance part of the saturated command thread's draw-pipeline cost.
+    // Keep the original mandatory key construction for EVERY draw: shaders,
+    // render targets, specializations and indirect parameters can all change.
+    // Only bypass redundant compiler-service polling on a confirmed cache hit.
+    // The first request, all misses, every 64th lookup and all pending work
+    // still execute the full original publication/worker service path.
+    static thread_local Detail::ComputeCachedHitServiceGate graphics_service_gate{};
+    const bool pending_work =
+        !pending_programs.empty() || !pending_graphics.empty() ||
+        prefetch_inbox_size.load(std::memory_order_acquire) != 0 ||
+        precompile_ready.load(std::memory_order_acquire);
+    // A prepared draw has a separate lifetime/selection contract; never use
+    // the generic fast path for it.
+    if (!prepared && graphics_service_gate.TryCachedHit(pending_work)) {
+        used_prepared = nullptr;
+        last_pending.reset();
+        sel.draw_indirect_params = params;
+        sync_compile = SmallTargetDraw(liverpool->regs);
+        const bool valid_key = RefreshGraphicsKey(sel);
+        sync_compile = false; // same post-call state as the legacy SyncReset
+        if (valid_key) {
+            if (const auto found = graphics_pipelines.find(sel.graphics_key);
+                found != graphics_pipelines.end() && found->second) {
+                // Failed cached pipelines return null, exactly as the full
+                // GetGraphicsPipeline path; never publish a stale pipeline.
+                const GraphicsPipeline* pipeline =
+                    found->second->Failed() ? nullptr : found->second.get();
+                if (pipeline) {
+                    pipeline->last_use = scheduler.CurrentTick();
+                }
+                NoteWarmupOrder();
+                return pipeline;
+            }
+        }
+        graphics_service_gate.OnCacheMiss();
+        // Key absent, invalid or still compiling: publish completions, then
+        // REBUILD the key with the original path, preserving draw ordering.
+    }
     SeedWorkerCaches();
     PublishShaders();
     PublishGraphics();
@@ -1429,6 +1470,58 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
 }
 
 const ComputePipeline* PipelineCache::GetComputePipeline(bool allow_split64) {
+    // TLOU's gameplay performs ~425k compute lookups per five seconds.
+    // Reuse an *exactly matched* existing compute pipeline without repeatedly
+    // polling compiler queues. Still reconstruct the shader/specialization
+    // key for every dispatch; never cache guest user-data or ring snapshots.
+    // Maintain asynchronous builds on the first hit, at least every 64
+    // lookups, immediately when a compiler/prefetch result is pending, and
+    // on every cache miss. GOW3_COMPUTE_CACHED_HIT=0 preserves the old path.
+    static const bool cached_hit_enabled = [] {
+        const char* env = std::getenv("GOW3_COMPUTE_CACHED_HIT");
+        return !(env && env[0] == '0' && env[1] == '\0');
+    }();
+    static thread_local Detail::ComputeCachedHitServiceGate service_gate{};
+    struct ComputeLookupStats {
+        u64 calls = 0, hits = 0, misses = 0, serviced = 0;
+        std::chrono::steady_clock::time_point last_report{};
+    };
+    static thread_local ComputeLookupStats stats{};
+    if (cached_hit_enabled && (++stats.calls & 65535u) == 0u) {
+        const auto now = std::chrono::steady_clock::now();
+        if (stats.last_report == std::chrono::steady_clock::time_point{}) {
+            stats.last_report = now;
+        } else if (now - stats.last_report >= std::chrono::seconds(5)) {
+            std::printf("TLOU compute pipeline cached hit (5 s): fast=%llu "
+                        "misses=%llu full-service=%llu\n",
+                        (unsigned long long)stats.hits,
+                        (unsigned long long)stats.misses,
+                        (unsigned long long)stats.serviced);
+            stats.hits = stats.misses = stats.serviced = 0;
+            stats.last_report = now;
+        }
+    }
+    const bool pending_work =
+        !pending_programs.empty() || !pending_graphics.empty() ||
+        prefetch_inbox_size.load(std::memory_order_acquire) != 0 ||
+        precompile_ready.load(std::memory_order_acquire);
+    if (cached_hit_enabled && service_gate.TryCachedHit(pending_work)) {
+        if (RefreshComputeKey(allow_split64)) {
+            if (const auto found = compute_pipelines.find(compute_key);
+                found != compute_pipelines.end() && found->second) {
+                found->second->last_use = scheduler.CurrentTick();
+                ++stats.hits;
+                // Preserve the warmup-order maintenance cadence even on hits.
+                NoteWarmupOrder();
+                return found->second.get();
+            }
+        }
+        ++stats.misses;
+        service_gate.OnCacheMiss();
+        // A missing shader/variant must publish completed builds FIRST,
+        // then run the original key construction and synchronous fallback.
+    }
+    ++stats.serviced;
     PublishShaders();
     PublishGraphics();
     DrainPrefetch();
@@ -2096,6 +2189,181 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         const char* env = std::getenv("GOW3_TLOU_COMPUTE_MEMO");
         return env && env[0] == '1' && env[1] == '\0';
     }();
+    struct ComputeMemoStats {
+        u64 calls = 0, hits = 0, full = 0, saved = 0, rejected = 0;
+        std::chrono::steady_clock::time_point started{};
+    };
+    static thread_local ComputeMemoStats memo_stats{};
+    if (compute_memo_enabled && hw_stage == HwStage::Compute &&
+        (++memo_stats.calls & 65535u) == 0u) {
+        const auto now = std::chrono::steady_clock::now();
+        if (memo_stats.started == std::chrono::steady_clock::time_point{}) {
+            memo_stats.started = now;
+        } else if (now - memo_stats.started >= std::chrono::seconds(5)) {
+            std::printf("TLOU compute exact memo (5 s): calls=%llu hits=%llu "
+                        "full-specialization=%llu safe-saved=%llu unsafe=%llu\n",
+                        (unsigned long long)memo_stats.calls,
+                        (unsigned long long)memo_stats.hits,
+                        (unsigned long long)memo_stats.full,
+                        (unsigned long long)memo_stats.saved,
+                        (unsigned long long)memo_stats.rejected);
+            memo_stats = {};
+            memo_stats.started = now;
+        }
+    }
+    // Exact, allocation-free fast check for compute shaders that use ONLY
+    // storage buffers. Unlike the zero-hit full-flatbuf memo, changed guest
+    // addresses alone do not invalidate a shader permutation; the properties
+    // that DO affect the Vulkan module are checked directly on every dispatch.
+    // If any property differs, take the untouched full specialization path.
+    // Experimental fallback GOW3_TLOU_BUFFER_SPEC_FAST=0.
+    static const bool compute_buffer_fast = [] {
+#ifdef __ANDROID__
+        const char* env = std::getenv("GOW3_TLOU_BUFFER_SPEC_FAST");
+        return !(env && env[0] == '0' && env[1] == '\0');
+#else
+        return false;
+#endif
+    }();
+    static thread_local bool compute_buffer_fast_mismatch = false;
+    if (hw_stage == HwStage::Compute && compute_buffer_fast &&
+        !compute_memo_enabled && !compute_buffer_fast_mismatch) {
+        struct FastStats {
+            u64 calls=0, eligible=0, hits=0;
+            std::chrono::steady_clock::time_point last{};
+        };
+        static thread_local FastStats counts{};
+        ++counts.calls;
+        // Print before the early successful return! Otherwise a fast path
+        // that hits on every draw never reports any useful hit-rate data.
+        if ((counts.calls & 65535u) == 0u) {
+            const auto now = std::chrono::steady_clock::now();
+            if (counts.last == std::chrono::steady_clock::time_point{}) {
+                counts.last = now;
+            } else if (now-counts.last >= std::chrono::seconds(5)) {
+                std::printf("TLOU compute buffer-only fast (5 s): calls=%llu eligible=%llu hits=%llu\n",
+                    (unsigned long long)counts.calls,
+                    (unsigned long long)counts.eligible,
+                    (unsigned long long)counts.hits);
+                counts = {};
+                counts.last = now;
+            }
+        }
+        if (program->last_used < program->modules.size()) {
+            const size_t idx = program->last_used;
+            const auto& cached = program->modules[idx].spec;
+            const bool eligible = !info.has_fetch_shader && info.images.empty() &&
+                                  info.fmasks.empty() && info.samplers.empty();
+            if (eligible) ++counts.eligible;
+            if (eligible && cached.MatchesCurrentBufferOnlyCompute(info, runtime_info, binding)) {
+                // A/B verification: reconstruct the exact old specialization
+                // on demand; a mismatch falls through, never using a bad module.
+                static const bool verify = [] {
+                    const char* v = std::getenv("GOW3_TLOU_BUFFER_SPEC_VERIFY");
+                    return v && v[0] == '1';
+                }();
+                bool equal = true;
+                // Verify 1 in 16384 eligible hits in ordinary Android
+                // gameplay too: catches unusual descriptor/permutation
+                // combinations before a wrong cached module is selected.
+                // Full A/B equivalence can be forced with VERIFY=1.
+                if (verify || ((counts.hits & 16383u) == 0u)) {
+                    const auto fresh = Shader::StageSpecialization(info, runtime_info, profile, binding);
+                    equal = cached == fresh;
+                    if (!equal) {
+                        compute_buffer_fast_mismatch = true;
+                        std::fprintf(stderr,
+                            "TLOU buffer-only compute direct match FAILED: shader %#llx; "
+                            "disabling fast path until restart\n",
+                            static_cast<unsigned long long>(params.hash));
+                    }
+                }
+                if (equal) {
+                    ++counts.hits;
+                    info.AddBindings(binding);
+                    const u64 hash = TlouComputeSplit::PermutationKey(
+                        params.hash, HashCombine(params.hash, idx));
+                    return std::make_tuple(&program->info, program->modules[idx].module,
+                        AssignFetch(fetch, cached.fetch_shader_data), hash);
+                }
+            }
+        }
+    }
+    // TLOU stage-A/graphics selection: the fragment shader often uses the
+    // same resource formats for hundreds of thousands of draws while guest
+    // addresses change. Use direct fresh-resource semantic comparison, NOT
+    // last-frame user-data byte matching. RefreshFlatBuf() above still runs.
+    // GOW3_TLOU_GFX_SPEC_FAST=0 restores full specialization for A/B.
+    static const bool gfx_spec_fast = [] {
+#ifdef __ANDROID__
+        const char* v = std::getenv("GOW3_TLOU_GFX_SPEC_FAST");
+        return !(v && v[0] == '0' && v[1] == '\0');
+#else
+        return false;
+#endif
+    }();
+    static thread_local bool gfx_spec_mismatch = false;
+    if (hw_stage != HwStage::Compute && gfx_spec_fast && !gfx_spec_mismatch) {
+        struct GfxStats {
+            u64 calls=0, candidates=0, hits=0, mismatches=0;
+            std::chrono::steady_clock::time_point start{};
+        };
+        static thread_local GfxStats counts{};
+        if ((++counts.calls & 65535u) == 0u) {
+            const auto now = std::chrono::steady_clock::now();
+            if (counts.start == std::chrono::steady_clock::time_point{}) {
+                counts.start = now;
+            } else if (now-counts.start >= std::chrono::seconds(5)) {
+                std::printf("TLOU graphics direct spec (5 s): calls=%llu "
+                            "candidates=%llu hits=%llu mismatches=%llu\n",
+                    (unsigned long long)counts.calls,
+                    (unsigned long long)counts.candidates,
+                    (unsigned long long)counts.hits,
+                    (unsigned long long)counts.mismatches);
+                counts={};
+                counts.start=now;
+            }
+        }
+        if (program->last_used < program->modules.size() &&
+            (sw_stage == SwStage::Fragment || sw_stage == SwStage::Vertex) &&
+            !info.has_fetch_shader) {
+            ++counts.candidates;
+            const size_t idx=program->last_used;
+            const auto& prior=program->modules[idx].spec;
+            if (prior.MatchesCurrentNonFetchGraphics(info,runtime_info,binding)) {
+                // Periodic equivalence verification is automatic on Android,
+                // not just on an explicit debug build. First 16 hits and then
+                // one per 8192 successful hits ensure new scene variants are
+                // checked. Any mismatch disables only this shortcut.
+                static const bool verify_all = [] {
+                    const char* v=std::getenv("GOW3_TLOU_GFX_SPEC_VERIFY");
+                    return v && v[0] == '1';
+                }();
+                bool equal=true;
+                if (verify_all || counts.hits < 16 || (counts.hits & 8191u) == 0u) {
+                    const auto full=Shader::StageSpecialization(info,runtime_info,profile,binding);
+                    equal=(prior == full);
+                    if (!equal) {
+                        ++counts.mismatches;
+                        gfx_spec_mismatch=true;
+                        std::fprintf(stderr,
+                            "TLOU graphics direct specialization parity mismatch shader %#llx; "
+                            "shortcut disabled for session\n",
+                            static_cast<unsigned long long>(params.hash));
+                    }
+                }
+                if (equal) {
+                    ++counts.hits;
+                    program->last_used=idx;
+                    info.AddBindings(binding);
+                    const u64 hash=TlouComputeSplit::PermutationKey(
+                        params.hash,HashCombine(params.hash,idx));
+                    return std::make_tuple(&program->info,program->modules[idx].module,
+                        AssignFetch(fetch,prior.fetch_shader_data),hash);
+                }
+            }
+        }
+    }
     if (compute_memo_enabled && hw_stage == HwStage::Compute &&
         program->compute_perm_memo.Matches(info.ProgramBase(), info.FlatUserData(),
                                           runtime_info, program->modules.size())) {
@@ -2114,6 +2382,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
             }
         }
         if (equivalent) {
+            if (compute_memo_enabled && hw_stage == HwStage::Compute) ++memo_stats.hits;
             program->last_used = idx;
             info.AddBindings(binding);
             const auto hash = TlouComputeSplit::PermutationKey(
@@ -2123,6 +2392,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                                    hash);
         }
     }
+    if (compute_memo_enabled && hw_stage == HwStage::Compute) ++memo_stats.full;
     auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
 
     size_t perm_idx = program->modules.size();
@@ -2162,9 +2432,11 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     }
     if (compute_memo_enabled && hw_stage == HwStage::Compute &&
         ExactComputeMemoSafe(info)) {
+        ++memo_stats.saved;
         program->compute_perm_memo.Remember(info.ProgramBase(), info.FlatUserData(),
                                             runtime_info, perm_idx);
     } else if (hw_stage == HwStage::Compute) {
+        if (compute_memo_enabled) ++memo_stats.rejected;
         program->compute_perm_memo.Invalidate();
     }
     return std::make_tuple(&program->info, module,

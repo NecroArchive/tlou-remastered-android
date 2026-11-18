@@ -635,6 +635,7 @@ public:
             const bool appended = last_host_batch->batch.Append(next, sequence);
             ASSERT(appended);
             used = at + sizeof(Gow3Copy::Item);
+            ++host_copy_items;
             PrefetchAhead();
             return true;
         }
@@ -655,6 +656,8 @@ public:
         last = command;
         last_host_batch = command;
         used = item_offset + sizeof(Gow3Copy::Item);
+        ++host_copy_items;
+        ++host_copy_groups;
         PrefetchAhead();
         return true;
     }
@@ -681,7 +684,12 @@ public:
         first = last = nullptr;
         last_host_batch = nullptr;
         used = 0;
+        host_copy_items = 0;
+        host_copy_groups = 0;
     }
+
+    [[nodiscard]] u32 HostCopyItems() const noexcept { return host_copy_items; }
+    [[nodiscard]] u32 HostCopyGroups() const noexcept { return host_copy_groups; }
 
     [[nodiscard]] bool Empty() const noexcept {
         return first == nullptr;
@@ -730,6 +738,8 @@ private:
     CommandBase* first{};
     CommandBase* last{};
     HostCopyBatchCommand* last_host_batch{};
+    u32 host_copy_items = 0; // changed only by producer before publication
+    u32 host_copy_groups = 0; // read by recorder after publication
 };
 
 class Scheduler {
@@ -925,6 +935,7 @@ public:
                 seq = ++host_copies_issued](vk::CommandBuffer) {
             copy();
             host_copies_done.store(seq, std::memory_order_release);
+            host_copies_done.notify_all();
         });
     }
 
@@ -954,9 +965,13 @@ public:
 
     /// gow3 statistics: sizes of the scheduler's queues (growth over time).
     std::string DebugSizes() {
-        return std::format("{} pending ops, {} full chunks, {} free chunks, {} queued chunks",
+        const u64 items = recorder_host_copy_items.exchange(0, std::memory_order_relaxed);
+        const u64 groups = recorder_host_copy_groups.exchange(0, std::memory_order_relaxed);
+        return std::format("{} pending ops, {} full chunks, {} free chunks, {} queued chunks; "
+                           "host-copy items={} groups={} avg-per-group={:.2f}",
                            num_pending_ops.load(std::memory_order_relaxed), full_chunks.size(),
-                           free_chunks.size(), recorder_queue.size());
+                           free_chunks.size(), recorder_queue.size(), items, groups,
+                           groups ? double(items) / double(groups) : 0.);
     }
 
     /// Whether a render pass with exactly this state is open.
@@ -973,6 +988,11 @@ public:
     static inline std::atomic<u64> direct_recordings{0};
 
     /// Returns the current command buffer tick.
+    // Published by the actual Bionic recorder thread; absent when recording
+    // is direct. This TID may join the game's optional ADPF session.
+    [[nodiscard]] u32 NativeRecorderTid() const noexcept {
+        return native_recorder_tid.load(std::memory_order_acquire);
+    }
     [[nodiscard]] u64 CurrentTick() const noexcept {
         return work_semaphore.CurrentTick();
     }
@@ -1059,6 +1079,8 @@ private:
     std::vector<std::unique_ptr<RecordChunk>> free_chunks;
     bool recorder_busy = false;
     std::atomic<size_t> queued_chunks{0}; ///< recorder_queue.size() for lock-free polling
+    std::atomic<u64> recorder_host_copy_items{0}; // one increment per completed chunk
+    std::atomic<u64> recorder_host_copy_groups{0}; // groups, not Vulkan calls
     bool recorder_sleeping = false; ///< waiting on recorder_cv (guarded by recorder_mutex)
     bool direct_mode = false; ///< the command buffer is recorded on the caller's thread
     bool checkpoint_callers = false; ///< GOW3_GPU_CHECKPOINTS=2: marks CommandBuffer() callers
@@ -1071,6 +1093,7 @@ private:
     // gow3: whether recorder_thread runs, read on every Record(). std::jthread::joinable()
     // compares thread ids, which on Windows (libc++ over winpthreads) costs two system calls.
     bool recording_threaded{false};
+    std::atomic<u32> native_recorder_tid{0};
     u64 record_serial = 0; ///< gow3: see RecordSerial()
     /// gow3 20 Oct 2026: the draw scheduler counts its waits for the submit lock (Gow3Stats).
     bool count_lock_waits{false};

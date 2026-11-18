@@ -102,6 +102,24 @@ grep -Fq 'struct.pack_into("<f", insn, 10, 1.0 / width)' android/tlou_patches.py
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
     gow3_pc/tests/test_tlou_movie_plane_layout.cpp -o "$test_dir/tlou-movie-layout"
 "$test_dir/tlou-movie-layout"
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+    gow3_pc/tests/test_tlou_movie_111_planes.cpp -o "$test_dir/tlou-movie-111-planes"
+"$test_dir/tlou-movie-111-planes"
+# Both 01.00 and 01.11 now use the same guarded movie-only 64-row
+# NV12 plane remapper. Fail with an actionable diagnostic if either end is
+# missing instead of silently rejecting the correctly generalized fix.
+grep -Fq 'env.put("TLOU_MOVIE_NV12_LAYOUT","1");' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java || {
+    echo 'ERROR: 01.00/01.11 movie plane alignment option missing from launcher' >&2
+    exit 1
+}
+grep -Fq 'if(RemapAligned(address,width,height,pitch,bits))return true;' gow3_pc/gpu/shim/gow3_movie.cpp || {
+    echo 'ERROR: shared recorded-frame NV12 remap missing from video bridge' >&2
+    exit 1
+}
+grep -Fq 'TlouMovie111::ChromaAddress(address,base,w,h)' gow3_pc/gpu/shim/gow3_movie.cpp || {
+    echo 'ERROR: guarded chroma-plane address matching was lost' >&2
+    exit 1
+}
 cc -std=c11 -Wall -Wextra -Werror -x c -fsyntax-only \
     -include gow3_pc/gpu/shim/gow3_movie_bridge.h /dev/null
 grep -Fq 'env.put("GOW3_MOVIE_SIZE",actualSize);' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
@@ -180,12 +198,97 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   gow3_pc/tests/test_tlou_gpu_write_window_cost.cpp -o "$test_dir/gpu-window-cost"
 "$test_dir/gpu-window-cost"
 
+# Stage-A packet encoding must preserve EXACT register IDs and 32-word values
+# even across sparse/multiple 64-block dirty masks. ARM64 host microbenchmarks
+# gate a measurable 2- and 4-block common-path win before constructing the APK.
+# Never equate this encoder-local speedup with a measured Android FPS gain.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_dirty_packet_write.cpp -o "$test_dir/tlou-packet-direct"
+"$test_dir/tlou-packet-direct"
+
+# Fully resident arena lookup must match the original gap scanner even for
+# adjacent non-mergeable backing allocations and arbitrary sparse holes.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -Wno-error=sign-compare \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_resident_full_hit.cpp -o "$test_dir/tlou-resident-hit"
+"$test_dir/tlou-resident-hit"
+
+# Stream ObtainBuffer: verify that the default non-reuse path does NOT fetch
+# the guest-write epoch, while reuse-enabled tick/epoch/hash remain exact.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_stream_copy_context.cpp -o "$test_dir/tlou-stream-context"
+"$test_dir/tlou-stream-context"
+
+# TLOU heavy gameplay calls GetComputePipeline 400k+ times per five seconds.
+# Keep shader variant/guest snapshot selection per dispatch; service pending
+# builds immediately and cached-hit maintenance at least every 64 lookups.
+# One million randomized lookup/worker-completion events must preserve keys.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_compute_cached_hit_gate.cpp -o "$test_dir/tlou-compute-hit"
+"$test_dir/tlou-compute-hit"
+
+# ADPF must report only a real, monotonic, completed native frame cycle.
+# Regression covers zero-frame startup, 2k unchanged frames, 3-frame
+# jumps, counter reset and 1 million simulated stage-A observations.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_adpf_frame_progress.cpp -o "$test_dir/tlou-adpf-progress"
+"$test_dir/tlou-adpf-progress"
+
+# Shader descriptor flat-view hoisting + readback-only recording-thread stats
+# are protected by a fresh-per-stage data equivalence check and 5M readback
+# decisions. Native Vulkan compilation validates the real BufferResource ABI.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_hot_bindings.cpp -o "$test_dir/tlou-hot-bindings"
+"$test_dir/tlou-hot-bindings"
+
+# Stage B: resolve the packet's shader stage once and perform exactly the
+# original first-match lookup inside it. Prove parity for null/missing stages
+# and repeated/duplicate resource bindings before allowing an APK.
+g++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_ring_stage_lookup.cpp \
+  -o "$test_dir/tlou-ring-stage"
+"$test_dir/tlou-ring-stage"
+
+# Buffer residency is memoized only on confirmed complete hits; 2M mixed
+# queries/evictions must never reuse a missing or evicted sparse block.
+g++ -std=c++20 -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4/video_core/buffer_cache \
+  gow3_pc/tests/test_tlou_resident_hit_cache.cpp -o "$test_dir/tlou-resident-memo"
+"$test_dir/tlou-resident-memo"
+
+# A read-only clean arena buffer can bypass the empty upload walk, but
+# writable buffers, texel-image aliases and the legacy correctness toggle
+# must still execute full synchronization and mark GPU-written pages.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_clean_buffer_upload.cpp \
+  -o "$test_dir/tlou-clean-upload"
+"$test_dir/tlou-clean-upload"
+
+# TLOU Stage-A GPU buffer snapshots revisit dozens of guest VMAs.
+# Require correct generation/bounds invalidation and an observed native host
+# CPU reduction in the reusable-page microcase before building an APK.
+cc -std=c11 -D_POSIX_C_SOURCE=200809L -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/src gow3_pc/tests/test_tlou_region_hot_cache.c \
+  -o "$test_dir/tlou-region-hot"
+"$test_dir/tlou-region-hot"
+
 # The busiest GPU command-thread path: index pending write ranges while
 # preserving the original cyclic-first candidate and fence ordering.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   -I gow3_pc/gpu/shadps4 \
   gow3_pc/tests/test_tlou_pending_write_index.cpp -o "$test_dir/pending-write-index"
 "$test_dir/pending-write-index"
+# Most TLOU Stage-A retire passes leave fewer than 32 pending writes.
+# Require the real index to skip its large membership-table rebuild until
+# the first 32nd write and preserve exact overlap/cyclic-first behavior.
+"$test_dir/pending-write-index" --maintenance-gate
 
 # Measure the actual pending-write filter marking path selected for Stage A:
 # 250k randomized exact bitmask comparisons and host CPU A/B speedup on the
@@ -195,6 +298,107 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror \
   -I gow3_pc/gpu/shadps4 \
   gow3_pc/tests/test_tlou_pending_granule_filter.cpp -o "$test_dir/tlou-pending-granules"
 "$test_dir/tlou-pending-granules" --cost-gate
+
+# The saturated TLOU command thread executes hundreds of thousands of
+# graphics pipeline lookups each 5s. Verify full compiler service on the
+# first lookup, every 64th hit, all queue completions and all misses; no
+# graphics keys, snapshots or pending builds may be reused across draws.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_graphics_cached_hit_gate.cpp \
+  -o "$test_dir/tlou-graphics-cached-hit"
+"$test_dir/tlou-graphics-cached-hit"
+
+# Disabled Vulkan debug labels must NEVER drain the draw pipe. The
+# production marker path checks the gate before entering DrainDrawPipe.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_debug_marker_gate.cpp \
+  -o "$test_dir/tlou-marker-gate"
+"$test_dir/tlou-marker-gate"
+
+# Android Stage A should not duplicate a packet-owned Flatbuf snapshot in the
+# constant ring; the recording thread consumes the exact original packet bytes.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  gow3_pc/tests/test_tlou_flatbuf_packet_snapshot.cpp \
+  -o "$test_dir/tlou-flatbuf-packet"
+"$test_dir/tlou-flatbuf-packet"
+
+# TLOU PC v0.1.7: large scalar compute copies run as ordered Vulkan
+# buffer transfers ONLY for exact non-overlapping safe ranges.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_large_scalar_copy.cpp \
+  -o "$test_dir/tlou-large-scalar-copy"
+"$test_dir/tlou-large-scalar-copy"
+
+# Precise Stage B notifications: do not wake Stage A for unrelated packets.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_pipe_target_wakeup.cpp \
+  -o "$test_dir/tlou-pipe-target"
+"$test_dir/tlou-pipe-target" --correctness-only
+
+# Actual Android stage-A/stage-B synchronization: ensure that a waiting
+# producer cannot miss completed packet notifications (40k fences + 2k
+# capacity probes). CPU is parked only after the bounded spin budget.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_draw_pipe_progress_wait.cpp \
+  -o "$test_dir/tlou-pipe-wait"
+"$test_dir/tlou-pipe-wait"
+
+# Actual production compute pre-drain: memory-command parity, preserves
+# WAIT_REG_MEM / DMA / pending nested-IB writes, tests the same header used by
+# Liverpool::ProcessCompute in both the Android and desktop compilation.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_compute_drain_policy.cpp \
+  -o "$test_dir/tlou-compute-pre-drain"
+"$test_dir/tlou-compute-pre-drain"
+
+# Stage-A/B handoff: a short wait must not incur a futex round trip,
+# a long wait must park and wake without losing the notification.
+# Correctness only: dedicated x86/ARM perf CI owns the timing regression gate.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -pthread \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_adaptive_pipe_drain.cpp \
+  -o "$test_dir/tlou-adaptive-pipe"
+"$test_dir/tlou-adaptive-pipe" --correctness-only
+
+# Stage-A pending write pruning: compare every resulting range under
+# 180k interleaved merge/commit/retirement events, then require measured
+# reduction of needless vector walks on x86/ARM host CPU. Never defer a
+# per-draw constant snapshot or an uncommitted packet.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_pending_prune_gate.cpp -o "$test_dir/tlou-pending-prune"
+"$test_dir/tlou-pending-prune" --cost-gate
+
+# Device-RAM-tiered constant-ring capacity (32/64/128 MiB). Prove
+# that increasing space never overwrites an in-flight GPU snapshot
+# and preserves exactly the previous wrap and alignment semantics.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+  -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_constant_ring_capacity.cpp \
+  -o "$test_dir/tlou-ring-capacity"
+"$test_dir/tlou-ring-capacity"
+
+# When ring allocations fail, querying Vulkan's timeline for EVERY attempt
+# spends CPU without freeing anything unless the GPU advances. Preserve
+# immediate probes on new published stamps / externally known GPU ticks and
+# bound an otherwise invisible GPU completion to 32 missed allocations.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_constant_ring_recycle_gate.cpp -o "$test_dir/constant-ring-recycle"
+"$test_dir/constant-ring-recycle"
+
+# A stalled 32-MiB constant ring must publish its final position after the
+# GPU submission tick changes even if no Allocate() succeeds in that tick.
+# Exercise the actual production stamp state machine, safe timeline retirement,
+# complete-ring recovery and 100k randomized epoch transitions.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 \
+  gow3_pc/tests/test_tlou_constant_ring_stamp.cpp -o "$test_dir/constant-ring-stamp"
+"$test_dir/constant-ring-stamp"
 
 # Flush constant-ring snapshots by packet, preserving exact byte coverage.
 g++ -std=c++20 -O2 -Wall -Wextra -Werror \
@@ -215,15 +419,40 @@ if grep -Fq '"2 · Preciso' android-launcher/app/src/main/java/ro/cobrabm/fexdro
     exit 1
 fi
 
+# Fence-order regression: waiting for an earlier signal cannot drain newer copy
+# epochs. The same helper must make progress with the copy worker pool disabled.
+g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
+  gow3_pc/tests/test_tlou_deferred_signal_wait.cpp -o "$test_dir/tlou-deferred-signal-wait"
+"$test_dir/tlou-deferred-signal-wait"
+grep -Fq 'Detail::WaitForDeferredSignal(*deferred_signals_done, issued,' \
+  gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+grep -Fq 'done->notify_all();' \
+  gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+
+# Verify zero draw-preparation workers in both game releases without changing
+# the frame scheduler or correctness barriers.
+python3 android/tests/test_tlou_111_preparation_regression.py
+
+# A real 01.00 startup failure was the missing retail-memory report. Movie
+# conversion now bypasses the redundant guest-wide 1080p write with fallback.
+python3 android/tests/test_tlou_movie_memory_contract.py
+
 # v0.31 opt-in paths: exact memory bytes, packet-local bindings and copy completion.
 cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
   gow3_pc/tests/test_memory_walk_cost.c -o "$test_dir/memory-walk"
 "$test_dir/memory-walk" --correctness-only
+# Real runtime_memory.c + independently frozen locked reference on the same
+# guest VMA fixture. Require byte parity and a host CPU reduction for small
+# two-VMA backing uploads; routine-level speedup is not an FPS guarantee.
+"$test_dir/memory-walk" --two-span-gate
 for test in ring_binding_cursor tlou_host_copy_batch; do
   g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread -I gow3_pc/gpu/shim -I gow3_pc/gpu/shadps4 \
     "gow3_pc/tests/test_${test}.cpp" -o "$test_dir/$test"
   "$test_dir/$test" --correctness-only
 done
+# Stage B uses the cursor only for 2+ ring descriptors; require parity and
+# a CPU cost reduction against the original per-buffer linear lookup.
+"$test_dir/ring_binding_cursor" --cost-gate
 python3 gow3_pc/tests/extract_host_copy_chunks.py "$test_dir"
 g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
   -I "$test_dir" -I gow3_pc/gpu/shim -I gow3_pc/gpu/shadps4 \

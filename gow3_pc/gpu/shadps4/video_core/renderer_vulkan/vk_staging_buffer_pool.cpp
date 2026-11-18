@@ -29,6 +29,7 @@ namespace {
 // in between and copies into them ran at 0.3 GB/s (stutter). Blocks now live 30 s idle, the
 // upload ring keeps GOW3_STAGING_KEEP_MB (512) and is populated at startup.
 constexpr u64 RING_IDLE_FRAMES = 3000;
+constexpr u64 VRAM_RING_IDLE_FRAMES = 600;
 constexpr u64 LARGE_IDLE_FRAMES = 3000;
 constexpr u64 PREWARM_BLOCKS = 8;
 constexpr u64 LARGE_MIN_GRANULARITY = 64_KB;
@@ -66,8 +67,19 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
     : instance{instance_}, scheduler{scheduler_} {
     const char* env = std::getenv("GOW3_STAGING_KEEP_MB");
     keep_blocks = (env ? std::strtoull(env, nullptr, 10) : 512) * 1_MB / BLOCK_SIZE;
+    // PC v0.1.7: only 32 MiB of idle device-local scratch stays reserved.
+    // Unlike the upload ring, extra VRAM blocks are released after 600 frames.
+    const char* vram_env = std::getenv("GOW3_STAGING_KEEP_VRAM_MB");
+    keep_vram_blocks = (vram_env ? std::strtoull(vram_env, nullptr, 10) : 32) * 1_MB / BLOCK_SIZE;
     Ring& ring = rings[u32(MemoryType::HostUncached)];
-    for (u64 i = 0; i < PREWARM_BLOCKS; ++i) {
+    // On constrained Adreno 6xx devices, the launch policy prewarms only two
+    // 16 MiB blocks. This trims idle allocations without restricting uploads:
+    // RequestFromRing still grows the ring on demand when GPU work requires it.
+    const char* prewarm_env = std::getenv("GOW3_STAGING_PREWARM_BLOCKS");
+    const u64 prewarm_blocks = prewarm_env
+        ? std::min<u64>(PREWARM_BLOCKS, std::strtoull(prewarm_env, nullptr, 10))
+        : PREWARM_BLOCKS;
+    for (u64 i = 0; i < prewarm_blocks; ++i) {
         auto& block = ring.blocks.emplace_back(Block{
             .buffer = std::make_unique<VideoCore::StreamBuffer>(
                 instance, scheduler, MemoryType::HostUncached, BLOCK_SIZE),
@@ -110,8 +122,11 @@ StagingBufferRef StagingBufferPool::RequestFromRing(Ring& ring, u64 size, u64 al
                                                     MemoryType type) {
     Block* best{};
     u64 best_offset{};
+    // Fill older device-local blocks first, allowing burst-allocated tail blocks
+    // to become idle and safely eligible for reclamation.
+    const size_t start = type == MemoryType::DeviceLocal ? 0 : ring.current;
     for (size_t i = 0; i < ring.blocks.size(); ++i) {
-        const size_t index = (ring.current + i) % ring.blocks.size();
+        const size_t index = (start + i) % ring.blocks.size();
         Block* block = &ring.blocks[index];
         if (const auto offset = block->buffer->Reserve(size, alignment, false)) {
             ring.current = index;
@@ -205,8 +220,10 @@ void StagingBufferPool::FreeDeferred(const StagingBufferRef& ref) {
 
 void StagingBufferPool::TickFrame() {
     ++frame;
-    for (Ring& ring : rings) {
-        TrimRing(ring);
+    for (u32 type = 0; type < rings.size(); ++type) {
+        const bool vram = type == u32(MemoryType::DeviceLocal);
+        TrimRing(rings[type], vram ? keep_vram_blocks : keep_blocks,
+                 vram ? VRAM_RING_IDLE_FRAMES : RING_IDLE_FRAMES);
     }
     for (auto& cache : large_caches) {
         TrimLarge(cache);
@@ -235,11 +252,11 @@ void StagingBufferPool::TickFrame() {
     }
 }
 
-void StagingBufferPool::TrimRing(Ring& ring) {
+void StagingBufferPool::TrimRing(Ring& ring, u64 keep, u64 idle_frames) {
     auto& blocks = ring.blocks;
     for (size_t i = blocks.size(); i-- > 0;) {
         const Block& block = blocks[i];
-        if (blocks.size() <= keep_blocks || frame - block.last_used_frame < RING_IDLE_FRAMES ||
+        if (blocks.size() <= keep || frame - block.last_used_frame < idle_frames ||
             !scheduler.IsFree(block.buffer->LastTick())) {
             continue;
         }

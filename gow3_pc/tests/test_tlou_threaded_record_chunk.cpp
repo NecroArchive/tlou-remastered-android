@@ -130,7 +130,25 @@ static std::pair<Measurement,Measurement> MedianPair(unsigned group,unsigned byt
     const auto less=[](const auto&a,const auto&b){return a.wall<b.wall;};
     std::sort(old.begin(),old.end(),less);std::sort(next.begin(),next.end(),less);return {old[3],next[3]};
 }
+static void VerifyHostCopyChunkCounters() {
+    Context c(0);
+    Vulkan::RecordChunk chunk;
+    assert(chunk.PushHostCopy(MakeItem(c,1),1,c.done));
+    assert(chunk.HostCopyItems()==1 && chunk.HostCopyGroups()==1);
+    assert(chunk.PushHostCopy(MakeItem(c,2),2,c.done));
+    assert(chunk.HostCopyItems()==2 && chunk.HostCopyGroups()==1);
+    assert(chunk.Push([&c](int){
+        assert(c.count==2 && c.done.load(std::memory_order_acquire)==2);
+    }));
+    assert(chunk.PushHostCopy(MakeItem(c,3),3,c.done));
+    assert(chunk.HostCopyItems()==3 && chunk.HostCopyGroups()==2);
+    chunk.Execute(0);
+    assert(c.done.load(std::memory_order_acquire)==3 && c.count==3);
+    assert(chunk.HostCopyItems()==0 && chunk.HostCopyGroups()==0);
+}
+
 int main(int argc,char**argv){
+    VerifyHostCopyChunkCounters();
     cpu_set_t original;assert(!sched_getaffinity(0,sizeof(original),&original));std::vector<unsigned> cpus;
     for(unsigned i=0;i<CPU_SETSIZE;++i)if(CPU_ISSET(i,&original))cpus.push_back(i);
     if(cpus.size()<2){std::puts("SKIP: two allowed CPUs required");return 0;}

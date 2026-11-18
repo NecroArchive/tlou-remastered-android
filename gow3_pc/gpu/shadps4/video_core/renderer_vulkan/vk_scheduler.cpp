@@ -18,6 +18,10 @@
 #include <dlfcn.h>
 #endif
 #include <functional>
+#ifdef __ANDROID__
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #include "gow3_copy.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
@@ -29,6 +33,8 @@
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/tlou_deferred_signal_wait.h"
+#include "video_core/renderer_vulkan/tlou_host_copy_wait.h"
 #include "gow3_threads.h"
 
 namespace Vulkan {
@@ -205,6 +211,8 @@ void Scheduler::SignalAfterHostCopies(std::function<void()> signal) {
         Gow3Copy::AfterCopies([signal = std::move(signal), done = std::move(done)] {
             signal();
             done->fetch_add(1, std::memory_order_release);
+            // Wake target-sequence waiters without draining unrelated new copies.
+            done->notify_all();
         });
     });
     KickRecording(true);
@@ -277,11 +285,14 @@ void Scheduler::WaitDeferredSignals() {
     Gow3Stats::WaitTimer timer{Gow3Stats::host_copies_wait_ns};
     const auto start = std::chrono::steady_clock::now();
     KickRecording(true);
-    while (deferred_signals_done->load(std::memory_order_acquire) < issued) {
-        // Helps the copy threads the signals wait for.
-        Gow3Copy::WaitAsync();
-        std::this_thread::yield();
-    }
+    // The former WaitAsync() inside this loop waited for global pool IDLE,
+    // including host uploads queued *after* the requested fence. This was an
+    // unnecessary serial barrier in the 01.11 scenes that fell to 10-30 FPS.
+    // Wait only for the captured signal sequence. Workers execute copies
+    // independently; when workers are disabled we still help their queue.
+    Detail::WaitForDeferredSignal(*deferred_signals_done, issued,
+                                  Gow3Copy::Enabled(),
+                                  [] { Gow3Copy::WaitAsync(); });
     if (OrderWaitStatsEnabled()) {
         NoteOrderWait(0, start);
     }
@@ -313,9 +324,10 @@ void Scheduler::WaitHostCopies() {
         Gow3Stats::host_copy_waits.fetch_add(1, std::memory_order_relaxed);
         const auto start = std::chrono::steady_clock::now();
         KickRecording(true);
-        while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
-            std::this_thread::yield();
-        }
+        // A short spin keeps uncontended completions fast. For longer waits,
+        // park until the recorder publishes the required sequence instead of
+        // scheduling this thread repeatedly while game workers need CPU time.
+        Detail::WaitForHostCopySequence(host_copies_done, host_copies_issued);
         if (OrderWaitStatsEnabled()) {
             NoteOrderWait(1, start);
         }
@@ -387,6 +399,7 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
     Common::SetCurrentThreadName("gow3:VkRecorder");
 #ifdef __ANDROID__
     tlou_cpu_policy_apply("Vulkan recorder",1);
+    native_recorder_tid.store(static_cast<u32>(syscall(SYS_gettid)), std::memory_order_release);
 #endif
 #ifndef _WIN32
     if (clockid_t clock; pthread_getcpuclockid(pthread_self(), &clock) == 0)
@@ -426,7 +439,15 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             recorder_busy = true;
         }
         // current_cmdbuf only changes after SyncRecording(), which waits for this thread.
+        // Counts are read from a fully published chunk; no per-host-copy
+        // atomics or clock reads are added to the critical producer path.
+        const u32 host_items = chunk->HostCopyItems();
+        const u32 host_groups = chunk->HostCopyGroups();
         chunk->Execute(current_cmdbuf);
+        if (host_items) {
+            recorder_host_copy_items.fetch_add(host_items, std::memory_order_relaxed);
+            recorder_host_copy_groups.fetch_add(host_groups, std::memory_order_relaxed);
+        }
         {
             std::scoped_lock lk{recorder_mutex};
             free_chunks.push_back(std::move(chunk));

@@ -1,39 +1,24 @@
-name: TLOU Bionic Full Native and APK
+name: TLOU v0.2.0 Stable Release APK - Original Signer
 
 on:
   push:
-    branches: [android-bionic-stage1, tlou-ui-approval-log32-20261105]
-    paths:
-      - 'android/**'
-      - 'android-launcher/**'
-      - 'gow3_pc/**'
-      - 'ci/**'
-      - '.github/workflows/tlou-native-apk.yml'
+    branches: [android-bionic-stage1]
+    paths: ['android/**','android-launcher/**','gow3_pc/**','ci/**','.github/workflows/tlou-native-apk.yml']
   workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
 
+# Native release branch, original com.daedalus.tlou.remastered signing key.
+# Build current GPU and native runtime with physical L3+R3 DualShock shake.
 concurrency:
-  group: tlou-bionic-full-${{ github.ref }}
+  group: tlou-stable-release-020-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  changes:
-    runs-on: ubuntu-24.04
-    outputs:
-      interface_only: ${{ steps.inputs.outputs.interface_only }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: inputs
-        name: Select full native build or verified APK payload reuse
-        run: echo "interface_only=$(python3 android/bionic/reuse_apk.py --check)" >> "$GITHUB_OUTPUT"
-  native:
-    needs: changes
-    if: needs.changes.outputs.interface_only != 'true'
+  gpu:
+    name: Compile release Vulkan GPU plus real native controller runtime
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
@@ -43,49 +28,41 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Preflight translations, default language and offline artwork
+      - name: Confirm actual branch HEAD instead of old pinned source
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          rows = Path('android-launcher/app/src/main/assets/ui-translations.tsv').read_text(encoding='utf-8').splitlines()
-          rows = [line.split(chr(9)) for line in rows if line and not line.startswith('#')]
-          assert len(rows) >= 150, 'Missing translated labels'
-          assert all(len(row) == 10 and all(row) for row in rows), 'Incomplete translation columns'
-          assert len({row[0] for row in rows}) == len(rows), 'Duplicate translation labels'
-          lang = Path('android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouLanguage.java').read_text()
-          assert 'LocaleList.getDefault()' in lang, 'System default locale unavailable'
-          assert 'return 1; // English fallback' in lang, 'English fallback unavailable'
-          art = Path('android-launcher/app/src/main/res/drawable-nodpi/tlou_hero.jpg')
-          assert art.is_file() and art.stat().st_size > 1024, 'Launcher offline hero art missing'
-          print('Preflight OK:', len(rows), 'labels across 10 languages; English fallback; game art')
-          PY
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Test clocks, job fiber migration, services and automatic preparation
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "Building GPU from $GITHUB_SHA"
+      - name: Verify Qualcomm shader float-controls fallback does not alter workgroup/image interfaces
         run: |
-          python3 -m pip install unicorn==2.1.4
-          bash android/bionic/test_runtime_contracts.sh
-          python3 -m unittest discover -s android/tests -v
-          python3 gow3_pc/tests/test_srt_arm64.py -v
-      # Fail fast on Java/resources/manifest issues before expensive native builds.
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.14.3'
-          cache-read-only: false
-      - name: Preflight compile and Android resource validation
-        run: gradle -p android-launcher :app:testReleaseUnitTest :app:lintVitalRelease --no-daemon --max-workers=2
-      - name: Publish actual Android UI test renders and results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: TLOU-v01-native-ui-tests
-          path: android-launcher/app/build/reports/**
-          if-no-files-found: ignore
+          set -euo pipefail
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+            gow3_pc/tests/test_tlou_qualcomm_float_compat.cpp \
+            -o /tmp/tlou-qualcomm-float-compat
+          /tmp/tlou-qualcomm-float-compat
+          grep -Fq 'eQualcommProprietary' \
+            gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_compute_pipeline.cpp
+      - name: Verify Qualcomm 1D shader coordinate requires exactly one scalarized word
+        run: |
+          set -euo pipefail
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror \
+            gow3_pc/tests/test_tlou_qualcomm_image1d_compat.cpp \
+            -o /tmp/tlou-qualcomm-image1d
+          /tmp/tlou-qualcomm-image1d
+          grep -Fq '.shaderStorageImageReadWithoutFormat =' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
+          grep -Fq 'eQualcommProprietary' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_compute_pipeline.cpp
+      - name: Test external Qualcomm vendor fallback without masking Turnip failure
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan1
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror \
+            gow3_pc/tests/test_tlou_qualcomm_vulkan_fallback.cpp \
+            gow3_pc/gpu/shim/vk_driver_loader.cpp -ldl -o /tmp/tlou-qualcomm-fallback
+          /tmp/tlou-qualcomm-fallback vendor 2>&1 | tee /tmp/tlou-qualcomm-vendor.log
+          /tmp/tlou-qualcomm-fallback turnip 2>&1 | tee /tmp/tlou-turnip-failure.log
+          /tmp/tlou-qualcomm-fallback system 2>&1 | tee /tmp/tlou-system-vulkan.log
+          grep -Fq 'SYSTEM Qualcomm driver instead' /tmp/tlou-qualcomm-vendor.log
+          ! grep -Fq 'SYSTEM Qualcomm driver instead' /tmp/tlou-turnip-failure.log
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
@@ -94,7 +71,7 @@ jobs:
           environment-file: ci/environment.yml
           cache-environment: true
           init-shell: bash
-      - name: Restore Bionic dependency/FEX source and native compiler cache
+      - name: Restore Bionic dependencies and native compiler cache
         uses: actions/cache@v4
         with:
           path: |
@@ -104,204 +81,330 @@ jobs:
             .local-deps/FEX
             ~/.cache/ccache
           key: tlou-bionic-arm64-v2-${{ runner.os }}-${{ hashFiles('android/bionic/build_deps.sh', 'android/bionic/build_fex.sh') }}
-          save-always: true
-      # Ccache is incremental across source-fix commits, unlike the pinned dependency archive.
-      - name: Restore incremental ARM64 native object cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/ccache
-          key: tlou-arm64-ccache-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            tlou-arm64-ccache-${{ runner.os }}-
-      - name: Report compiler cache
+            tlou-bionic-arm64-v2-${{ runner.os }}-
+      - name: Cross-compile updated Bionic Vulkan renderer
         shell: bash -el {0}
         run: |
-          command -v ccache
-          ccache --set-config=max_size=3G
-          ccache -s
-      - name: Cross-compile host utilities
-        shell: bash -el {0}
-        run: |
+          set -euo pipefail
           bash ci/setup-deps.sh "$CONDA_PREFIX"
-          echo "TLOU_BIONIC_HEADERS=$CONDA_PREFIX" >> "$GITHUB_ENV"
-          echo "TLOU_NDK=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
-      - name: Build real Bionic target dependencies
-        shell: bash -el {0}
-        run: bash android/bionic/build_deps.sh
-      - name: Build actual TLOU FEX ARM64 native translator
-        shell: bash -el {0}
-        run: bash android/bionic/build_fex.sh
-      - name: Configure TLOU-specific native Vulkan GPU
-        shell: bash -el {0}
-        run: bash android/bionic/build_gpu.sh --configure-only
-      - name: Compile TLOU Vulkan GPU and HLE
-        shell: bash -el {0}
-        run: bash android/bionic/build_gpu.sh
-      - name: Link real TLOU Bionic runtime and AHB present
-        shell: bash -el {0}
-        run: bash android/bionic/build_runtime.sh --link-only
-      - name: Restore Python and Rust compiler caches
-        uses: actions/cache@v4
+          export TLOU_BIONIC_HEADERS="$CONDA_PREFIX"
+          export TLOU_NDK="$ANDROID_HOME/ndk/29.0.14206865"
+          bash android/bionic/build_deps.sh
+          bash android/bionic/build_gpu.sh
+      - name: Download stable 0.1.1 native base for CPU linkage
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            .local-deps/android/bionic-src/python-3.13.7
-            .local-deps/android/bionic-build/python-host-isolated-v1
-            .local-deps/android/bionic-build/python-android-isolated-v1
-            out/android-bionic/python
-            out/android-bionic/orbis-cargo
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: tlou-install-tools-v1-${{ hashFiles('android/bionic/build_python.sh', 'android/bionic/build_pkg.sh') }}
-      - name: Build on-device Bionic Python and PKG installer
+          name: TheLastOfUsRemastered-Android-v0.1.1-arm64
+          path: out/native-source-apk
+          run-id: '43315820944'
+          github-token: ${{ github.token }}
+      - name: Rebuild native ARM64 game executable with L3+R3 sensor input
         shell: bash -el {0}
         run: |
-          bash android/bionic/build_python.sh
-          bash android/bionic/build_pkg.sh
-      - name: Verify ARM64 executable and native symbols
-        shell: bash -el {0}
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          base=Path('out/native-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk')
+          assert base.stat().st_size>1000000
+          directory=Path('out/android-bionic/lib')
+          directory.mkdir(parents=True,exist_ok=True)
+          with zipfile.ZipFile(base) as z:
+              for name in ('libgow3cpu.so','libc++_shared.so'):
+                  (directory/name).write_bytes(z.read('lib/arm64-v8a/'+name))
+          PY
+          bash android/bionic/build_runtime.sh --link-only
+          readelf -h out/android-bionic/bin/gow3-probe | grep -E 'Machine:.*AArch64'
+          strings out/android-bionic/bin/gow3-probe | grep -Fx shake
+      - name: Verify actual A6xx fix and export SHA256 GPU
         run: |
-          python3 android/bionic/verify_bionic.py --ndk "$TLOU_NDK" --root out/android-bionic
-      - name: Verify FPS sampling and resume behavior
-        if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        run: bash android/bionic/test_fps.sh
-      - name: Restore signing identity used by existing installations
-        if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        uses: actions/cache@v4
+          set -euo pipefail
+          mkdir -p out/native-gpu
+          cp out/android-bionic/lib/libgow3gpu.so out/native-gpu/libgow3gpu.so
+          cp out/android-bionic/bin/gow3-probe out/native-gpu/gow3-probe
+          readelf -h out/native-gpu/libgow3gpu.so | grep -E 'Machine:.*AArch64'
+          for marker in 'GOW3_STAGING_PREWARM_BLOCKS' 'GPU allocation failure:' 'SYSTEM Qualcomm driver instead' 'host-copy items=' 'memory-waits-deferred=' 'TLOU compute buffer-only fast' 'TLOU pending word-hit'; do
+            grep -aFq "$marker" out/native-gpu/libgow3gpu.so
+          done
+          (cd out/native-gpu && sha256sum libgow3gpu.so gow3-probe > native.sha256 && sha256sum -c native.sha256)
+          test "$(stat -c %s out/native-gpu/libgow3gpu.so)" -gt 100000
+      - uses: actions/upload-artifact@v4
         with:
-          path: out/android-bionic/experimental-development.jks
-          key: tlou-development-signing-v2
-      - name: Assemble and sign actual TLOU Bionic APK
-        if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        shell: bash -el {0}
-        run: bash android/bionic/package_apk.sh
-      - name: Verify APK payload and native dependency closure
-        if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        run: python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
-      - name: Publish installable TLOU APK
-        if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: TheLastOfUsRemastered-Android-v0.1-arm64
-          path: |
-            out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
-            out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk.sha256
+          name: TLOU-v020-Current-ARM64-GPU-and-Controller
+          path: out/native-gpu/
           if-no-files-found: error
-      - name: Publish built native binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: TLOU-Bionic-native-arm64
-          path: |
-            out/android-bionic/bin/gow3-probe
-            out/android-bionic/lib/*.so
-          if-no-files-found: error
-      - name: Save incremental native compiler cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.cache/ccache
-          key: tlou-arm64-ccache-${{ runner.os }}-${{ github.sha }}
-      - name: Save native failure diagnostics
+      - uses: actions/upload-artifact@v4
         if: failure()
-        uses: actions/upload-artifact@v4
         with:
-          name: TLOU-Bionic-native-diagnostics
+          name: TLOU-current-GPU-build-failure
           path: |
-            .local-deps/android/bionic-build/**/*.log
-            .local-deps/android/bionic-build/ffmpeg-configure.log
-            out/android-bionic/gpu/CMakeFiles/CMakeConfigureLog.yaml
             out/android-bionic/gpu/CMakeCache.txt
-            out/android-bionic/fex/CMakeFiles/CMakeConfigureLog.yaml
+            out/android-bionic/gpu/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: ignore
 
-  launcher:
-    needs: changes
-    if: needs.changes.outputs.interface_only == 'true'
+  apk:
+    needs: gpu
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+        # Build from this branch's exact triggering commit, never an older ref.
+      - name: Confirm current source revision
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "APK source commit $GITHUB_SHA"
+      - uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
+          python-version: '3.12'
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.14.3'
-          cache-read-only: false
-      - name: Preparation, native reuse guards, FPS and save tests
-        run: |
-          python3 -m pip install unicorn==2.1.4
-          python3 -m unittest discover -s android/tests -v
-          bash android/bionic/test_fps.sh
-          python3 gow3_pc/tests/test_android_save_choice.py
-      - name: Android dialog regression tests and release lint
-        run: gradle -p android-launcher :app:testReleaseUnitTest :app:lintVitalRelease --no-daemon --max-workers=2
-      - name: Download exact successful v0.1 APK
-        uses: actions/download-artifact@v4
-        with:
-          name: TheLastOfUsRemastered-Android-v0.1-arm64
-          path: out/source-apk
-          github-token: ${{ github.token }}
-          run-id: 42136621594
-      - name: Validate source compatibility and extract native payload
-        run: python3 android/bionic/reuse_apk.py out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk
-      - name: Restore existing signing identity; never create a replacement key
+      - name: Restore original stable 0.1.1 keystore
         uses: actions/cache/restore@v4
         with:
           path: out/android-bionic/experimental-development.jks
           key: tlou-development-signing-v2
           fail-on-cache-miss: true
-      - name: Assemble updated launcher and sign compatible update
+      - name: Require original stable key
+        run: |
+          test -s out/android-bionic/experimental-development.jks
+          keytool -list -keystore out/android-bionic/experimental-development.jks \
+            -storepass TLOU-Bionic-development -alias tlou-bionic >/dev/null
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;29.0.14206865'
+      - name: Check local ARM64 AOT preparation
+        run: |
+          python3 -m py_compile android/aot/aot_local.py android/aot/patch_variants.py android/aot/test_patch_variants.py android/aot/test_aot_local.py android/aot/test_aot_quality.py android/bionic/repackage_local_aot.py android/aot/port_runtime.py
+          python3 android/aot/test_aot_local.py -v
+          python3 android/aot/test_patch_variants.py -v
+          python3 android/aot/test_aot_quality.py -v
+          python3 android/aot/test_fiber_tls.py -v
+          python3 android/aot/test_aot_fault_probe.py -v
+          python3 android/aot/test_aot_signal_stack.py -v
+          python3 android/aot/test_aot_host_stack.py -v
+          python3 android/aot/test_affinity_preload.py -v
+          python3 android/aot/test_affinity_balance_model.py -v
+          python3 android/aot/test_tso_one_fence.py -v
+          python3 android/aot/test_tso_outlined.py -v
+          python3 android/bionic/test_multi_tso_packaging.py -v
+          python3 android/aot/test_no_tso_profile.py -v
+          python3 android/tests/test_tlou_physical_updates_single_aot.py -v
+          javac -d /tmp/tlou-device-policy-test \
+            android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouDevicePolicy.java \
+            android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouDevicePolicyTest.java
+          java -cp /tmp/tlou-device-policy-test ro.cobrabm.fexdroid.TlouDevicePolicyTest
+          cc -std=gnu11 -O2 -pthread -Wall -Wextra -Werror gow3_pc/tests/test_android_cpu_policy.c -o /tmp/tlou-test-cpu-placement
+          /tmp/tlou-test-cpu-placement
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_readback_watch_gate.cpp -o /tmp/tlou-test-readback-gate
+          /tmp/tlou-test-readback-gate
+          c++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror -I gow3_pc/gpu/shadps4 gow3_pc/tests/test_tlou_compute_drain_policy.cpp -o /tmp/tlou-test-compute-wait-defer
+          /tmp/tlou-test-compute-wait-defer
+          mkdir -p out/aot-java-test
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouApp0Assets.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouApp0AssetsTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouApp0AssetsTest
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/UpdateInPlace.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/UpdateInPlaceTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.UpdateInPlaceTest
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeProcess.java android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouCpuThreads.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/TlouCpuThreadsTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.TlouCpuThreadsTest
+          javac -d out/aot-java-test android-launcher/app/src/main/java/ro/cobrabm/fexdroid/AotInstrumentation.java android-launcher/app/src/test/java/ro/cobrabm/fexdroid/AotInstrumentationTest.java
+          java -cp out/aot-java-test ro.cobrabm.fexdroid.AotInstrumentationTest
+      - name: Retrieve successful native ARM64 APK
+        uses: actions/download-artifact@v4
+        with:
+          name: TheLastOfUsRemastered-Android-v0.1.1-arm64
+          path: out/aot-source-apk
+          run-id: '43315820944'
+          github-token: ${{ github.token }}
+      - name: Build ARM64 AOT CPU from the current source, including TLOU fiber changes
+        env:
+          TLOU_NDK: /usr/local/lib/android/sdk/ndk/29.0.14206865
+        run: bash android/bionic/build_aot_cpu.sh
+      - name: Stage mandatory native AOT engine for the stable app
         run: |
           set -euo pipefail
-          gradle -p android-launcher :app:assembleRelease --no-daemon --max-workers=2
-          sdk_tools="$ANDROID_HOME/build-tools/35.0.0"
+          so=out/android-bionic/aot-backend/libgow3cpu.so
+          test -s "$so"
+          python3 - "$so" <<'PY'
+          import hashlib,sys
+          from pathlib import Path
+          path=Path(sys.argv[1])
+          expected=Path(str(path)+'.sha256').read_text().split()[0]
+          assert hashlib.file_digest(path.open('rb'),'sha256').hexdigest()==expected
+          PY
+          readelf -h "$so" | grep -E 'Machine:.*AArch64'
+          readelf --dyn-syms --wide "$so" | grep -F 'pthread_attr_setstacksize'
+          grep -aFq 'TLOU AOT host pthread stack' "$so"
+          readelf --dyn-syms --wide "$so" | grep -F pthread_setname_np
+          grep -aFq 'TLOU CPU placement:' "$so"
+          readelf --dyn-syms --wide "$so" | grep -F guest_cpu_fiber_switch
+          grep -aFq 'TLOU AOT invalid target' "$so"   # ensure the current traced dispatcher is actually packaged
+          grep -aFq 'TLOU AOT fiber TLS preserved' "$so" # ensure cross-thread TLS fix is linked
+          readelf -Ws "$so" | grep -Fq 'TlouAotProbeFault' # the compiler may fold the write(2) string
+          grep -aFq 'TLOU AOT sceFiberRun' "$so" # require fiber return-code provenance in packaged CPU engine
+          grep -aFq 'TLOU AOT job thread entry' "$so" # thread-type and actual TLS provenance
+          grep -aFq 'TLOU AOT queue lane' "$so" # confirm the failing queue record is captured
+          mkdir -p out/android-bionic/apk-assets/runtime-aot
+          cp "$so" out/android-bionic/apk-assets/runtime-aot/libgow3cpu.so
+          test -s out/android-bionic/aot-backend/libbbcpu.so
+          readelf -d out/android-bionic/aot-backend/libbbcpu.so | grep -F '[libgow3cpu.so]'
+          cp out/android-bionic/aot-backend/libbbcpu.so out/android-bionic/apk-assets/runtime-aot/libbbcpu.so
+      - name: Retrieve only the pinned ARM64 AOT v3 compiler
+        uses: actions/download-artifact@v4
+        with:
+          name: TLOU-bb-recomp-1.3.0-TSO-STR-ARM64
+          path: out/aot-v3-compiler
+          run-id: '43347558246'
+          github-token: ${{ github.token }}
+      - name: Verify pinned ARM64 compiler and single codegen policy
+        run: |
+          set -euo pipefail
+          archive=out/aot-v3-compiler/bb-recomp-android-aarch64.tar.xz
+          test -s "$archive"
+          (cd out/aot-v3-compiler && sha256sum -c bb-recomp-android-aarch64.tar.xz.sha256)
+          mkdir -p out/aot-v3-extract
+          tar -xJf "$archive" -C out/aot-v3-extract
+          binary=out/aot-v3-extract/android/libbbrecomp.so
+          test -s "$binary"
+          test -s out/aot-v3-extract/android/bundle/helpers-aarch64.o
+          readelf -h "$binary" | grep -E 'Machine:.*AArch64'
+          grep -aFq '3-tlou-string' "$binary"
+          grep -Fq 'TsoProfile.version(TsoProfile.RELAXED).equals(meta.optString("compiler_version"))' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java
+          ! grep -Fq 'Perfil TSO' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          grep -Fq 'RELAXED="off"' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TsoProfile.java
+          grep -Fq 'env.put("GOW3_TLOU_HOST_COPY_BATCH","0")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+          grep -Fq 'if(RuntimeAotExitPolicy.shouldDisableDirectLaunch(' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+      - name: Stage exact native game runtime with pinned ARM64 compiler
+        run: |
+          set -euo pipefail
+          apk=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+          test -s "$apk"
+          python3 - "$apk" <<'PY'
+          import hashlib,sys
+          from pathlib import Path
+          path=Path(sys.argv[1])
+          expected=Path(str(path)+'.sha256').read_text().split()[0].lower()
+          with path.open('rb') as f:
+              digest=hashlib.file_digest(f,'sha256').hexdigest()
+          assert digest==expected, f'Native APK SHA mismatch: {digest} != {expected}'
+          print('Pinned native APK digest matched')
+          PY
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
+          export TLOU_TSO_REQUIRED=1
+          export TLOU_AOT_COMPILER_ARCHIVE="$PWD/out/aot-v3-compiler/bb-recomp-android-aarch64.tar.xz"
+          unset TLOU_TSO_MULTI_PROFILE_DIR TLOU_TSO_ALIGNED_AR_EXPERIMENT TLOU_TSO_OUTLINE_UNALIGNED_EXPERIMENT
+          bash android/bionic/stage_aot_compiler.sh
+          python3 android/bionic/repackage_local_aot.py "$apk"
+      - name: Fetch GPU library compiled from THIS source revision
+        uses: actions/download-artifact@v4
+        with:
+          name: TLOU-v020-Current-ARM64-GPU-and-Controller
+          path: out/native-gpu
+      - name: Install new GPU and controller runtime into the stable APK stage
+        run: |
+          set -euo pipefail
+          (cd out/native-gpu && sha256sum -c native.sha256)
+          original=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+          python3 - "$original" <<'PY'
+          from pathlib import Path
+          import hashlib,sys,zipfile
+          new=Path('out/native-gpu/libgow3gpu.so').read_bytes()
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              old=archive.read('lib/arm64-v8a/libgow3gpu.so')
+          assert new[:4]==b'\x7fELF' and len(new)>100000, 'GPU is not a real ELF'
+          assert hashlib.sha256(new).digest()!=hashlib.sha256(old).digest(), 'GPU binary did not change: refuse pointless APK'
+          print('Verified changed Bionic GPU:', hashlib.sha256(old).hexdigest()[:16], '->',hashlib.sha256(new).hexdigest()[:16])
+          PY
+          readelf -h out/native-gpu/libgow3gpu.so | grep -E 'Machine:.*AArch64'
+          grep -aFq 'memory-waits-deferred=' out/native-gpu/libgow3gpu.so
+          grep -aFq 'TLOU compute buffer-only fast' out/native-gpu/libgow3gpu.so
+          grep -aFq 'TLOU pending word-hit' out/native-gpu/libgow3gpu.so
+          grep -aFq 'host-copy items=' out/native-gpu/libgow3gpu.so
+          grep -aFq 'GOW3_STAGING_PREWARM_BLOCKS' out/native-gpu/libgow3gpu.so
+          grep -aFq 'GPU allocation failure:' out/native-gpu/libgow3gpu.so
+          grep -aFq 'Qualcomm compute recovered:' out/native-gpu/libgow3gpu.so
+          grep -aFq 'FP control modes disabled' out/native-gpu/libgow3gpu.so
+          grep -aFq '1D coordinate X-only' out/native-gpu/libgow3gpu.so
+          grep -aFq 'unused image read capability removed' out/native-gpu/libgow3gpu.so
+          grep -aFq 'SYSTEM Qualcomm driver instead' out/native-gpu/libgow3gpu.so
+          cp out/native-gpu/libgow3gpu.so out/android-bionic/apk-jni/arm64-v8a/libgow3gpu.so
+          install -m 0755 out/native-gpu/gow3-probe out/android-bionic/apk-assets/runtime/gow3-probe
+      - name: Generate save-selection fixtures for existing Android tests
+        run: python3 gow3_pc/tests/test_android_save_choice.py
+      - name: Build 0.2.0 RELEASE and run unit tests
+        run: gradle -p android-launcher :app:assembleRelease :app:testReleaseUnitTest --no-daemon --max-workers=2
+      - name: Sign stable APK using original v0.1.1 signing identity
+        run: |
+          set -euo pipefail
+          sdk="$ANDROID_HOME/build-tools/35.0.0"
+          input=android-launcher/app/build/outputs/apk/release/app-release-unsigned.apk
+          apk=out/release/TheLastOfUsRemastered-Android-v0.2.0-arm64.apk
           mkdir -p out/release
-          apk=out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
-          "$sdk_tools/zipalign" -f -p 4 android-launcher/app/build/outputs/apk/release/app-release-unsigned.apk out/aligned.apk
-          "$sdk_tools/apksigner" sign --ks out/android-bionic/experimental-development.jks --ks-key-alias tlou-bionic --ks-pass pass:TLOU-Bionic-development --key-pass pass:TLOU-Bionic-development --out "$apk" out/aligned.apk
-          "$sdk_tools/apksigner" verify --verbose "$apk"
-          "$sdk_tools/apksigner" verify --print-certs "$apk" | sed -n '/certificate SHA-256 digest:/p' > out/new-cert
-          "$sdk_tools/apksigner" verify --print-certs out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk | sed -n '/certificate SHA-256 digest:/p' > out/old-cert
-          test -s out/new-cert
+          test -s "$input"
+          "$sdk/zipalign" -f -p 4 "$input" out/tlou-v020-aligned.apk
+          "$sdk/apksigner" sign \
+            --ks out/android-bionic/experimental-development.jks \
+            --ks-key-alias tlou-bionic --ks-pass pass:TLOU-Bionic-development \
+            --key-pass pass:TLOU-Bionic-development --out "$apk" out/tlou-v020-aligned.apk
+          "$sdk/apksigner" verify --verbose "$apk"
+          old=out/aot-source-apk/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk
+          "$sdk/apksigner" verify --print-certs "$old" | grep 'certificate SHA-256 digest:' > out/old-cert
+          "$sdk/apksigner" verify --print-certs "$apk" | grep 'certificate SHA-256 digest:' > out/new-cert
+          test -s out/old-cert
           diff -u out/old-cert out/new-cert
           sha256sum "$apk" > "$apk.sha256"
-      - name: Validate final APK and byte-identical native payload
+      - name: Verify Adreno740 UBWC, A6xx isolation and 8 GB native policy source before APK signing
         run: |
-          python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk
-          python3 - <<'PYCODE'
-          import zipfile
-          from pathlib import Path
-          import importlib.util
-          spec=importlib.util.spec_from_file_location('reuse','android/bionic/reuse_apk.py')
-          reuse=importlib.util.module_from_spec(spec);spec.loader.exec_module(reuse)
-          with zipfile.ZipFile('out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk') as old, zipfile.ZipFile('out/release/TheLastOfUsRemastered-Android-v0.1-arm64.apk') as new:
-              names=[n for n in old.namelist() if reuse.payload(n) is not None and not n.endswith('/')]
-              assert names
-              for n in names:
-                  if n!='assets/tools.zip': assert old.read(n)==new.read(n), n
-              import io
-              with zipfile.ZipFile(io.BytesIO(old.read('assets/tools.zip'))) as old_tools, zipfile.ZipFile(io.BytesIO(new.read('assets/tools.zip'))) as new_tools:
-                  assert old_tools.namelist()==new_tools.namelist()
-                  for n in old_tools.namelist():
-                      expected=(Path(n.removeprefix('source/')).read_bytes() if n in {'source/'+p for p in reuse.PREPARER_SOURCES} else old_tools.read(n))
-                      assert new_tools.read(n)==expected,n
-              print('Identical native/runtime/driver payload; only verified preparer sources updated')
-          PYCODE
-      - uses: actions/upload-artifact@v4
-        with:
-          name: TheLastOfUsRemastered-Android-v0.1-arm64
-          path: out/release/*
-          if-no-files-found: error
-      - name: Save UI tests and diagnostics
-        if: always()
+          set -euo pipefail
+          grep -Fq 'TlouDevicePolicy.configureUbwcHint' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'TlouDevicePolicy.configureMemory' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'turnip_ubwc_hint_mode' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          grep -Fq 'GOW3_STREAM_MB' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouDevicePolicy.java
+          grep -Fq 'GOW3_STAGING_KEEP_MB' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouDevicePolicy.java
+          grep -Fq 'GOW3_RESIDENCY_CHUNKS' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TlouDevicePolicy.java
+      - name: Validate stable release package, rebuilt input and AOT payload
+        run: |
+          set -euo pipefail
+          sdk="$ANDROID_HOME/build-tools/35.0.0"
+          apk=out/release/TheLastOfUsRemastered-Android-v0.2.0-arm64.apk
+          "$sdk/apksigner" verify --verbose "$apk"
+          "$sdk/aapt" dump badging "$apk" | grep -F "package: name='com.daedalus.tlou.remastered' versionCode='200' versionName='0.2.0'"
+          diff -u out/old-cert out/new-cert
+          (cd out/release && sha256sum -c TheLastOfUsRemastered-Android-v0.2.0-arm64.apk.sha256)
+          python3 android/bionic/check_tools_apk.py "$apk"
+          python3 - "$apk" <<'PY'
+          import hashlib,sys,zipfile,io
+          with zipfile.ZipFile(sys.argv[1]) as a:
+              gpu=a.read('lib/arm64-v8a/libgow3gpu.so')
+              probe=a.read('assets/runtime/gow3-probe')
+              assert gpu==open('out/native-gpu/libgow3gpu.so','rb').read(), 'Current GPU missing'
+              assert probe==open('out/native-gpu/gow3-probe','rb').read(), 'Current controller executable missing'
+              assert b'shake' in probe, 'L3+R3 native shake missing'
+              assert a.getinfo('assets/runtime-aot/libgow3cpu.so').file_size>4096
+              assert a.getinfo('assets/runtime-aot/libbbcpu.so').file_size>512
+              with zipfile.ZipFile(io.BytesIO(a.read('assets/tools.zip'))) as tools:
+                  assert b'3-tlou-string' in tools.read('bin/libbbrecomp.so')
+                  assert b'PROFILE = "tlou-111-variants-v3"' in tools.read('source/android/aot/patch_variants.py')
+              assert b'unused image read capability removed' in gpu
+          print('Verified stable v0.2.0 original cert, native GPU, L3+R3 controller, AOT compiler')
+          PY
+      - name: Publish installable stable v0.2.0 APK
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v01-launcher-tests
+          name: TLOU-Android-v0.2.0-Stable-Release-APK
+          path: |
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-arm64.apk
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-arm64.apk.sha256
+          if-no-files-found: error
+      - name: Upload diagnostics when compilation fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-0.2.0-Release-Build-Errors
           path: android-launcher/app/build/reports/**
           if-no-files-found: ignore

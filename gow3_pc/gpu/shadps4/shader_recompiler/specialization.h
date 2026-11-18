@@ -164,6 +164,154 @@ struct StageSpecialization {
         }
     }
 
+
+    // A directly comparable specialization for compute programs with buffers
+    // only. The original constructor creates/fills several small_vectors and
+    // the caller searches the permutation list on EVERY dispatch, even for a
+    // module whose buffer formats and strides did not change. Re-read the
+    // CURRENT per-dispatch SRT values, but compare their relevant specialization
+    // fields directly to the last compiled module. It is a MISS for all
+    // images/samplers/FMAsks/fetch/tessellation cases; those retain the full path.
+    //
+    // This intentionally mirrors operator==(cached, fresh), including its
+    // use of FRESH resource-validity bits (not cached bitset) and its special
+    // no-bindings start comparison. Never cache guest pointers or SRT bytes.
+    [[nodiscard]] bool MatchesCurrentBufferOnlyCompute(
+        const Info& current, const RuntimeInfo& current_runtime,
+        const Backend::Bindings& current_start) const {
+        if (!Valid() || current.sw_stage != SwStage::Compute ||
+            current.has_fetch_shader || !current.images.empty() ||
+            !current.samplers.empty() || !current.fmasks.empty() ||
+            current.buffers.size() != buffers.size() || !images.empty() ||
+            !samplers.empty() || !fmasks.empty() || fetch_shader_data ||
+            !vs_attribs.empty() || runtime_info != current_runtime) {
+            return false;
+        }
+        bool current_has_binding = false;
+        for (u32 i = 0; i < current.buffers.size(); ++i) {
+            const auto& desc = current.buffers[i];
+            const auto sharp = desc.GetSharp(current);
+            if (!sharp) {
+                continue; // exactly as ForEachSharp's empty specialization
+            }
+            current_has_binding = true;
+            BufferSpecialization fresh{};
+            fresh.stride = sharp.GetStride();
+            fresh.is_formatted = desc.is_formatted;
+            fresh.swizzle_enable = sharp.swizzle_enable;
+            if (fresh.is_formatted) {
+                fresh.data_format = static_cast<u32>(sharp.GetDataFmt());
+                fresh.num_format = static_cast<u32>(sharp.GetNumberFmt());
+                fresh.dst_select = sharp.DstSelect();
+                fresh.num_conversion = sharp.GetNumberConversion();
+            }
+            if (fresh.swizzle_enable) {
+                fresh.index_stride = sharp.index_stride;
+                fresh.element_size = sharp.element_size;
+            }
+            if (buffers[i] != fresh) {
+                return false;
+            }
+        }
+        // The original cached == freshly-built specialization ignores start
+        // only when BOTH bitsets are empty. A changed buffer binding layout
+        // must still trigger the complete Shader::StageSpecialization path.
+        return (!current_has_binding && bitset.none()) || start == current_start;
+    }
+
+
+    // Guest data is re-read on every graphics draw. Avoid constructing
+    // StageSpecialization's five resource vectors for common shaders when
+    // the *semantic* Vulkan specialization is identical to the last module.
+    // This is NOT a descriptor-value cache. Every field that influences the
+    // module is compared against freshly fetched buffer/image/sampler SHARPs.
+    // To be conservative, a changed binding-validity bitset always misses.
+    // Fetch shaders and tessellation programs use the original full path.
+    [[nodiscard]] bool MatchesCurrentNonFetchGraphics(const Info& current,
+        const RuntimeInfo& runtime, const Backend::Bindings& current_start) const {
+        if (!Valid() || current.has_fetch_shader || fetch_shader_data ||
+            !vs_attribs.empty() || current.sw_stage != info->sw_stage ||
+            (current.sw_stage != SwStage::Vertex && current.sw_stage != SwStage::Fragment) ||
+            runtime_info != runtime ||
+            current.buffers.size() != buffers.size() ||
+            current.images.size() != images.size() ||
+            current.fmasks.size() != fmasks.size() ||
+            current.samplers.size() != samplers.size()) {
+            return false;
+        }
+        std::bitset<MaxStageResources> fresh_bits{};
+        u32 binding = 0;
+        for (u32 i = 0; i < current.buffers.size(); ++i, ++binding) {
+            const auto& desc = current.buffers[i];
+            const auto sharp = desc.GetSharp(current);
+            if (!sharp) continue;
+            fresh_bits.set(binding);
+            BufferSpecialization fresh{};
+            fresh.stride = sharp.GetStride();
+            fresh.is_formatted = desc.is_formatted;
+            fresh.swizzle_enable = sharp.swizzle_enable;
+            if (fresh.is_formatted) {
+                fresh.data_format = static_cast<u32>(sharp.GetDataFmt());
+                fresh.num_format = static_cast<u32>(sharp.GetNumberFmt());
+                fresh.dst_select = sharp.DstSelect();
+                fresh.num_conversion = sharp.GetNumberConversion();
+            }
+            if (fresh.swizzle_enable) {
+                fresh.index_stride = sharp.index_stride;
+                fresh.element_size = sharp.element_size;
+            }
+            if (fresh != buffers[i]) return false;
+        }
+        for (u32 i = 0; i < current.images.size(); ++i, ++binding) {
+            const auto& desc = current.images[i];
+            // Dynamic mip expansion uses another fresh guest fetch and must
+            // retain full specialization (and its original refresh timing).
+            if (desc.mip_fallback_mode == MipStorageFallbackMode::DynamicIndex) return false;
+            const auto sharp = desc.GetSharp(current);
+            if (!sharp) continue;
+            fresh_bits.set(binding);
+            ImageSpecialization fresh{};
+            fresh.type = sharp.GetViewType(desc.is_array);
+            fresh.is_integer = AmdGpu::IsInteger(sharp.GetNumberFmt());
+            fresh.is_storage = desc.is_written;
+            fresh.is_cube = sharp.IsCube();
+            if (fresh.is_storage) {
+                fresh.dst_select = sharp.DstSelect();
+            } else {
+                fresh.is_srgb = sharp.GetNumberFmt() == AmdGpu::NumberFormat::Srgb;
+            }
+            fresh.num_conversion = sharp.GetNumberConversion();
+            fresh.num_bindings = 1; // only non-dynamic mip fallback reaches this path
+            if (fresh != images[i]) return false;
+        }
+        for (u32 i = 0; i < current.fmasks.size(); ++i, ++binding) {
+            const auto sharp = current.fmasks[i].GetSharp(current);
+            FMaskSpecialization fresh{};
+            if (sharp) {
+                fresh_bits.set(binding);
+                fresh.width = sharp.width;
+                fresh.height = sharp.height;
+            }
+            if (fresh != fmasks[i]) return false;
+        }
+        // Same two-phase equality policy as operator==. Tightening the
+        // binding mask comparison prevents a false hit on an invalid buffer
+        // while never omitting a valid old-path module.
+        if (fresh_bits != bitset) return false;
+        if (fresh_bits.none()) return true;
+        if (start != current_start) return false;
+        for (u32 i = 0; i < current.samplers.size(); ++i) {
+            const auto sharp = current.samplers[i].GetSharp(current);
+            SamplerSpecialization fresh{};
+            if (sharp) {
+                fresh.force_unnormalized = sharp.force_unnormalized;
+                fresh.force_degamma = sharp.force_degamma;
+            }
+            if (fresh != samplers[i]) return false;
+        }
+        return true;
+    }
+
     void ForEachSharp(auto& spec_list, auto& desc_list, auto&& func) {
         for (const auto& desc : desc_list) {
             auto& spec = spec_list.emplace_back();

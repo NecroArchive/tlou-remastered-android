@@ -21,6 +21,7 @@
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 #include "video_core/renderer_vulkan/vk_draw_pipe.h"
 #include "video_core/renderer_vulkan/tlou_pending_write_index.h"
+#include "video_core/renderer_vulkan/tlou_pending_prune_gate.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -126,6 +127,9 @@ public:
     /// `line`/`function`: the caller, for the statistics of where stage A waits.
     void DrainDrawPipe(u32 reason = DrawPipe::ReasonRasterizer, u32 line = __builtin_LINE(),
                        const char* function = __builtin_FUNCTION());
+    // Stage-A-only check: a nested compute command buffer must still drain
+    // if a queued Stage-B guest write can change its PM4 packet bytes.
+    bool NeedsComputeIndirectBufferDrain(VAddr address, u64 size);
     /// Runs `task(rasterizer, copy of data)` in order with the draws: on the draw recording
     /// thread while the draw pipeline is in use (PipelinedTasks), else here after a drain.
     using OrderedTask = void (*)(Rasterizer& rasterizer, const u8* data);
@@ -663,6 +667,12 @@ private:
         u64 position;
     };
     std::vector<PendingWrite> pending_writes;
+    // Conservative minimum of their completion positions; prevents O(N)
+    // periodic pruning when Stage B cannot possibly have finished a write.
+    Detail::PendingPruneGate pending_prune_gate{};
+    // Telemetry updated once per prune pass, not on every draw.
+    u64 pending_prune_skips = 0, pending_prune_scans = 0, pending_prune_erased = 0;
+    u64 pending_index_small_prunes = 0; // number of formerly costly rebuilds avoided
     // Stage A: exact cyclic-first overlap lookup; falls back to the old scan
     // for small or unusually large pending-write lists.
     Detail::PendingWriteIndex<PendingWrite> pending_write_index{};
@@ -732,6 +742,16 @@ private:
     /// Submissions (prepared draws) kept alive until stage B reaches the position.
     std::deque<std::pair<u64, std::shared_ptr<const void>>> pipe_keepalive;
     std::unique_ptr<DrawPipe> draw_pipe;
+#ifdef __ANDROID__
+    // Stage A only. Count EXACT call sites which actually blocked for Stage B,
+    // not every no-op DrainDrawPipe invocation. Sorted/read every five seconds.
+    struct PipeDrainSite {
+        const char* function = nullptr;
+        u32 line = 0;
+        u64 waits = 0;
+    };
+    std::array<PipeDrainSite, 32> pipe_drain_sites{};
+#endif
 };
 
 } // namespace Vulkan

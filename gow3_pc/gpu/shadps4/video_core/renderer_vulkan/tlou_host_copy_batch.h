@@ -40,6 +40,7 @@ public:
             item.run(item);
         }
         completed->store(last_sequence, std::memory_order_release);
+        completed->notify_all();
     }
 
     [[nodiscard]] std::size_t Size() const noexcept { return used; }

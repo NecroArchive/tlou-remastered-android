@@ -27,10 +27,13 @@
 #include "video_core/amdgpu/pm4_cmds.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
+#include "video_core/buffer_cache/tlou_stream_copy_context.h"
+#include "video_core/buffer_cache/tlou_clean_buffer_upload.h"
 #include "video_core/buffer_cache/memory_tracker.h"
 #include "video_core/buffer_cache/mapped_readback_plan.h"
 #include "video_core/buffer_cache/tlou_hot_srt_readback.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
+#include "video_core/renderer_vulkan/tlou_cpu_phase_sample.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -733,7 +736,16 @@ void BufferCache::SmallGuestCopy(const Gow3Copy::Item& item) {
         // no shader/readback coherency semantics are relaxed.
         static const bool batch = [] {
             const char* env = std::getenv("GOW3_TLOU_HOST_COPY_BATCH");
+#ifdef __ANDROID__
+            // A/B candidate for TLOU's saturated Vulkan recorder:
+            // each consecutive host copy shares one chunk command and one
+            // completion store.  Normal Vulkan commands still break the
+            // batch, and WaitHostCopies/guest-order barriers are unchanged.
+            // GOW3_TLOU_HOST_COPY_BATCH=0 restores exact previous behavior.
+            return !(env && env[0] == '0' && env[1] == 0);
+#else
             return env && env[0] == '1' && env[1] == 0;
+#endif
         }();
         if (batch) {
             scheduler.RecordHostCopyItem(item);
@@ -4725,14 +4737,22 @@ void BufferCache::SweepTracking() {
 void BufferCache::CompleteReadbacks(bool wait, u64 wait_until) {
     // Pages of a readback are read-protected once its submission is out: a read fault waits
     // for submitted work only (never for the command buffer this thread is still recording).
-    for (auto& readback : pending_readbacks) {
-        if (readback.watching || readback.watched.empty() || readback.tick >= scheduler.CurrentTick()) {
-            continue;
+    // The GPU recorder polls this path on every draw/dispatch. A queued
+    // readback has tick == CurrentTick(); its pages must be protected ONLY
+    // after the next submission. All older readbacks have already been swept
+    // on the last tick transition. Keep every GPU completion/fault poll below
+    // unchanged, including forced CompleteReadbacks(true) from CPU waits.
+    const u64 watch_tick = scheduler.CurrentTick();
+    if (readback_watch_sweep_gate.ShouldSweep(watch_tick)) {
+        for (auto& readback : pending_readbacks) {
+            if (readback.watching || readback.watched.empty() || readback.tick >= watch_tick) {
+                continue;
+            }
+            for (const auto& [address, size] : readback.watched) {
+                page_manager->UpdatePageWatchers<true, true>(address, size);
+            }
+            readback.watching = true;
         }
-        for (const auto& [address, size] : readback.watched) {
-            page_manager->UpdatePageWatchers<true, true>(address, size);
-        }
-        readback.watching = true;
     }
     // GOW3_TEST_READBACK_HOLD=<ms>:<seconds> (tests): every <seconds>, polled readbacks do not
     // land for <ms>, as on a GPU that fell behind (the FrameBegin m_gfxEopTick crash reports
@@ -5644,7 +5664,34 @@ int BufferCache::UseArenaForStatic(VAddr device_addr, u32 size) {
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 size,
                                                         bool is_written, bool is_texel_buffer) {
+    // TLOU CPU profiling: segregate the cost of readback handling, checking
+    // whether a static buffer is possible, arena residency, uploads and
+    // write tracking. One sampled binding in 8192; NO clock or atomics in
+    // the normal path. All branches and guest-data operations stay intact.
+    struct ObtainHot {
+        u64 calls=0,samples=0,total=0,readbacks=0,static_probe=0,
+            resident=0,synchronize=0,writes=0;
+        u64 clean_hits=0,stream_hits=0,arena_hits=0,stream_deferred=0;
+        u64 light_samples=0,light_total_ns=0;
+        u64 last_wall=0;
+    };
+    static thread_local ObtainHot hot{};
+    static const bool profiling=[]{
+        const char* env=std::getenv("TLOU_CPU_PHASE_SAMPLES");
+        return env && env[0]=='1';
+    }();
+    // Two disjoint sampling cohorts: deep probes resolve WHERE CPU time
+    // goes, but their extra CPU-clock reads pollute the measured total.
+    // Light probes read the CPU clock only at entry/exit, providing an
+    // independent real-world baseline (comparable to the earlier logs).
+    const bool sample_obtain = profiling && ((++hot.calls & 8191u) == 0u);
+    const bool sample_light = profiling && ((hot.calls & 8191u) == 4096u);
+    const u64 light_start_ns = sample_light ?
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
+    const u64 start_ns = sample_obtain ? Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
     texture_cache.ResolveReadbacks(device_addr, size, true, ReadbackSource::BufferObtain);
+    const u64 after_readbacks_ns = sample_obtain ?
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
     g_obtained_static = false;
     const bool stats = BufferStatsEnabled();
     if (stats) {
@@ -5655,11 +5702,65 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     const int static_range = !is_written && size <= STREAM_THRESHOLD && !IsRegionGpuModified(device_addr, size)
                                  ? UseArenaForStatic(device_addr, size)
                                  : -1;
+    const u64 after_static_probe_ns = sample_obtain ?
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
+    const auto finish = [&](std::pair<const Buffer*, u64> result, unsigned kind) {
+        if (sample_light) {
+            ++hot.light_samples;
+            hot.light_total_ns += Vulkan::Detail::ThreadCpuSampleClock::CpuNs() - light_start_ns;
+        }
+        if (sample_obtain) {
+            ++hot.samples;
+            hot.total += Vulkan::Detail::ThreadCpuSampleClock::CpuNs() - start_ns;
+            hot.readbacks += after_readbacks_ns - start_ns;
+            hot.static_probe += after_static_probe_ns - after_readbacks_ns;
+            if (kind == 0) ++hot.clean_hits;
+            else if (kind == 1) ++hot.stream_hits;
+            else ++hot.arena_hits;
+        }
+        if (profiling && ((hot.calls & 32767u) == 0u)) {
+            const u64 now = Vulkan::Detail::ThreadCpuSampleClock::WallNs();
+            if (!hot.last_wall) hot.last_wall = now;
+            else if (now - hot.last_wall >= 5000000000ull) {
+                if (hot.light_samples) {
+                    std::printf("TLOU ObtainBuffer baseline (5 s): light-samples=%llu "
+                                "CPU=%.3fus (two clock calls only; deep probe has "
+                                "injected CPU-clock overhead)\n",
+                                (unsigned long long)hot.light_samples,
+                                double(hot.light_total_ns) / (1000.0 * hot.light_samples));
+                }
+                if (hot.samples) {
+                    const double scale = 1.0 / (1000.0 * double(hot.samples));
+                    const double assigned = double(hot.readbacks) + double(hot.static_probe) +
+                                            double(hot.resident) + double(hot.synchronize) +
+                                            double(hot.writes);
+                    std::printf("TLOU ObtainBuffer hot (5 s): samples=%llu "
+                                "static-clean=%llu stream=%llu arena=%llu stream-deferred=%llu "
+                                "total=%.3fus readbacks=%.3fus static-check=%.3fus "
+                                "ensure-resident=%.3fus sync-memory=%.3fus writes=%.3fus "
+                                "other=%.3fus\n",
+                                (unsigned long long)hot.samples,
+                                (unsigned long long)hot.clean_hits,
+                                (unsigned long long)hot.stream_hits,
+                                (unsigned long long)hot.arena_hits,
+                                (unsigned long long)hot.stream_deferred,
+                                hot.total*scale, hot.readbacks*scale,hot.static_probe*scale,
+                                hot.resident*scale,hot.synchronize*scale,hot.writes*scale,
+                                (double(hot.total)-assigned)*scale);
+                }
+                const u64 calls=hot.calls;
+                hot={};
+                hot.calls=calls;
+                hot.last_wall=now;
+            }
+        }
+        return result;
+    };
     if (static_range == 2) {
         // Uploaded before and clean since (no CPU write): resident, nothing to synchronize.
         const u64 first_block = device_addr >> block_shift;
         const auto* arena = GetArena(first_block, (device_addr + size - 1) >> block_shift);
-        return {arena, arena->Offset(device_addr)};
+        return finish({arena, arena->Offset(device_addr)}, 0);
     }
     if (static_range == 0) {
         if (stats) {
@@ -5675,16 +5776,25 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             const char* env = std::getenv("GOW3_STREAM_REUSE");
             return env && env[0] == '1';
         }();
-        const u64 key = device_addr ^ (u64(size) << 44);
-        const u64 tick = scheduler.CurrentTick();
-        const u64 epoch = scheduler.GuestWriteEpoch();
+        // GOW3_STREAM_REUSE defaults OFF: no lookup ever consumes the
+        // guest write epoch or stream-copy key in that mode. Do not compute
+        // either on every binding when there is no legal reuse candidate.
+        // Keep the submission tick for the existing 5-second stream stats
+        // only when those stats are enabled.
+        const auto stream_ctx = Detail::MakeStreamCopyContext(
+            reuse, Gow3Stats::enabled, device_addr, size,
+            [this] { return scheduler.CurrentTick(); },
+            [this] { return scheduler.GuestWriteEpoch(); });
+        const u64 key = stream_ctx.key;
+        const u64 tick = stream_ctx.tick;
+        const u64 epoch = stream_ctx.epoch;
         if (reuse) {
             if (const auto it = stream_copies.find(key);
                 it != stream_copies.end() && it->second.tick == tick && it->second.epoch == epoch &&
                 it->second.wraps == stream_buffer.Wraps()) {
                 ++stream_reused;
                 stream_reused_bytes += size;
-                return {&stream_buffer, it->second.offset};
+                return finish({&stream_buffer, it->second.offset}, 1);
             }
             if (stream_copies.size() >= 16384) {
                 stream_copies.clear();
@@ -5764,7 +5874,8 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                     .size = size,
                     .extra = reinterpret_cast<u64>(static_cast<Buffer*>(&stream_buffer)),
                 });
-                return {&stream_buffer, *offset};
+                if (sample_obtain) ++hot.stream_deferred;
+                return finish({&stream_buffer, *offset}, 1);
             }
         }
         const auto [data, offset] = stream_buffer.Map(size, instance.UniformMinAlignment());
@@ -5773,14 +5884,25 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         if (reuse) {
             stream_copies[key] = {tick, epoch, stream_buffer.Wraps(), offset};
         }
-        return {&stream_buffer, offset};
+        return finish({&stream_buffer, offset}, 1);
     }
     const u64 first_block = device_addr >> block_shift;
     const u64 last_block = (device_addr + size - 1) >> block_shift;
     const auto* arena = GetArena(first_block, last_block);
+    const u64 resident_start = sample_obtain ?
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
     EnsureResident(arena, first_block, last_block);
-    const u64 uploaded_before = Gow3Stats::buffer_upload_bytes.load(std::memory_order_relaxed);
+    if (sample_obtain) hot.resident +=
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() - resident_start;
+    // Only the detailed buffer-statistics path consumes this counter.
+    // Do not perform a global atomic load on every resident arena binding.
+    const u64 uploaded_before = stats
+        ? Gow3Stats::buffer_upload_bytes.load(std::memory_order_relaxed) : 0;
+    const u64 sync_start = sample_obtain ?
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
     SynchronizeMemory(arena, device_addr, size, is_written, is_texel_buffer);
+    if (sample_obtain) hot.synchronize +=
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() - sync_start;
     if (stats) {
         auto& region = Stats().regions[RegionKey(device_addr)];
         ++region.arena_count;
@@ -5788,6 +5910,8 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         region.upload_bytes +=
             Gow3Stats::buffer_upload_bytes.load(std::memory_order_relaxed) - uploaded_before;
     }
+    const u64 writes_start = sample_obtain ?
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() : 0;
     if (is_written) {
         // Small writes only (counters, constant blocks: at most two pages): the CPU writes next
         // to these; larger GPU data in a page the CPU writes is downloaded as before.
@@ -5837,7 +5961,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         }
         ResolvePoisonedPages(device_addr, size);
     }
-    return {arena, arena->Offset(device_addr)};
+    if (sample_obtain) hot.writes +=
+        Vulkan::Detail::ThreadCpuSampleClock::CpuNs() - writes_start;
+    return finish({arena, arena->Offset(device_addr)}, 2);
 }
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_addr, u32 size) {
@@ -5980,6 +6106,21 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
 }
 
 void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_block) {
+    // Most TLOU bindings revisit fully resident arena blocks. A full hit
+    // requires no gap-list construction, allocation, or sparse bind. The
+    // interval set's Contains() verifies EVERY block, including a range
+    // crossing multiple adjacent backing allocations. Any hole falls
+    // through to the original gap/bind path unchanged.
+    // Most resource descriptors reuse the exact same fully resident range.
+    // A positive cached result avoids repeated IntervalSet tree traversal.
+    // Removal invalidates all cached hits; misses always use Contains/ForEachGap.
+    if (resident_hit_cache.Hit(first_block, last_block)) {
+        return;
+    }
+    if (resident_ranges.Contains(first_block, last_block + 1)) {
+        resident_hit_cache.Remember(first_block, last_block);
+        return;
+    }
     u32 resident_blocks{};
     IntervalList bind_ranges;
     resident_ranges.ForEachGap(first_block, last_block + 1, [&](u64 start, u64 end) {
@@ -6088,6 +6229,8 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
 
     staging.Flush();
     runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
+    // All sparse blocks covering the queried range are now resident.
+    resident_hit_cache.Remember(first_block, last_block);
 }
 
 void BufferCache::TrimPendingUnbinds(const Buffer* arena, u64 first_block, u64 end_block) {
@@ -6141,6 +6284,8 @@ u64 BufferCache::ReleaseArenaBlocks(u64 first_block, u64 end_block) {
         part.offset = backing.offset + ((a - backing.start) << block_shift);
         return part;
     });
+    // Invalidate BEFORE any future read may assume a released block resident.
+    resident_hit_cache.Invalidate();
     u64 blocks = 0;
     for (const auto& piece : pieces) {
         blocks += piece.end - piece.start;
@@ -6310,6 +6455,18 @@ void BufferCache::ReclaimArenaMemory() {
 
 bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size,
                                     bool is_written, bool is_texel_buffer) {
+    // The old ForEachUploadRange performs this exact lock-free dirty-bit
+    // predicate, then constructs an empty upload list and invokes its empty
+    // callback. Bypass the entire upload walk only for CLEAN READ-ONLY
+    // non-texel ranges. Written ranges must mark GPU-dirty pages and texel
+    // ranges must still synchronize from images. The existing safety toggle
+    // disables both this precheck and its original counterpart.
+    if (Detail::CanSkipCleanBufferUpload(
+            is_written, is_texel_buffer,
+            !Gow3Toggle::Disabled(Gow3Toggle::LockFreeUploadCheck),
+            [&] { return memory_tracker->IsRegionCpuModified(device_addr, size); })) {
+        return false;
+    }
     boost::container::small_vector<vk::BufferCopy, 4> copies;
     size_t total_size_bytes{};
     const Buffer* src_buffer{};

@@ -29,9 +29,10 @@ final class GameSetupDialog {
             Button action=new Button(activity);
             action.setText(TlouLanguage.t(activity,labels[i]));
             action.setAllCaps(false);
+            TlouDialogs.styleButton(action,i==0);
             action.setOnClickListener(v->{dialog.dismiss();selection.select(index);});
             body.addView(action,new LinearLayout.LayoutParams(-1,-2));
         }
-        dialog.show();return dialog;
+        dialog.show();TlouDialogs.decorate(dialog);return dialog;
     }
 }

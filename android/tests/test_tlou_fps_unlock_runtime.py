@@ -1,0 +1,58 @@
+"""120 FPS option controls the actual guest vblank, not just HUD text."""
+import unittest
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[2]
+JAVA=ROOT/"android-launcher/app/src/main/java/ro/cobrabm/fexdroid"
+SET=(JAVA/"PortSettings.java").read_text()
+MENU=(JAVA/"PortMenu.java").read_text()
+VIDEO=(ROOT/"gow3_pc/gpu/shadps4/core/libraries/videoout/driver.cpp").read_text()
+NATIVE_SETTINGS=(ROOT/"gow3_pc/gpu/shim/gow3_settings.cpp").read_text()
+EMU=(ROOT/"gow3_pc/gpu/shim/core/emulator_settings.h").read_text()
+
+class TlouFpsUnlockRuntimeContracts(unittest.TestCase):
+    def test_launcher_exposes_unlock_and_all_effects(self):
+        main=(JAVA/"MainActivity.java").read_text()
+        self.assertIn('new String[]{"30 FPS","60 FPS","120 FPS"}',main)
+        self.assertNotIn('toggleSetting(box,"fps_unlock"',main)
+        self.assertIn('toggleSetting(box,"omni_light_shadows"',main)
+        self.assertIn('toggleSetting(box,"spot_light_shadows"',main)
+        self.assertNotIn('edit.putBoolean("fps_unlock",false)',main)
+        self.assertIn('choice(controls,"touch_mode"',main)
+        self.assertNotIn('toggleSetting(controls,"touch_visible"',main)
+
+    def test_unlock_overrides_only_runtime_vsync(self):
+        self.assertIn('env.put("GOW3_VSYNC",unlocked?"0":p.getBoolean("vsync",true)?"1":"0");',SET)
+        self.assertIn('effective-vsync=',SET)
+        self.assertIn('virtual-vblank-hz=',SET)
+        self.assertIn('VSync OFF (desbloqueio)',SET)
+        # Native pacing stays source-of-truth, never just a HUD change.
+        self.assertIn('const bool vsync = Gow3Settings::Get().vsync;',VIDEO)
+        # It used to be read only by the Android present client; the renderer
+        # continued using a stale/default VSync=true and re-paced to 60 Hz.
+        self.assertIn('{"GOW3_VSYNC", "vsync"}',NATIVE_SETTINGS)
+        self.assertIn('Set(v, key, value);',NATIVE_SETTINGS)
+
+
+    def test_user_option_is_off_by_default_and_restorable(self):
+        self.assertNotIn('toggle("fps_unlock"',MENU)
+        self.assertIn('new String[]{"30 FPS","60 FPS","120 FPS"}',MENU)
+        self.assertNotIn('e.putBoolean("fps_unlock",false);',MENU)
+        self.assertIn('"120".equals(requested)?"120":"60"',SET)
+
+    def test_vblank_and_present_cap_change_together(self):
+        self.assertIn('env.put("GOW3_VBLANK_HZ",unlocked?"0":"60");',SET)
+        self.assertIn('env.put("GOW3_FPS_LIMIT",fpsLimit(context));',SET)
+        self.assertIn('GetVblankFrequency()',EMU)
+        self.assertIn('GOW3_VBLANK_HZ',EMU)
+        self.assertIn('480',EMU)
+        self.assertIn('GetFrameLimit()',EMU)
+        self.assertIn('const bool fixed_limit = std::getenv("GOW3_FPS_LIMIT") != nullptr;',VIDEO)
+        self.assertIn('EmulatorSettings.GetVblankFrequency() == 480',VIDEO)
+
+    def test_60_hz_cutscene_path_unchanged(self):
+        self.assertIn('constexpr std::chrono::nanoseconds movie_period{1000000000 / 60};',VIDEO)
+        self.assertIn('const bool movie = fast_vblank && MovieActive(now);',VIDEO)
+        self.assertIn('if (movie)',VIDEO)
+        self.assertIn('VideoOut: %s',VIDEO)
+
+if __name__=="__main__": unittest.main()

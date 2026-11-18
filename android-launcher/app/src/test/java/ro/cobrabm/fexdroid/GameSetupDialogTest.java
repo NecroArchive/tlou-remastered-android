@@ -69,12 +69,13 @@ public class GameSetupDialogTest {
             // per-dispatch phase sampling or the shader scanner's A/B profiler.
             assertEquals("0",env.get("TLOU_CPU_PHASE_SAMPLES"));
             assertFalse(env.containsKey("TLOU_SHADER_SCAN_PROFILE"));
-            // The existing opt-in diagnostics switch re-enables both for logs.
+            // Release 0.2.0 removed deep AOT diagnostics. Old preferences
+            // must not turn expensive profiling back on after an upgrade.
             PortSettings.prefs(activity).edit()
                     .putBoolean("aot_detailed_diagnostics",true).commit();
             PortSettings.environment(activity,env);
-            assertEquals("1",env.get("TLOU_CPU_PHASE_SAMPLES"));
-            assertEquals("1",env.get("TLOU_SHADER_SCAN_PROFILE"));
+            assertEquals("0",env.get("TLOU_CPU_PHASE_SAMPLES"));
+            assertFalse(env.containsKey("TLOU_SHADER_SCAN_PROFILE"));
             PortSettings.prefs(activity).edit()
                     .putBoolean("aot_detailed_diagnostics",false).commit();
             PortSettings.environment(activity,env);

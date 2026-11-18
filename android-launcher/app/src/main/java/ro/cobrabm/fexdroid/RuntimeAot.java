@@ -120,6 +120,36 @@ final class RuntimeAot {
         return true;
     }
 
+    /**
+     * The old 1.00 AOT had all 13 patch groups but no callable ARM64 entry
+     * at +0x910580 (a jump into the function beginning at +0x910510).
+     * Reject it before launch, so no repeated hard-stop on code 22.
+     * Does not change the existing 1.11 compiler acceptance rules.
+     */
+    static boolean hasVerified100MidCall(JSONObject report) {
+        if(report==null || !"1.00".equals(report.optString("version")))return false;
+        if(!"tlou-100-midcall-910580-v1".equals(
+                report.optString("verified_100_entry_policy")))return false;
+        JSONArray entries=report.optJSONArray("verified_100_midcall_entries");
+        if(entries==null || entries.length()!=1 ||
+           !"+0x910580".equals(entries.optString(0)))return false;
+        JSONArray command=report.optJSONArray("translation_command");
+        if(command==null)return false;
+        boolean extra=false,granular=false,checked=false;
+        for(int i=0;i<command.length();i++) {
+            String flag=command.optString(i);
+            if("--extra-entries".equals(flag))extra=true;
+            if("--granular-funcs".equals(flag))granular=true;
+            if("--check-entries".equals(flag) && i+1<command.length()) {
+                String[] offsets=command.optString(i+1).split(",");
+                for(String offset:offsets)if("910580".equals(offset))checked=true;
+            }
+        }
+        return extra && granular && checked &&
+            report.optInt("extra_entry_count",0)>=1 &&
+            report.optInt("granular_risk_hint_count",0)>=5;
+    }
+
     /** Lightweight status for the launcher label only. The full hash and
      * prepared-game checks in prepare() remain mandatory before launch.
      * A stale .so or an interrupted compiler is never shown as completed. */
@@ -152,6 +182,7 @@ final class RuntimeAot {
             return "aarch64_generated_native_ready".equals(report.optString("status")) &&
                 ("1.00".equals(profile)||"1.11".equals(profile)) &&
                 hasCompleteVariantCatalog(report) &&
+                (!"1.00".equals(profile) || hasVerified100MidCall(report)) &&
                 meta.optInt("abi_version",-1)==2 &&
                 (meta.optLong("abi_flags",0)&6)==6 &&
                 TsoProfile.version(TsoProfile.RELAXED).equals(meta.optString("compiler_version")) &&
@@ -321,6 +352,7 @@ final class RuntimeAot {
                 if("--resume".equals(flag))oldResume=true;
             }
             if(!usesVariants||noDirty||oldResume ||
+               !hasVerified100MidCall(source) ||
                (meta.optLong("abi_flags",0)&6)!=6 ||
                !hasCompleteVariantCatalog(source) ||
                !"tlou-100-llvmO1-native-variants-v1".equals(
@@ -329,7 +361,8 @@ final class RuntimeAot {
                !"native-variants;--no-game-hooks;--patches-at-launch".equals(
                    source.optString("runtime_patch_contract")))
                 throw new java.io.IOException(
-                    "CPU ARM64 1.00 sem variantes de patches: recompile uma vez em Ajustes → CPU.");
+                    "CPU ARM64 1.00 antiga: faltam variantes ou a entrada +0x910580. "+
+                    "Recompile a CPU uma vez em Ajustes → CPU.");
             File catalog=new File(work,"aot/tlou-100-all-variants.txt");
             JSONObject variants=source.getJSONObject("variant_catalog");
             String expectedHash=variants.optString("sha256");

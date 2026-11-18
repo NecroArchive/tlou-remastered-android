@@ -48,5 +48,7 @@ jobs:
           grep -Fq 'prepareForNativeAot(base)' "$main"
           test -s android/bionic/package_aotnative_v020.sh
           echo "All requested 0.2.0 source-side settings and AOT-only guards present"
+      - name: Generate real native save-choice fixture for launcher unit tests
+        run: python3 gow3_pc/tests/test_android_save_choice.py
       - name: Compile launcher and run Android unit tests
         run: gradle -p android-launcher :app:testDebugUnitTest :app:lintVitalRelease --no-daemon --max-workers=2

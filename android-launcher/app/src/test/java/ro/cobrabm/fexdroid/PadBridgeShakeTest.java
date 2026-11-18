@@ -18,7 +18,7 @@ public class PadBridgeShakeTest {
         assertTrue(bridge.key(new KeyEvent(action,key)));
     }
     private static String state(Path p) throws Exception {
-        return Files.readString(p);
+        return new String(Files.readAllBytes(p), java.nio.charset.StandardCharsets.UTF_8);
     }
     @Test public void physicalL3R3ShakesAndSuppressesClicksUntilBothReleased() throws Exception {
         Path dir=Files.createTempDirectory("tlou-shake-gamepad");
@@ -53,11 +53,11 @@ public class PadBridgeShakeTest {
         Path file=dir.resolve("pad.txt");
         try {
             PadBridge bridge=new PadBridge(file.toFile());
-            bridge.virtual(Set.of("l3","r3"),128,128,128,128,false,false,0,0);
+            bridge.virtual(new java.util.LinkedHashSet<>(java.util.Arrays.asList("l3","r3")),128,128,128,128,false,false,0,0);
             assertTrue(state(file).contains("l3 "));
             assertTrue(state(file).contains("r3 "));
             assertFalse(state(file).contains("shake "));
-            bridge.virtual(Set.of("shake"),128,128,128,128,false,false,0,0);
+            bridge.virtual(new java.util.LinkedHashSet<>(java.util.Arrays.asList("shake")),128,128,128,128,false,false,0,0);
             assertTrue(state(file).startsWith("shake "));
             bridge.reset();
             assertFalse(state(file).contains("shake "));

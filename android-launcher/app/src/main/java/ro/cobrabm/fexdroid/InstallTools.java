@@ -118,6 +118,7 @@ final class InstallTools {
     /** Compiles a local, version-specific ARM64 library. It is not yet used to run TLOU. */
     File buildExperimentalAot(File prepared, Consumer<String> progress) throws Exception {
         if(!prepared(prepared))throw new IOException("Prepare o jogo antes de compilar ARM64");
+        TsoProfile.requireSupported111(prepared);
         install();
         // Synchronize the *same* verified 1.11 options as FEX before building
         // any ARM64 units. Static native code cannot toggle x86 patches later.

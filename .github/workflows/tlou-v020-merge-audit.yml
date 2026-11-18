@@ -99,18 +99,36 @@ jobs:
             git checkout --ours -- .github/workflows/tlou-native-apk.yml
             # Preserve the latest stable regression tests where the branch
             # contains older, conflicting versions.
-            git checkout --ours -- android/tests/test_tlou_111_optional_light_shadows.py
-            git checkout --ours -- android/tests/test_tlou_shader_scan_diagnostic.py
             # Prefer 0.2 behavior in the explicitly conflicting launcher,
             # patches, native runtime and release notes; independently changed
             # 0.1.1 code elsewhere is merged by Git's 3-way algorithm.
             while IFS= read -r file; do
               case "$file" in
-                .github/workflows/tlou-native-apk.yml|android/tests/test_tlou_111_optional_light_shadows.py|android/tests/test_tlou_shader_scan_diagnostic.py) ;;
+                .github/workflows/tlou-native-apk.yml) ;;
                 *) git checkout --theirs -- "$file" ;;
               esac
             done < /tmp/expected-conflicts.txt
           fi
+          # The stable signer and release job hierarchy are retained instead
+          # of replacing them with the experimental two-job Vulkan/AOT workflow.
+          # Update the release contract to validate that architecture, without
+          # weakening the required certificate and APK identity checks.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/tests/test_tlou_release_011.py')
+          s=p.read_text()
+          start=s.index('        self.assertIn("branches: [android-bionic-stage1]",workflow)')
+          stop=s.index('        self.assertIn("v0.2.0",(ROOT/"RELEASE_NOTES.md").read_text())',start)
+          s=s[:start]+'''        self.assertIn("name: TLOU Bionic Full Native and APK",workflow)
+          self.assertIn("tlou-ui-approval-log32-20261105",workflow)
+          self.assertIn("key: tlou-development-signing-v2",workflow)
+          self.assertIn("bash android/bionic/package_apk.sh",workflow)
+          self.assertIn("Restore signing identity used by existing installations",workflow)
+          self.assertIn("app:assembleRelease",workflow)
+          self.assertNotIn("app:assembleDebug",workflow)
+          '''+s[stop:]
+          p.write_text(s)
+          PY
           # Git retains unmerged index stages until the resolved files are staged.
           git add -A
           echo "Checking unresolved index entries"

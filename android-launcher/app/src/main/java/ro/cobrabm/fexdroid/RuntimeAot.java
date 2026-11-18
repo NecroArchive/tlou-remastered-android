@@ -90,22 +90,33 @@ final class RuntimeAot {
      * A missing AOT report is handled by the existing full prepare validator.
      */
     static boolean hasCompleteVariantCatalog(JSONObject source) {
-        if(!"tlou-111-variants-v3".equals(source.optString("native_patch_profile")))
+        String version=source.optString("version");
+        String profile="1.00".equals(version)?"tlou-100-variants-v1":
+            "1.11".equals(version)?"tlou-111-variants-v3":"";
+        if(profile.isEmpty() || !profile.equals(source.optString("native_patch_profile")))
             return false;
         JSONObject variants=source.optJSONObject("variant_catalog");
-        if(variants==null || !"tlou-111-variants-v3".equals(variants.optString("profile"))
-                || variants.optString("sha256").length()!=64)
-            return false;
+        if(variants==null || !profile.equals(variants.optString("profile")) ||
+           variants.optString("sha256").length()!=64)return false;
         JSONArray groups=variants.optJSONArray("groups");
-        if(groups==null || groups.length()!=PortSettings.EFFECTS.length+3)
-            return false;
+        int count="1.00".equals(version)?13:PortSettings.EFFECTS.length+3;
+        if(groups==null || groups.length()!=count)return false;
         java.util.HashSet<String> all=new java.util.HashSet<>();
         for(int i=0;i<groups.length();i++)all.add(groups.optString(i));
         if(all.size()!=groups.length())return false;
-        for(String r:new String[]{"720","540","360"})
-            if(!all.contains("resolution_"+r))return false;
-        for(String key:PortSettings.EFFECTS)
-            if(!all.contains("effect_"+key))return false;
+        for(String resolution:new String[]{"720","540","360"})
+            if(!all.contains("resolution_"+resolution))return false;
+        String[] effects="1.00".equals(version)?
+            new String[]{"ssao","motion_blur","depth_of_field",
+                         "bloom","sunlight_shadows","subsurface"}:
+            PortSettings.EFFECTS;
+        for(String effect:effects)
+            if(!all.contains("effect_"+effect))return false;
+        if("1.00".equals(version))
+            for(String base:new String[]{"base_null_component_transforms",
+                 "base_static_ray_hit_submesh_bounds","base_frame_timeout",
+                 "base_job_sleep"})
+                if(!all.contains(base))return false;
         return true;
     }
 
@@ -117,23 +128,28 @@ final class RuntimeAot {
         File so=new File(work,"aot/libtlouaot.so");
         File metaFile=new File(work,"aot/libtlouaot.json");
         File reportFile=new File(work,"aot-report.json");
-        File catalog=new File(work,"aot/tlou-111-all-variants.txt");
         if(!so.isFile() || so.length()<4096 || !metaFile.isFile() ||
-           !reportFile.isFile() || !catalog.isFile())return false;
+           !reportFile.isFile())return false;
         try {
             JSONObject report=new JSONObject(new String(Files.readAllBytes(
                 reportFile.toPath()),StandardCharsets.UTF_8));
+            String profile=report.optString("version");
+            File catalog=new File(work,"1.00".equals(profile)?
+                "aot/tlou-100-all-variants.txt":"aot/tlou-111-all-variants.txt");
+            if(!catalog.isFile())return false;
             JSONObject meta=new JSONObject(new String(Files.readAllBytes(
                 metaFile.toPath()),StandardCharsets.UTF_8));
             JSONObject built=report.optJSONObject("variant_build");
+            int groups="1.00".equals(profile)?13:11;
             return "aarch64_generated_native_ready".equals(report.optString("status")) &&
-                "1.11".equals(report.optString("version")) &&
+                ("1.00".equals(profile)||"1.11".equals(profile)) &&
                 hasCompleteVariantCatalog(report) &&
                 meta.optInt("abi_version",-1)==2 &&
+                (meta.optLong("abi_flags",0)&6)==6 &&
                 TsoProfile.version(TsoProfile.RELAXED).equals(meta.optString("compiler_version")) &&
-                built!=null && built.optInt("groups_with_code",-1)==11 &&
+                built!=null && built.optInt("groups_with_code",-1)==groups &&
                 built.optInt("variants_skipped",-1)==0 &&
-                built.optInt("variants_planned",0)>=11 &&
+                built.optInt("variants_planned",0)>=groups &&
                 built.optInt("variants_built",0)==built.optInt("variants_planned",-1);
         } catch(Exception incomplete) {
             return false;
@@ -145,7 +161,8 @@ final class RuntimeAot {
         if(!report.isFile())return "";
         JSONObject source=new JSONObject(new String(Files.readAllBytes(
             report.toPath()),StandardCharsets.UTF_8));
-        if(!"1.11".equals(source.optString("version")))return "";
+        String version=source.optString("version");
+        if(!"1.00".equals(version)&&!"1.11".equals(version))return "";
         if(hasCompleteVariantCatalog(source))return "";
         if("aarch64_generated_native_ready".equals(source.optString("status")))
             return "biblioteca ARM64 antiga (precisa de uma única recompilação para ativar todos os patches)";
@@ -275,6 +292,53 @@ final class RuntimeAot {
                !expectedNative.equalsIgnoreCase(sha256(runtimeBoot)) ||
                expectedNative.equalsIgnoreCase(expectedBoot))
                 throw new java.io.IOException("Imagem AOT 1.11 incompatível; recompile a CPU ARM64.");
+        }
+        if("1.00".equals(source.optString("version"))) {
+            // The 01.00 game writes 4 mandatory stability patches and the
+            // selected resolution/effects into guest code on every launch.
+            // A baseline-only AOT library always stops at +0x946180.
+            // Require every option to exist as a verified native variant.
+            boolean usesVariants=false,noDirty=false,oldResume=false;
+            if(command!=null)for(int i=0;i<command.length();i++){
+                String flag=command.optString(i);
+                if("--variants".equals(flag))usesVariants=true;
+                if("--no-dirty-check".equals(flag))noDirty=true;
+                if("--resume".equals(flag))oldResume=true;
+            }
+            if(!usesVariants||noDirty||oldResume ||
+               (meta.optLong("abi_flags",0)&6)!=6 ||
+               !hasCompleteVariantCatalog(source) ||
+               !"tlou-100-llvmO1-native-variants-v1".equals(
+                   source.optString("native_codegen_profile")) ||
+               source.optBoolean("runtime_code_immutable",true) ||
+               !"native-variants;--no-game-hooks;--patches-at-launch".equals(
+                   source.optString("runtime_patch_contract")))
+                throw new java.io.IOException(
+                    "CPU ARM64 1.00 sem variantes de patches: recompile uma vez em Ajustes → CPU.");
+            File catalog=new File(work,"aot/tlou-100-all-variants.txt");
+            JSONObject variants=source.getJSONObject("variant_catalog");
+            String expectedHash=variants.optString("sha256");
+            String compilerHash=meta.optString("catalog_hash");
+            if(!catalog.isFile() || expectedHash.length()!=64 ||
+               !expectedHash.equalsIgnoreCase(sha256(catalog)) ||
+               compilerHash.length()!=16 ||
+               "cbf29ce484222325".equalsIgnoreCase(compilerHash))
+                throw new java.io.IOException("Catálogo ARM64 1.00 ausente ou inválido.");
+            JSONObject built=source.optJSONObject("variant_build");
+            if(built==null || built.optInt("groups",-1)!=13 ||
+               built.optInt("groups_with_code",-1)!=13 ||
+               built.optInt("variants_planned",0)<13 ||
+               built.optInt("variants_built",0)!=built.optInt("variants_planned",-1) ||
+               built.optInt("variants_skipped",-1)!=0)
+                throw new java.io.IOException("Variantes ARM64 1.00 incompletas; recompile.");
+            JSONObject selected=new JSONObject(new String(Files.readAllBytes(
+                PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
+            compiledResolution=selected.optString("resolution","original");
+            if(!java.util.Arrays.asList("original","720","540","360").contains(compiledResolution))
+                throw new java.io.IOException("Resolução ARM64 não disponível.");
+            RunLog.write(context,"CPU ARM64 1.00: "+built.optInt("groups")+
+                " grupos de patches nativos validados; resolução "+
+                compiledResolution+"; sem recompilação ao trocar opções.");
         }
         if(so.length()<4096 || meta.optLong("so_size",-1)!=so.length() ||
                 !meta.optString("so_sha256").equalsIgnoreCase(sha256(so)))

@@ -51,7 +51,20 @@
 #include <android/log.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
-#include <android/surface_control.h>
+#include <android/rect.h>
+
+/* The Android NDK r27 surface_control.h declares setGeometry/setCrop with
+ * C++ references even when included from a C source. This presenter resolves
+ * every SurfaceControl API with dlsym, so only the opaque handle types and
+ * public enum values are needed at compile time. Keep these ABI values in
+ * sync with the Android NDK; geometry arguments use ARect pointers on ARM64. */
+typedef struct ASurfaceControl ASurfaceControl;
+typedef struct ASurfaceTransaction ASurfaceTransaction;
+typedef struct ASurfaceTransactionStats ASurfaceTransactionStats;
+enum {
+    ASURFACE_TRANSACTION_VISIBILITY_SHOW = 1,
+    ASURFACE_TRANSACTION_TRANSPARENCY_OPAQUE = 2
+};
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>

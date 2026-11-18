@@ -1034,45 +1034,6 @@ void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalid
 static const void *cached_backing(uintptr_t address, uint64_t size);
 static int try_copy_two_cached_backing(uintptr_t address, void *dest, uint64_t size);
 static void cache_region(size_t i, uintptr_t request_address);
-// Stage-A constant ring calls ClampRangeSize then CopySparseMemory for the
-// SAME small, already-validated mapping. Reuse that one-VMA backing view for
-// subsequent matching copies: validate the VMA generation again on EACH
-// copy. It holds no guest data, only a backing pointer,
-// and never survives a mapping generation change. Other callers retain the
-// exact old copy path (including sparse holes, aliases, two-span fallbacks).
-typedef struct {
-    uintptr_t address;
-    uint64_t size, generation;
-    const unsigned char *source;
-} TlouClampCopy;
-static __thread TlouClampCopy tlou_clamp_copy;
-static __thread uint64_t tlou_clamp_copy_hits;
-static __thread int tlou_clamp_copy_enabled=-1;
-static int tlou_clamp_copy_active(void) {
-    if(tlou_clamp_copy_enabled<0) {
-        const char *value=getenv("TLOU_CLAMP_COPY_REUSE");
-        tlou_clamp_copy_enabled=!(value && value[0]=='0' && value[1]=='\0');
-    }
-    return tlou_clamp_copy_enabled;
-}
-static void tlou_report_clamp_reuse(void) {
-    // No clock, stdout or locking on 65,535/65,536 successful reuse copies.
-    static __thread time_t last=0;
-    // Caller enters only once per 65,536 successful copies. The normal
-    // constant-ring path executes no reporting helper call.
-    time_t now=time(NULL);
-    if(!last){last=now;return;}
-    if(now-last<5)return;
-    const char *samples=getenv("TLOU_CPU_PHASE_SAMPLES");
-    if(samples && samples[0]=='1') {
-            printf("TLOU clamp-copy reuse (5 s): hits=%" PRIu64
-                   " (validated one-VMA, no skipped guest bytes)\n",
-                   tlou_clamp_copy_hits);
-            fflush(stdout);
-    }
-    tlou_clamp_copy_hits=0;
-    last=now;
-}
 static void tlou_report_backing_copy(int path) {
     // Diagnostic is enabled by the existing TLOU stage-CPU sampler; no new UI
     // setting and no clock calls on the normal 65,535/65,536 copy operations.
@@ -1141,23 +1102,6 @@ int runtime_memory_read_backing(uintptr_t address, void *data, uint64_t size) {
  * CPU-written bytes only, so it never needs to wait for a readback's GPU bytes. */
 void runtime_memory_copy_backing(uintptr_t address, void *dest, uint64_t size) {
     unsigned char *out=dest;
-    // A preceding clamp on THIS thread has already resolved the SAME
-    // contiguous, non-reserved VMA. Consume it only when its table generation
-    // is still current; any remap, alias or reserved gap uses the old path.
-    if(size && tlou_clamp_copy.size>=size && tlou_clamp_copy.address==address &&
-       tlou_clamp_copy.generation==__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE) &&
-       !(runtime_disabled_optimizations & 1)) {
-        const unsigned char *source=tlou_clamp_copy.source;
-        // No need to invalidate the pointer after each read: the NEXT copy
-        // still checks the same address, requested range and VMA generation.
-        // It never caches guest bytes, so concurrent guest writes remain
-        // observable just as in the original cached_backing+memcpy path.
-        memcpy(dest,source,size);
-        if ((++tlou_clamp_copy_hits & 65535u) == 0u) {
-            tlou_report_clamp_reuse();
-        }
-        return;
-    }
     { const void *fast=cached_backing(address,size);
       if (fast) { memcpy(dest,fast,size); return; } }
     // A small copy spanning exactly two guest VMAs can use both generation-
@@ -1275,16 +1219,7 @@ static void cache_region(size_t i, uintptr_t request_address) {
 /* Mapped length from address, up to size, across adjacent mappings. */
 uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
     const CachedRegion *c=(runtime_disabled_optimizations & 1) ? NULL : cached_region(address);
-    if (c && c->kind!=KIND_RESERVED && size<=c->end-address) {
-        // Only one-VMA constant-sized ranges: all larger and two-span
-        // mappings keep the existing locked or cached backing-copy path.
-        if(size && size<=16384 && backing_base && tlou_clamp_copy_active()) {
-            tlou_clamp_copy=(TlouClampCopy){
-                address,size,c->generation,backing_base+c->phys+(address-c->start)
-            };
-        }
-        return size;
-    }
+    if (c && c->kind!=KIND_RESERVED && size<=c->end-address) return size;
     read_lock();
     size_t first=vma_index(address);
     if (first<vma_count && vmas[first].start<=address) cache_region(first,address);

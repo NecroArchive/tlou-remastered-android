@@ -31,6 +31,7 @@
 #include "video_core/buffer_cache/range_set.h"
 #include "video_core/buffer_cache/gpu_range_cache_index.h"
 #include "video_core/buffer_cache/tlou_resident_hit_cache.h"
+#include "video_core/buffer_cache/tlou_readback_watch_gate.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
 namespace AmdGpu {
@@ -983,6 +984,9 @@ private:
     /// waits for them instead of seeing unrelated old bytes.
     std::unordered_map<VAddr, std::pair<u64, std::chrono::steady_clock::time_point>> landed_pieces;
     u32 readback_polls = 0;
+    // Stage-B draw/dispatch can poll >550k times / 5s; only a new GPU
+    // submission tick can turn an enqueued readback into a submitted one.
+    Detail::TlouReadbackWatchSweepGate readback_watch_sweep_gate{};
 
     u32 arena_memory_type_index{};
     u32 block_size{};

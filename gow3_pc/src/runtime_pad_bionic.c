@@ -20,6 +20,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
+#include <math.h>
 #ifndef __ANDROID__
 #include <SDL3/SDL.h>
 #endif
@@ -259,7 +260,7 @@ static void sample_host(PadData *d) {
  * options touchpad touchpad_left touchpad_right up down left right) are held while listed;
  * touchpad defaults to a left-side click; lx= ly= rx= ry= (0..255) override
  * the sticks. An empty file releases everything. */
-static struct { uint32_t buttons; int stick[4]; int trigger[2]; int touch_side; } injected={0,{-1,-1,-1,-1},{-1,-1},-1};
+static struct { uint32_t buttons; int stick[4]; int trigger[2]; int touch_side; int shake; } injected={0,{-1,-1,-1,-1},{-1,-1},-1,0};
 static int replay_armed;      /* 1 while a GOW3_PAD_REPLAY recording plays, 2 once it ended */
 static uint64_t replay_start; /* 0: (re)start at the next sample */
 static void read_inject(void) {
@@ -286,10 +287,12 @@ static void read_inject(void) {
     static const char *triggers[]={"l2=","r2="};
     injected.buttons=0;
     injected.touch_side=-1;
+    injected.shake=0;
     for (int i=0;i<4;++i) injected.stick[i]=-1;
     for (int i=0;i<2;++i) injected.trigger[i]=-1;
     char token[64];
     while (fscanf(f,"%63s",token)==1) {
+        if (!strcmp(token,"shake")) { injected.shake=1; continue; }
         if (!strcmp(token,"replay") && replay_armed!=1) { replay_armed=1; replay_start=0; } /* GOW3_PAD_REPLAY */
         if (!strcmp(token,"touchpad_left") || !strcmp(token,"touchpad_right")) {
             injected.buttons|=BTN_TOUCHPAD;
@@ -393,6 +396,28 @@ static void replay_sample(PadData *d) {
     d->left_x=s->axes[0]; d->left_y=s->axes[1]; d->right_x=s->axes[2]; d->right_y=s->axes[3];
     d->l2=s->l2; d->r2=s->r2;
 }
+/* TLOU flashlight: a pressed SHAKE control (physical L3+R3 or on-screen
+ * button) drives DualShock-style accelerometer + angular velocity, NOT a PS4
+ * button bit. Keep a short pulse after a quick press so the game can detect
+ * enough motion even if the player only taps the combination. Never shake
+ * during a host overlay/dialog, which captures the input. */
+static void sample_virtual_shake(PadData *d) {
+    static int was_down;
+    static uint64_t active_until;
+    const int down=injected.shake;
+    const uint64_t now=d->timestamp;
+    if (down && !was_down) active_until=now+650000; /* min 650 ms */
+    if (down && active_until<now+200000) active_until=now+200000;
+    was_down=down;
+    if (!down && now>=active_until) return;
+    const float t=(float)((now%1000000u)/1000000.0);
+    const float phase=6.28318530718f*8.0f*t;
+    const float wave=sinf(phase);
+    d->acceleration[0]=2.5f*wave;
+    d->acceleration[2]=1.5f*cosf(phase);
+    d->angular_velocity[1]=6.0f*wave;
+    d->angular_velocity[2]=4.0f*wave;
+}
 /* After the menu or the text dialog closes, buttons still held (the Cross that accepted a
  * name) stay hidden until released: the game would take them as a new press. */
 static int hold_after_capture;
@@ -429,6 +454,7 @@ static void sample(PadData *d) {
         if (d->buttons) d->buttons=0;
         else hold_after_capture=0;
     }
+    if (!hold_after_capture) sample_virtual_shake(d);
 }
 
 static ABI int32_t pad_init(void) { pthread_mutex_lock(&lock); initialized=1; pthread_mutex_unlock(&lock); return 0; }

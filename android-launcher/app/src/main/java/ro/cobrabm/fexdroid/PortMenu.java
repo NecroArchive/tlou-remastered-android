@@ -200,12 +200,10 @@ final class PortMenu {
                     new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                     new String[]{"original","720","540","360"},"original");
                 choice("fps_limit","Limite de FPS",
-                    new String[]{"30 FPS","60 FPS"},
-                    new String[]{"30","60"},"60");
-                if(prefs.getBoolean("fps_unlock",false))
-                    note("Desbloqueio até 120 FPS ativo: VSync OFF nesta sessão; reinicie após alterar.");
-                else
-                    toggle("vsync","VSync",true);
+                    new String[]{"30 FPS","60 FPS","120 FPS"},
+                    new String[]{"30","60","120"},"60");
+                toggle("vsync","VSync",true);
+                note("120 FPS desativa VSync na sessão, sem alterar a preferência salva.");
                 note("Modo Unificado ativo: cena, interface e mira na mesma resolução.");
                 note("Sincronização da geometria: Completo (único modo). "
                      +"Preserva a correção das deformações.");
@@ -213,8 +211,6 @@ final class PortMenu {
             case "patches":
                 heading("PATCHES");
                 note("Patches validados para o eboot reconhecido. Reinicie para aplicar.");
-                toggle("fps_unlock","Desbloquear FPS (até 120, experimental)",false);
-                note("Usa vblank virtual de 480 Hz, limita a apresentação a 120 FPS e desativa VSync/FIFO nesta sessão. Cinemáticas mantêm 60 Hz. Reinicie para aplicar.");
                 toggle("ssao","Desativar SSAO",false);
                 toggle("motion_blur","Desativar desfoque de movimento",false);
                 toggle("depth_of_field","Desativar profundidade de campo",false);
@@ -227,7 +223,6 @@ final class PortMenu {
                 row("Restaurar patches e resolução",()->{
                     SharedPreferences.Editor e=prefs.edit().putString("resolution","original");
                     for(String key:PortSettings.EFFECTS)e.putBoolean(key,false);
-                    e.putBoolean("fps_unlock",false);
                     e.apply();actions.changed();render();
                 });
                 break;
@@ -236,8 +231,6 @@ final class PortMenu {
                 language();
                 toggle("gpu_turbo","Adreno Turbo (sem root)",false);
                 toggle("adpf","ADPF — ajuste dinâmico de desempenho",false);
-                toggle("fast_render_cores","Priorizar núcleos rápidos (experimental)",false);
-                note("Não força o clock. Limita as threads críticas aos núcleos mais rápidos; reinicie o jogo para aplicar. Pode aumentar a disputa entre threads.");
                 note("Usa dicas de desempenho na thread nativa de comandos. "
                      +"Compatível com Android 13+ quando suportado pelo aparelho. "
                      +"Reinicie o jogo para aplicar; não desativa os limites térmicos.");
@@ -265,6 +258,9 @@ final class PortMenu {
                 choice("control_color","Cor dos controles",
                     new String[]{"Verde oliva","Âmbar","Branco","Vermelho","Azul"},
                     new String[]{"olive","amber","white","red","blue"},"olive");
+                // One multiplier for face buttons, D-pad, shoulders, sticks and AGITAR.
+                // Editing position remains independent, and changes apply in real time.
+                slider("control_size","Tamanho dos controles (%)",75,160,120);
                 slider("touch_opacity","Opacidade dos controles (%)",15,100,55);
                 if(inGame) {
                     action("Editar posição dos botões",actions::editControls);

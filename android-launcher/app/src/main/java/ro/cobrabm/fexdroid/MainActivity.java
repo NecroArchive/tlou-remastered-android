@@ -626,7 +626,20 @@ public final class MainActivity extends Activity {
                     });
                     return;
                 }
-                startPreparedGame(prepared);
+                if("100".equals(TsoProfile.gameCode(GameInstallState.marker(prepared)))) {
+                    // Warn on each launch attempt; 1.00 is measurably slower
+                    // than 1.11. The choice never changes user patches/data.
+                    runOnUiThread(()->{
+                        if(isFinishing()||isDestroyed())return;
+                        TlouDialogs.show(this,new AlertDialog.Builder(this)
+                            .setTitle(TlouLanguage.t(this,"Versão 1.00 — desempenho inferior"))
+                            .setMessage(TlouLanguage.t(this,
+                                "A versão 1.00 é mais lenta no Android. Recomendamos atualizar o jogo para a versão 1.11 para obter melhor desempenho."))
+                            .setNegativeButton(TlouLanguage.t(this,"Cancelar"),null)
+                            .setPositiveButton(TlouLanguage.t(this,"Jogar 1.00"),
+                                (dialog,which)->startPreparedGame(prepared)));
+                    });
+                } else startPreparedGame(prepared);
             }
         });
     }

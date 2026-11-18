@@ -5,7 +5,7 @@ on:
     paths: ['.github/workflows/tlou-v020-merge-audit.yml']
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   audit:
     name: Three-way merge with signed 0.1.1 release base
@@ -43,3 +43,107 @@ jobs:
           name: tlou-v020-three-way-merge-report
           path: out/merge-audit/
           if-no-files-found: error
+
+  integrate:
+    name: Merge v0.2 onto signed v0.1.1 source and check regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Merge source trees preserving the original release workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "TLOU Integration Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags origin android-bionic-stage1
+          set +e
+          git merge --no-commit --no-ff FETCH_HEAD
+          merge_status=$?
+          set -e
+          if [ "$merge_status" -ne 0 ]; then
+            git diff --name-only --diff-filter=U | sort > /tmp/tlou-conflicts.txt
+            # Only the 22 exact conflicts reviewed against the v0.1.1 and v0.2.0 trees.
+            cat > /tmp/expected-conflicts.txt <<'EXPECTED'
+          .github/workflows/tlou-native-apk.yml
+          RELEASE_NOTES.md
+          android-launcher/app/build.gradle
+          android-launcher/app/src/main/assets/ui-translations.tsv
+          android-launcher/app/src/main/java/ro/cobrabm/fexdroid/AboutPanel.java
+          android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameInstallState.java
+          android-launcher/app/src/main/java/ro/cobrabm/fexdroid/HudTelemetry.java
+          android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortMenu.java
+          android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+          android-launcher/app/src/test/java/ro/cobrabm/fexdroid/GameInstallStateTest.java
+          android/bionic/test_runtime_contracts.sh
+          android/tests/test_tlou_111_optional_light_shadows.py
+          android/tests/test_tlou_fps_unlock_runtime.py
+          android/tests/test_tlou_release_011.py
+          android/tests/test_tlou_shader_scan_diagnostic.py
+          android/tlou_patches.py
+          gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.h
+          gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+          gow3_pc/src/runtime_memory.c
+          gow3_pc/tests/test_memory_walk_cost.c
+          EXPECTED
+            sort -o /tmp/expected-conflicts.txt /tmp/expected-conflicts.txt
+            diff -u /tmp/expected-conflicts.txt /tmp/tlou-conflicts.txt
+            # Keep old signed release workflow; it will be adapted only after
+            # validating the source merge and preserving the 0.1.1 signer.
+            git checkout --ours -- .github/workflows/tlou-native-apk.yml
+            # Preserve the latest stable regression tests where the branch
+            # contains older, conflicting versions.
+            git checkout --ours -- android/tests/test_tlou_111_optional_light_shadows.py
+            git checkout --ours -- android/tests/test_tlou_shader_scan_diagnostic.py
+            # Prefer 0.2 behavior in the explicitly conflicting launcher,
+            # patches, native runtime and release notes; independently changed
+            # 0.1.1 code elsewhere is merged by Git's 3-way algorithm.
+            while IFS= read -r file; do
+              case "$file" in
+                .github/workflows/tlou-native-apk.yml|android/tests/test_tlou_111_optional_light_shadows.py|android/tests/test_tlou_shader_scan_diagnostic.py) ;;
+                *) git checkout --theirs -- "$file" ;;
+              esac
+            done < /tmp/expected-conflicts.txt
+          fi
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git add -A
+          git commit -m "wip(tlou): integrate v0.2 features onto signed v0.1.1 release lineage"
+          echo "New merged source $(git rev-parse HEAD)"
+          git log -1 --format='%P'
+          git diff --stat HEAD^1 HEAD | tail -8
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run Python source contract suite on merged tree
+        run: |
+          python3 -m pip install unicorn==2.1.4
+          python3 -m unittest discover -s android/tests -v
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Compile launcher and run release unit tests
+        run: gradle -p android-launcher :app:testReleaseUnitTest :app:lintVitalRelease --no-daemon --max-workers=2
+      - name: Publish tested merge only to temporary integration branch
+        run: |
+          test "$GITHUB_REF_NAME" = "tlou-v020-from-stable-011"
+          git push origin HEAD:refs/heads/tlou-v020-from-stable-011
+      - name: Save merge test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlou-v020-merge-validation-errors
+          path: |
+            android-launcher/app/build/reports/**
+            /tmp/tlou-conflicts.txt
+          if-no-files-found: ignore

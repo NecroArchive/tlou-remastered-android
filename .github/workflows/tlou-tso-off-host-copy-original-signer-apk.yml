@@ -7,6 +7,7 @@ on:
       - '.github/workflows/tlou-tso-off-host-copy-original-signer-apk.yml'
       - 'gow3_pc/gpu/shim/vk_driver_loader.cpp'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_compute_pipeline.cpp'
+      - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_qualcomm_float_compat.h'
       - 'gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_qualcomm_image1d_compat.h'
       - 'gow3_pc/tests/test_tlou_qualcomm_image1d_compat.cpp'
@@ -27,7 +28,7 @@ permissions:
 # Only the original proven AOT v3 backend is packaged. The frontend omits --tso.
 # Restart after GitHub Actions re-enabled on 2026-11-17; original signer required.
 concurrency:
-  group: tlou-original-signer-qualcomm-image1d-20261117
+  group: tlou-original-signer-qualcomm-no-readcap-20261117
   cancel-in-progress: false
 
 jobs:
@@ -62,6 +63,7 @@ jobs:
             gow3_pc/tests/test_tlou_qualcomm_image1d_compat.cpp \
             -o /tmp/tlou-qualcomm-image1d
           /tmp/tlou-qualcomm-image1d
+          grep -Fq '.shaderStorageImageReadWithoutFormat =' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
           grep -Fq 'eQualcommProprietary' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_compute_pipeline.cpp
       - name: Test external Qualcomm vendor fallback without masking Turnip failure
         run: |
@@ -324,6 +326,7 @@ jobs:
           grep -aFq 'Qualcomm compute recovered:' out/native-gpu/libgow3gpu.so
           grep -aFq 'FP control modes disabled' out/native-gpu/libgow3gpu.so
           grep -aFq '1D coordinate X-only' out/native-gpu/libgow3gpu.so
+          grep -aFq 'unused image read capability removed' out/native-gpu/libgow3gpu.so
           grep -aFq 'SYSTEM Qualcomm driver instead' out/native-gpu/libgow3gpu.so
           cp out/native-gpu/libgow3gpu.so out/android-bionic/apk-jni/arm64-v8a/libgow3gpu.so
       - name: Generate save-selection fixtures for existing Android tests
@@ -367,6 +370,7 @@ jobs:
               assert b'Qualcomm compute recovered:' in new_gpu, 'Native proprietary Qualcomm compute retry missing from APK'
               assert b'FP control modes disabled' in new_gpu, 'Targeted Qualcomm float-mode SPIR-V retry missing from APK'
               assert b'1D coordinate X-only' in new_gpu, 'Targeted Qualcomm 1D image write retry missing from APK'
+              assert b'unused image read capability removed' in new_gpu, 'Qualcomm capability-only retry missing from APK'
               assert new_gpu!=a.read('lib/arm64-v8a/libgow3gpu.so'), 'old native GPU still packaged'
               for n in preserved:
                   if n=='lib/arm64-v8a/libgow3gpu.so': continue

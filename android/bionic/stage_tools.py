@@ -30,8 +30,8 @@ def stage():
             z.write(ROOT / name, "source/" + name)
         for p in sorted((ROOT / "gow3_pc/scripts").glob("*.py")):
             z.write(p, "source/gow3_pc/scripts/" + p.name)
-        # Optional experimental on-device FEX-IR/LLVM AOT compiler. AOT is NOT
-        # used by the game runtime yet. Never package any user's game code.
+        # Mandatory on-device ARM64 AOT compiler for the 0.2.0 native release.
+        # Never package any user's game code.
         aot = native / "aot-compiler"
         compiler = aot / "bin/libbbrecomp.so"
         if compiler.is_file():

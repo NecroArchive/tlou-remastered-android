@@ -37,7 +37,7 @@ void CaptureQualcommComputeFailure(u64 shader_hash, u64 pipeline_key) {
     });
     if (names.empty()) {
         std::fprintf(stderr,
-                     "Qualcomm compute: shader=%016llx has no saved SPIR-V blob\\n",
+                     "Qualcomm compute: shader=%016llx has no saved SPIR-V blob\n",
                      static_cast<unsigned long long>(shader_hash));
         return;
     }
@@ -47,7 +47,7 @@ void CaptureQualcommComputeFailure(u64 shader_hash, u64 pipeline_key) {
     if (ec) return;
     std::ofstream manifest(output / "qualcomm-compute-failed.txt",
                            std::ios::out | std::ios::trunc);
-    manifest << fmt::format("shader={:016x} pipeline_key={:016x} variants={}\\n",
+    manifest << fmt::format("shader={:016x} pipeline_key={:016x} variants={}\n",
                             shader_hash, pipeline_key, names.size());
     u32 saved = 0;
     for (const auto& name : names) {
@@ -61,8 +61,8 @@ void CaptureQualcommComputeFailure(u64 shader_hash, u64 pipeline_key) {
                      std::streamsize(spv.size() * sizeof(u32)));
         if (!binary) continue;
         manifest << name << " => " << file << " " << (spv.size() * sizeof(u32))
-                 << " bytes\\n";
-        std::fprintf(stderr, "Qualcomm compute: saved %s from %s (%zu bytes)\\n",
+                 << " bytes\n";
+        std::fprintf(stderr, "Qualcomm compute: saved %s from %s (%zu bytes)\n",
                      file.c_str(), name.c_str(), spv.size() * sizeof(u32));
         ++saved;
     }

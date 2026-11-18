@@ -258,6 +258,9 @@ final class PortMenu {
                 choice("control_color","Cor dos controles",
                     new String[]{"Verde oliva","Âmbar","Branco","Vermelho","Azul"},
                     new String[]{"olive","amber","white","red","blue"},"olive");
+                // One multiplier for face buttons, D-pad, shoulders, sticks and AGITAR.
+                // Editing position remains independent, and changes apply in real time.
+                slider("control_size","Tamanho dos controles (%)",75,160,120);
                 slider("touch_opacity","Opacidade dos controles (%)",15,100,55);
                 if(inGame) {
                     action("Editar posição dos botões",actions::editControls);

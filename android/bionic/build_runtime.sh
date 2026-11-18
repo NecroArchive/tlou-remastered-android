@@ -13,9 +13,15 @@ prefix=$root/.local-deps/android/bionic-prefix
 llvm=$ndk/toolchains/llvm/prebuilt/linux-x86_64
 if [[ ${1:-} != --link-only ]]; then
   bash android/bionic/build_deps.sh
-  bash android/bionic/build_fex.sh
+  bash android/bionic/build_aot_cpu.sh
   bash android/bionic/build_gpu.sh
 fi
+# Both fresh and --link-only builds must use the AOT CPU that was produced
+# from the current source. The loader must never link against an old FEX .so.
+cmp "$out/lib/libgow3cpu.so" "$out/apk-assets/runtime-aot/libgow3cpu.so" || {
+  echo "Refusing mixed FEX/AOT CPU runtime; rebuild native ARM64 AOT" >&2
+  exit 3
+}
 for path in "$out/lib/libgow3gpu.so" "$out/lib/libgow3cpu.so" "$prefix/lib/libavcodec.a"; do
   [[ -f $path ]] || { echo "Missing Bionic build dependency: $path" >&2; exit 2; }
 done
@@ -42,7 +48,7 @@ done
   -I gow3_pc/tools/android/present \
   gow3_pc/tools/android/bionic/present/gow3present.c \
   -lnativewindow -landroid -llog -ldl -o "$out/lib/libgow3present.so"
-echo "TLOU ARM64 runtime and Android presenter linked (APK/gameplay not yet validated)"
+echo "TLOU native ARM64 AOT loader and Android presenter linked (device gameplay not yet validated)"
 echo "  $out/bin/gow3-probe"
 echo "  $out/lib/libgow3gpu.so"
 echo "  $out/lib/libgow3cpu.so"

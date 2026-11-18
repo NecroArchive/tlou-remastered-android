@@ -57,10 +57,14 @@ class AllPatchVariants(unittest.TestCase):
         self.assertIn("create_catalog_100(",compiler)
         # 1.00 must reuse verified intermediate shards when repairing
         # missing native entry points, not force a full recompilation.
-        self.assertNotIn('command.remove("--resume")',compiler)
         self.assertIn('"--progress", "--resume"',compiler)
+        # --resume is removed ONLY if the legacy linked-code signature
+        # differs and the existing compiler output has never passed an
+        # explicit --check-entries proof. No perpetual precompile block.
+        self.assertIn('if full_rebuild_100:\\n            command.remove("--resume")'.replace("\\\\n","\\n"),compiler)
         self.assertIn('"repair_previous_100_aot": repair_100',compiler)
         self.assertIn('"resume_enabled": "--resume" in command',compiler)
+        self.assertIn('"full_rebuild_100": full_rebuild_100',compiler)
 
     def test_100_refuses_any_unverified_patch_bytes(self):
         originals={}

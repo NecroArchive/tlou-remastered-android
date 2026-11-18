@@ -328,7 +328,15 @@ public final class GameActivity extends Activity {
                 String aotPreload=new File(nativeAot.engineDirectory,"libgow3cpu.so").getAbsolutePath();
                 env.put("LD_PRELOAD",aotPreload+(originalPreload==null||originalPreload.isEmpty()?"":" "+originalPreload));
                 RunLog.write(this,"AOT pthread stack policy preload: "+aotPreload+" (320 KiB → 2 MiB)");
-                env.put("BB_AOT_MISS_LOG",new File(state,"aot-misses.log").getAbsolutePath());
+                // Keep the runtime and the on-device compiler on the SAME
+                // per-game-version miss log. Previously the game wrote
+                // tlou/aot-misses.log while 1.00/1.11 compilation read
+                // aot-misses-100.log / aot-misses-111.log respectively,
+                // silently discarding genuine CALL/JUMP entry diagnostics.
+                File misses=TsoProfile.missesForPrepared(this,base);
+                env.put("BB_AOT_MISS_LOG",misses.getAbsolutePath());
+                RunLog.write(this,"AOT missing guest entries ("+
+                    TsoProfile.gameCode(GameInstallState.marker(base))+"): "+misses);
                 // The AOT backend counts EACH dispatched unit and samples
                 // CNTVCT around EACH host callback when these are present.
                 // The workers make millions of both calls per second. Do not

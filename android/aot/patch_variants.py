@@ -125,6 +125,104 @@ def catalog_data(patches, boot_bytes, segments, image_size):
     return "\n".join(lines) + "\n", group_names, code_count, data_count
 
 
+
+# The 01.00 executable has the same runtime byte-patch contract as 01.11,
+# but its previous AOT builder emitted NO variants. That made the first
+# modified guest function (+0x946180) fatal at every launch. Compile the
+# SHA-verified 01.00 stability patches, resolutions and effects into one
+# native variant catalog; keep the original linked image as baseline.
+PROFILE_100 = "tlou-100-variants-v1"
+EFFECTS_100 = ("ssao", "motion_blur", "depth_of_field", "bloom",
+               "sunlight_shadows", "subsurface")
+
+
+def catalog_data_100(patches, boot_bytes, segments, image_size):
+    """All 01.00 code writes, including always-on stability patches.
+
+    No optional patch is baked into the baseline; bb-recomp matches the guest
+    bytes written by patches.bin at launch. The 01.00 job-sleep patch remains
+    conditional because it is disabled on some device configurations.
+    """
+    lines = [
+        "# TLOU 1.00: verified stability, resolution and effect variants.",
+        "# Baseline is the unmodified linked image; selection happens at launch.",
+    ]
+    groups = [(("base_" + key.replace("-", "_")), "",
+               changes) for key, changes in patches.BASE_PATCHES.items()]
+    groups += [(("resolution_" + resolution), "resolution",
+                patches.scene_aim_resolution_patches(resolution))
+               for resolution in RESOLUTIONS]
+    groups += [(("effect_" + effect), "",
+                patches.PERFORMANCE_EFFECTS[effect]) for effect in EFFECTS_100]
+    names, executable_writes, data_writes, regions = [], 0, 0, []
+    for group, exclusive, spans in groups:
+        if not spans:
+            raise ValueError("Missing 1.00 patch entries: " + group)
+        names.append(group)
+        lines.append("group " + group + (" excl=" + exclusive if exclusive else ""))
+        count = 0
+        for address, before_hex, after_hex in spans:
+            before = bytes.fromhex(before_hex)
+            if not before or address < 0 or address + len(before) > image_size:
+                raise ValueError("1.00 patch outside verified image: " + group)
+            if boot_bytes(address, len(before)) != before:
+                raise ValueError("1.00 patch byte guard mismatch: " + group
+                                 + " at +" + hex(address))
+            if after_hex is None:
+                continue
+            replacement = bytes.fromhex(after_hex)
+            if len(replacement) != len(before):
+                raise ValueError("1.00 patch changes code layout: " + group)
+            containing = [segment for segment in segments
+                          if segment[0] <= address
+                          and address + len(before) <= segment[1]]
+            if len(containing) != 1:
+                raise ValueError("1.00 patch straddles linked-image segment: " + group)
+            if not containing[0][2]:
+                data_writes += 1
+                continue
+            for start, end, prior, prior_exclusive in regions:
+                if address < end and start < address + len(replacement):
+                    if not (exclusive and exclusive == prior_exclusive):
+                        raise ValueError("Overlapping independent 1.00 patches: "
+                                         + group + " / " + prior)
+            regions.append((address, address + len(replacement), group, exclusive))
+            lines.append(f"w {address:x} {replacement.hex()}")
+            executable_writes += 1
+            count += 1
+        if not count:
+            raise ValueError("1.00 patch has no native code variant: " + group)
+    expected = len(patches.BASE_PATCHES) + len(RESOLUTIONS) + len(EFFECTS_100)
+    if len(names) != expected or len(set(names)) != expected:
+        raise ValueError("Incomplete TLOU 1.00 native variants")
+    return "\n".join(lines) + "\n", names, executable_writes, data_writes
+
+
+def create_catalog_100(baseline_boot: Path, eboot_digest: str, destination: Path):
+    patches = load_patches()
+    if eboot_digest != patches.BASE_SELF_SHA256:
+        raise ValueError("Dynamic 1.00 variants require the verified SELF SHA-256")
+    start, image_size, segments = boot_layout(baseline_boot)
+    with baseline_boot.open("rb") as stream:
+        def read(offset, size):
+            stream.seek(start + offset)
+            return stream.read(size)
+        catalog, groups, writes, data = catalog_data_100(
+            patches, read, segments, image_size)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp = destination.with_suffix(".tmp")
+    temp.write_text(catalog, encoding="ascii")
+    temp.replace(destination)
+    return {
+        "profile": PROFILE_100,
+        "sha256": hashlib.sha256(catalog.encode("ascii")).hexdigest(),
+        "groups": groups,
+        "code_writes": writes,
+        "guest_data_writes": data,
+        "catalog": str(destination),
+    }
+
+
 def create_catalog(baseline_boot: Path, eboot_digest: str, destination: Path):
     patches = load_patches()
     if eboot_digest not in patches.RESOLUTION_111_SELF_SHA256:

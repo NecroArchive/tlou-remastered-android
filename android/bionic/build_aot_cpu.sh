@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build AOT guest CPU separately from the production FEX library.
+# Build the only production ARM64 CPU backend (native AOT, no FEX runtime).
 # GPL-2.0-or-later code from Bloodborne-Android (pinned upstream revision).
 set -Eeuo pipefail
 cd "$(dirname "$0")/../.."
@@ -58,9 +58,15 @@ for symbol in guest_cpu_init guest_cpu_code guest_cpu_call \
     exit 1
   }
 done
-mkdir -p "$root/out/android-bionic/apk-assets/runtime-aot"
-cp "$out/libgow3cpu.so" "$root/out/android-bionic/apk-assets/runtime-aot/libgow3cpu.so"
-cp "$out/libbbcpu.so" "$root/out/android-bionic/apk-assets/runtime-aot/libbbcpu.so"
+# The Android executable and the AOT-compiled guest must share this same
+# libgow3cpu.so: never link a separate FEX JIT implementation into gow3-probe.
+production="$root/out/android-bionic"
+mkdir -p "$production/lib" "$production/apk-assets/runtime-aot"
+cp "$out/libgow3cpu.so" "$production/lib/libgow3cpu.so"
+cp "$out/libgow3cpu.so" "$production/apk-assets/runtime-aot/libgow3cpu.so"
+cp "$out/libbbcpu.so" "$production/apk-assets/runtime-aot/libbbcpu.so"
+cp "$ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$production/lib/libc++_shared.so"
+cmp "$production/lib/libgow3cpu.so" "$production/apk-assets/runtime-aot/libgow3cpu.so"
 sha256sum "$out/libgow3cpu.so" > "$out/libgow3cpu.so.sha256"
 sha256sum "$out/libbbcpu.so" > "$out/libbbcpu.so.sha256"
-echo "TLOU native AOT engine built, with PS4 fibers. FEX production binary unchanged."
+echo "TLOU native AOT engine built and installed as the sole CPU runtime (no FEX JIT)."

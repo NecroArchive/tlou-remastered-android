@@ -134,7 +134,17 @@ final class PadBridge {
 
     private void write() {
         StringBuilder text=new StringBuilder();
-        Set<String> all=new LinkedHashSet<>(keys); all.addAll(virtualKeys);
+        Set<String> all=new LinkedHashSet<>(keys);
+        // Physical controllers: clicking BOTH sticks shakes the DualShock
+        // motion sensors for the TLOU flashlight. Single L3/R3 keep their
+        // normal gameplay actions; touch-screen L3/R3 are independent.
+        final boolean shakePhysical=keys.contains("l3") && keys.contains("r3");
+        if(shakePhysical) {
+            all.remove("l3");
+            all.remove("r3");
+            all.add("shake");
+        }
+        all.addAll(virtualKeys);
         int leftTrigger=Math.max(l2,virtualL2), rightTrigger=Math.max(r2,virtualR2);
         for (String key:all) {
             if ((key.equals("l2") && leftTrigger>0) || (key.equals("r2") && rightTrigger>0)) continue;

@@ -298,7 +298,10 @@ public final class MainActivity extends Activity {
             LinearLayout cpu=card(root,"CPU E DESEMPENHO");
             toggleSetting(cpu,"adpf","ADPF — ajuste dinâmico de desempenho",false);
             boolean nativeCompiled=RuntimeAot.hasCompletedVariantBuild(this);
+            boolean needsRepair=RuntimeAot.needs100EntryRepair(
+                this,new File(getFilesDir(),"tlou-prepared"));
             cpu.addView(text(TlouLanguage.t(this,"CPU ARM64: ")+TlouLanguage.t(this,
+                needsRepair?"reparo de entradas pendente":
                 nativeCompiled?"já compilada":"ainda não compilada"),12,MUTED));
             add(cpu,"Compilar CPU ARM64",false,
                 ()->withAccess(this::buildSelectedAot));
@@ -619,12 +622,39 @@ public final class MainActivity extends Activity {
                     if(!check.pendingCodePatches.isEmpty())
                         throw new IOException("Biblioteca ARM64 desatualizada.");
                 } catch(Exception aotProblem) {
-                    RunLog.failure(this,"AOT não pronto; compilação obrigatória",aotProblem);
-                    prefs.edit().putBoolean("launch_direct",false).apply();
-                    runOnUiThread(()->{
-                        if(!isDestroyed())showAotUnavailable(prepared,aotProblem);
-                    });
-                    return;
+                    Exception reason=aotProblem;
+                    // Existing 1.00 ARM64 compilations with all patch groups
+                    // but missing indirect CALL entries must be repaired
+                    // automatically. Do not make the user find the new
+                    // compilation button or recompile the protected 1.11.
+                    if(RuntimeAot.needs100EntryRepair(this,prepared)) {
+                        try {
+                            update("Reparando automaticamente entradas ARM64 1.00 faltantes…");
+                            RunLog.write(this,"CPU ARM64 1.00 antiga detectada; "+
+                                "recompilando apenas shards invalidados pelo novo lote "+
+                                "de entradas, com --resume e validação de entradas.");
+                            tools.buildExperimentalAot(prepared,this::update);
+                            RuntimeAot.Ready fixed=RuntimeAot.prepare(this,prepared);
+                            if(!fixed.pendingCodePatches.isEmpty())
+                                throw new IOException("O reparo ARM64 deixou patches pendentes.");
+                            RunLog.write(this,"Reparo ARM64 1.00 verificado; "+
+                                "execução permitida sem recompilar 1.11.");
+                            reason=null;
+                        } catch(Exception repairFailed) {
+                            reason=repairFailed;
+                            RunLog.failure(this,"Reparo automático ARM64 1.00 falhou",
+                                repairFailed);
+                        }
+                    }
+                    if(reason!=null) {
+                        final Exception failure=reason;
+                        RunLog.failure(this,"AOT não pronto; compilação obrigatória",failure);
+                        prefs.edit().putBoolean("launch_direct",false).apply();
+                        runOnUiThread(()->{
+                            if(!isDestroyed())showAotUnavailable(prepared,failure);
+                        });
+                        return;
+                    }
                 }
                 if("100".equals(TsoProfile.gameCode(GameInstallState.marker(prepared)))) {
                     // Warn on each launch attempt; 1.00 is measurably slower

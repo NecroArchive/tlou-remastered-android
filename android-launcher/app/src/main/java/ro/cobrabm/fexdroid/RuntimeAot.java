@@ -128,8 +128,10 @@ final class RuntimeAot {
      */
     static boolean hasVerified100MidCall(JSONObject report) {
         if(report==null || !"1.00".equals(report.optString("version")))return false;
-        if(!"tlou-100-midcall-910580-v1".equals(
+        if(!"tlou-100-batched-call-hotspots-v2".equals(
                 report.optString("verified_100_entry_policy")))return false;
+        if(!"tlou-100-batched-call-hotspots-v1".equals(
+                report.optString("granular_policy")))return false;
         JSONArray entries=report.optJSONArray("verified_100_midcall_entries");
         if(entries==null || entries.length()!=1 ||
            !"+0x910580".equals(entries.optString(0)))return false;
@@ -147,7 +149,33 @@ final class RuntimeAot {
         }
         return extra && granular && checked &&
             report.optInt("extra_entry_count",0)>=1 &&
-            report.optInt("granular_risk_hint_count",0)>=5;
+            report.optInt("granular_risk_hint_count",0)>=151552 &&
+            report.optBoolean("resume_enabled",false);
+    }
+
+    /**
+     * An existing 01.00 native library from before the entry-batch fix must
+     * receive a delta rebuild. This is intentionally separate from fresh
+     * installs: do not launch obsolete code, but automatically invoke the
+     * already available on-device compiler on Play. Never touches 01.11.
+     */
+    static boolean needs100EntryRepair(Context context, File prepared) {
+        try {
+            if(!"100".equals(TsoProfile.gameCode(GameInstallState.marker(prepared))))
+                return false;
+            File work=TsoProfile.workForPrepared(context,prepared);
+            File report=new File(work,"aot-report.json");
+            File so=new File(work,"aot/libtlouaot.so");
+            if(!report.isFile() || !so.isFile() || so.length()<4096)return false;
+            JSONObject source=new JSONObject(new String(Files.readAllBytes(
+                report.toPath()),StandardCharsets.UTF_8));
+            // Only treat previously COMPILED 01.00 images as repairable.
+            // No library -> ordinary initial compilation prompt.
+            return "1.00".equals(source.optString("version")) &&
+                "aarch64_generated_native_ready".equals(source.optString("status")) &&
+                hasCompleteVariantCatalog(source) &&
+                !hasVerified100MidCall(source);
+        } catch(Exception unreadable) { return false; }
     }
 
     /** Lightweight status for the launcher label only. The full hash and
@@ -344,14 +372,14 @@ final class RuntimeAot {
             // selected resolution/effects into guest code on every launch.
             // A baseline-only AOT library always stops at +0x946180.
             // Require every option to exist as a verified native variant.
-            boolean usesVariants=false,noDirty=false,oldResume=false;
+            boolean usesVariants=false,noDirty=false,resumable=false;
             if(command!=null)for(int i=0;i<command.length();i++){
                 String flag=command.optString(i);
                 if("--variants".equals(flag))usesVariants=true;
                 if("--no-dirty-check".equals(flag))noDirty=true;
-                if("--resume".equals(flag))oldResume=true;
+                if("--resume".equals(flag))resumable=true;
             }
-            if(!usesVariants||noDirty||oldResume ||
+            if(!usesVariants||noDirty||!resumable ||
                !hasVerified100MidCall(source) ||
                (meta.optLong("abi_flags",0)&6)!=6 ||
                !hasCompleteVariantCatalog(source) ||

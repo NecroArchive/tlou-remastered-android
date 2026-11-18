@@ -15,6 +15,7 @@
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_qualcomm_float_compat.h"
+#include "video_core/renderer_vulkan/vk_qualcomm_image1d_compat.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -135,6 +136,76 @@ bool TryQualcommFloatControlVariant(vk::Device device, const vk::ComputePipeline
                  static_cast<unsigned long long>(shader_hash),
                  spirv.size() * sizeof(u32), alternative.size() * sizeof(u32));
     return true;
+}
+
+// TLOU ZIP33: Adreno 840 rejects shader 0x4a705408 even after disabling
+// explicit SPIR-V float modes. Its non-arrayed 1D storage image is written
+// using a uint2 coordinate; Y is ignored by the Vulkan image semantics.
+// Retry using the existing scalar X id, with an otherwise byte-identical
+// shader. If that fails, try X scalarization + the previously tested float
+// modes removal. Do not affect Mesa Turnip or any other unverified shader.
+bool TryQualcommNarrowImage1DVariant(vk::Device device,
+                                    const vk::ComputePipelineCreateInfo& original,
+                                    u64 shader_hash, vk::UniquePipeline& pipeline) {
+    constexpr u64 kVerifiedTLOUShaderHash = 0x4a705408ull;
+    if (shader_hash != kVerifiedTLOUShaderHash) return false;
+    auto& db = Storage::DataBase::Instance();
+    if (!db.IsOpened()) return false;
+    const auto prefix = fmt::format("{:#018x}_", shader_hash);
+    std::vector<std::string> names;
+    db.ForEachBlobName(Storage::BlobType::ShaderBinary, [&](const std::string& name) {
+        if (name.starts_with(prefix) && names.size() < 2) names.push_back(name);
+    });
+    if (names.size() != 1) {
+        std::fprintf(stderr,
+                     "Qualcomm compute 1D coordinate: refusing %zu ambiguous shader variants\n",
+                     names.size());
+        return false;
+    }
+    std::vector<u32> spirv;
+    db.Load(Storage::BlobType::ShaderBinary, names[0], spirv);
+    std::vector<u32> coordinate_narrowed;
+    if (!QualcommImage1DCompat::NarrowNonArrayed1DWrite(spirv, coordinate_narrowed)) {
+        std::fprintf(stderr,
+                     "Qualcomm compute 1D coordinate: unmatched shader layout %016llx\n",
+                     static_cast<unsigned long long>(shader_hash));
+        return false;
+    }
+    std::vector<u32> combined;
+    const bool supports_combined =
+        QualcommFloatCompat::DropExplicitFloatControls(coordinate_narrowed, combined);
+    for (int attempt = 0; attempt < (supports_combined ? 2 : 1); ++attempt) {
+        const auto& candidate = attempt == 0 ? coordinate_narrowed : combined;
+        const vk::ShaderModuleCreateInfo shader_info{
+            .codeSize = candidate.size() * sizeof(u32),
+            .pCode = candidate.data(),
+        };
+        auto [shader_result, shader_module] = device.createShaderModuleUnique(shader_info);
+        if (shader_result != vk::Result::eSuccess) {
+            std::fprintf(stderr,
+                         "Qualcomm compute 1D coordinate attempt=%d module error=%s\n",
+                         attempt, vk::to_string(shader_result).c_str());
+            continue;
+        }
+        auto ci = original;
+        ci.stage.module = *shader_module; // preserve layout and subgroup pNext
+        auto [result, fallback] =
+            device.createComputePipelineUnique(vk::PipelineCache{}, ci);
+        if (result == vk::Result::eSuccess) {
+            pipeline = std::move(fallback);
+            std::fprintf(stderr,
+                         "Qualcomm compute recovered: 1D coordinate X-only"
+                         " shader=%016llx combined_float_control_change=%d\n",
+                         static_cast<unsigned long long>(shader_hash), attempt);
+            return true;
+        }
+        std::fprintf(stderr,
+                     "Qualcomm compute 1D coordinate attempt=%d shader=%016llx "
+                     "still rejected: %s\n", attempt,
+                     static_cast<unsigned long long>(shader_hash),
+                     vk::to_string(result).c_str());
+    }
+    return false;
 }
 } // namespace
 
@@ -317,6 +388,14 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         if (!(float_retry && float_retry[0] == '0') &&
             TryQualcommFloatControlVariant(device, compute_pipeline_ci,
                                           info_.pgm_hash, pipe)) {
+            pipeline_result = vk::Result::eSuccess;
+        }
+    }
+    if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled) {
+        const char* image_retry = std::getenv("GOW3_QUALCOMM_IMAGE1D_RETRY");
+        if (!(image_retry && image_retry[0] == '0') &&
+            TryQualcommNarrowImage1DVariant(device, compute_pipeline_ci,
+                                            info_.pgm_hash, pipe)) {
             pipeline_result = vk::Result::eSuccess;
         }
     }

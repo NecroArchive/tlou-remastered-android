@@ -1,56 +1,30 @@
-name: TLOU one-time signer recovery inventory
+name: TLOU one-time full-history signing file scan
 on:
   push:
     branches: [tlou-ui-approval-log32-20261105]
     paths:
       - '.github/workflows/tlou-cache-inventory-once.yml'
   workflow_dispatch:
-
 permissions:
   contents: read
-  actions: read
-
 jobs:
-  inventory:
+  history-scan:
     runs-on: ubuntu-24.04
     steps:
-      - name: Search all GitHub Actions cache refs and artifact names
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Search every reachable Git object for old keystores and creation scripts
         shell: bash
         run: |
-          python3 - <<'PY'
-          import os, subprocess, json
-          repo=os.environ['GH_REPO']
-          def paginate(endpoint,field):
-            page=1
-            while page<=100:
-              p=subprocess.run(['gh','api','-H','Accept: application/vnd.github+json',
-                         f'repos/{repo}/{endpoint}?per_page=100&page={page}'],
-                         text=True,capture_output=True)
-              if p.returncode:
-                print('API_ERROR',endpoint,p.stderr[:1500]);return
-              d=json.loads(p.stdout)
-              items=d.get(field,[])
-              print('PAGE',endpoint,page,'COUNT',len(items))
-              yield from items
-              if len(items)<100:break
-              page+=1
-          matches=[]
-          n=0
-          for c in paginate('actions/caches','actions_caches'):
-            n+=1
-            if 'tlou-development-signing' in c.get('key','') or 'signing' in c.get('key','').lower():
-              matches.append({k:c.get(k) for k in ('id','key','ref','created_at','last_accessed_at','size_in_bytes')})
-          print('TOTAL_VISIBLE_CACHES',n)
-          print('SIGNING_CACHES',json.dumps(matches))
-          arts=[]
-          n=0
-          for a in paginate('actions/artifacts','artifacts'):
-            n+=1
-            if any(x in a.get('name','').lower() for x in ('key','sign','keystore','backup')):
-              arts.append({k:a.get(k) for k in ('id','name','expired','created_at')})
-          print('TOTAL_ARTIFACTS_LISTED',n)
-          print('SIGNING_ARTIFACT_NAMES',json.dumps(arts[:100]))
-          PY
+          set -euo pipefail
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --quiet
+          echo '--- Reachable branches and commits ---'
+          echo "branches=$(git branch -r | wc -l)"
+          echo "commits=$(git rev-list --all --count)"
+          echo '--- Historical named key objects (paths only; no secrets) ---'
+          git rev-list --objects --all | grep -Ei '(^|/)[^/]+\.(jks|keystore|p12|pfx)$|(^|/)[^/]*(signing-backup|key-backup)[^/]*$' || true
+          echo '--- Commits mentioning key generation or alternative backup paths ---'
+          git log --all --format='%h %ad %s' --date=short --regexp-ignore-case --grep='keystore\|signing.key\|signing identity\|private key' | head -60 || true
+          echo '--- Referenced keystore paths in source (filenames only) ---'
+          git grep -il 'experimental-development.jks\|tlou-development-signing-v2' $(git for-each-ref --format='%(refname)' refs/remotes/origin/ | head -70) 2>/dev/null | cut -d: -f2- | sort -u | head -60 || true

@@ -3,9 +3,14 @@ package ro.cobrabm.fexdroid;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 import static org.junit.Assert.*;
 
 /** No incomplete or legacy 01.00 AOT library may boot with BBPATCH2 code writes. */
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk=30,application=android.app.Application.class)
 public class RuntimeAotCatalogTest {
     private JSONObject catalog(String version) throws Exception {
         final boolean v100="1.00".equals(version);

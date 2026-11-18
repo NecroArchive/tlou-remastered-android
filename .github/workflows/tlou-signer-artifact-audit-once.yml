@@ -1,0 +1,55 @@
+name: TLOU one-time signer artifact and workflow audit
+on:
+  push:
+    branches: [tlou-ui-approval-log32-20261105]
+    paths: ['.github/workflows/tlou-signer-artifact-audit-once.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Audit artifact manifest and historical workflow upload patterns (no secrets)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess, collections
+          repo='erickmendes22/tlou-remastered-android'
+          arts=[]
+          page=1
+          while True:
+            p=subprocess.run(['gh','api',f'repos/{repo}/actions/artifacts?per_page=100&page={page}'],capture_output=True,text=True,check=True)
+            data=json.loads(p.stdout)
+            arts.extend(data['artifacts'])
+            if len(data['artifacts'])<100: break
+            page+=1
+          print('ARTIFACT_TOTAL',len(arts))
+          names=collections.Counter(a['name'] for a in arts)
+          print('ARTIFACT_UNIQUE_NAMES',len(names))
+          for name,count in names.most_common(100):
+            bytes_sizes=sorted(a['size_in_bytes'] for a in arts if a['name']==name)
+            print('ARTIFACT_NAME',json.dumps(name), 'COUNT',count,'MAX_MB',round(max(bytes_sizes)/1e6,2))
+          for a in arts:
+            n=a['name'].lower()
+            if any(t in n for t in ('sign','key','backup','native','diagnostic','release','source','tool')):
+              print('CANDIDATE',a['id'],json.dumps(a['name']),a['size_in_bytes'],a['created_at'],a['expired'])
+          PY
+          echo "HISTORICAL_WORKFLOW_UPLOAD_PATTERNS"
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --quiet
+          git rev-list --objects --all | awk '$2 ~ /^.github\/workflows\/.*\.(yml|yaml)$/ {print $1 " " $2}' | sort -u | while read -r obj path; do
+            body=$(git show "$obj" 2>/dev/null || true)
+            if [[ "$body" == *"upload-artifact"* ]] && [[ "$body" == *"out/android-bionic/"* || "$body" == *"out/**"* ]]; then
+              printf 'UPLOAD_WORKFLOW %s %s\n' "$obj" "$path"
+              echo "$body" | grep -B 3 -A 12 'uses: actions/upload-artifact' | grep -E 'name:|path:|out/|android-bionic/|\.jks|\.keystore' | head -20 || true
+            fi
+          done

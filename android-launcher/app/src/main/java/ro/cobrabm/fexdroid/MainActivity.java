@@ -142,6 +142,27 @@ public final class MainActivity extends Activity {
         sw.setOnCheckedChangeListener((v,checked)->prefs.edit().putBoolean(key,checked).apply());
         parent.addView(sw);
     }
+    /** Resize all on-screen buttons and their touch targets, preserving the saved layout. */
+    private void controlSizeSetting(LinearLayout parent) {
+        final int minPercent=75, maxPercent=160;
+        final int initial=Math.max(minPercent,Math.min(maxPercent,prefs.getInt("control_size",120)));
+        TextView label=text(TlouLanguage.t(this,"Tamanho dos controles (%)")+": "+initial+"%",13,ACCENT);
+        parent.addView(label);
+        SeekBar seek=new SeekBar(this);
+        seek.setMax(maxPercent-minPercent);
+        seek.setProgress(initial-minPercent);
+        seek.setContentDescription(TlouLanguage.t(this,"Tamanho dos controles (%)"));
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar,int value,boolean user) {
+                final int percent=minPercent+value;
+                label.setText(TlouLanguage.t(MainActivity.this,"Tamanho dos controles (%)")+": "+percent+"%");
+                if(user)prefs.edit().putInt("control_size",percent).apply();
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) {}
+        });
+        parent.addView(seek,new LinearLayout.LayoutParams(-1,dp(42)));
+    }
     private void languageChoice(LinearLayout parent) {
         parent.addView(text("Idioma do aplicativo",13,ACCENT));
         Spinner spinner=new Spinner(this,Spinner.MODE_DROPDOWN);
@@ -315,6 +336,8 @@ public final class MainActivity extends Activity {
             choice(controls,"control_color","Cor dos controles",
                 new String[]{"Verde oliva","Âmbar","Branco","Vermelho","Azul"},
                 new String[]{"olive","amber","white","red","blue"},"olive");
+            controlSizeSetting(controls);
+            controls.addView(text("O tamanho de todos os botões e das áreas de toque muda sem alterar as posições salvas.",12,MUTED));
             controls.addView(text("Editar posição dos botões: deslize da borda esquerda para abrir o menu.",12,MUTED));
             toggleSetting(app,"launch_direct","Entrar direto no jogo",false);
             LinearLayout data=card(root,"SAVES");

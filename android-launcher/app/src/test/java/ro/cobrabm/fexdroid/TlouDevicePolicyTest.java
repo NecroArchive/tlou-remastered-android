@@ -71,8 +71,8 @@ public final class TlouDevicePolicyTest {
         ok("0".equals(e.get("GOW3_STAGING_KEEP_VRAM_MB")), "A640 idle VRAM");
         ok("0".equals(e.get("GOW3_STAGING_LARGE_MB")), "no A640 pinned scratch");
         ok("2".equals(e.get("GOW3_STAGING_PREWARM_BLOCKS")), "two 16 MiB prewarm blocks");
-        ok("1024".equals(e.get("GOW3_ARENA_PAGE_MB")),
-            "A640 sparse arena page cap must prevent 4-8 GiB vkCreateBuffer objects");
+        ok("512".equals(e.get("GOW3_ARENA_PAGE_MB")),
+            "A640 sparse arena pages must cap merged KGSL virtual buffers at 1 GiB");
         ok("768".equals(e.get("GOW3_ARENA_LIMIT_MB")),
             "A640 physical arena retention budget");
         ok(!e.containsKey("GOW3_DMEM_MB") && !e.containsKey("GOW3_DMEM_REPORT_MB"),

@@ -27,7 +27,7 @@ permissions:
 # Only the original proven AOT v3 backend is packaged. The frontend omits --tso.
 # Restart after GitHub Actions re-enabled on 2026-11-17; original signer required.
 concurrency:
-  group: tlou-original-signer-qualcomm-float-retry
+  group: tlou-original-signer-qualcomm-image1d-20261117
   cancel-in-progress: false
 
 jobs:

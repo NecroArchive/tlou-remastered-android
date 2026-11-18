@@ -128,7 +128,7 @@ jobs:
             'self.assertIn("app:assembleRelease",workflow)',
             'self.assertNotIn("app:assembleDebug",workflow)',
           ]
-          s=s[:start]+''.join('        '+line+'\\n' for line in checks)+s[stop:]
+          s=s[:start]+''.join('        '+line+'\n' for line in checks)+s[stop:]
           p.write_text(s)
           PY
           # Git retains unmerged index stages until the resolved files are staged.

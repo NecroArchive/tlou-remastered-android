@@ -139,7 +139,7 @@ final class InstallTools {
         if(!boot.isFile())throw new IOException("Imagem vinculada não encontrada");
         // Every output is private to this installed app, never in a shared game
         // folder or on GitHub. --resume allows completed shards to be reused.
-        File output=TsoProfile.work(context,profile);
+        File output=TsoProfile.workForPrepared(context,prepared);
         if(!output.isDirectory() && !output.mkdirs())
             throw new IOException("Sem espaço para criar pasta de compilação AOT");
         List<String> command=Arrays.asList(
@@ -153,7 +153,7 @@ final class InstallTools {
             "--bundle-dir",bundle.getCanonicalPath(),
             "--options",nativeOptions.getCanonicalPath(),
             "--jobs","3","--shards","64",
-            "--misses",new File(context.getFilesDir(),"tlou/aot-misses.log").getAbsolutePath());
+            "--misses",TsoProfile.missesForPrepared(context,prepared).getAbsolutePath());
         run(command,progress);
         File so=new File(output,"aot/libtlouaot.so");
         File metadata=new File(output,"aot/libtlouaot.json");

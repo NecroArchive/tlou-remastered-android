@@ -33,9 +33,7 @@ int main() {
     assert(changes==1);
     Words rejected=source;
     // Arrayed image: second component is layer, cannot drop it.
-    rejected[5+4+4+5] = 1; // overwritten below via parsed offset
     // Locate and toggle only the OpTypeImage Arrayed literal.
-    rejected=source;
     for(size_t i=5;i<rejected.size();i+=rejected[i]>>16)
         if((rejected[i]&0xffff)==25) {rejected[i+5]=1;break;}
     assert(!NarrowNonArrayed1DWrite(rejected,patched));

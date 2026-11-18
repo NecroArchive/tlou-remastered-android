@@ -94,16 +94,15 @@ jobs:
           environment-file: ci/environment.yml
           cache-environment: true
           init-shell: bash
-      - name: Restore Bionic dependency/FEX source and native compiler cache
+      - name: Restore Bionic native dependencies and compiler cache
         uses: actions/cache@v4
         with:
           path: |
             .local-deps/android/bionic-prefix
             .local-deps/android/bionic-src
             .local-deps/android/bionic-build
-            .local-deps/FEX
             ~/.cache/ccache
-          key: tlou-bionic-arm64-v2-${{ runner.os }}-${{ hashFiles('android/bionic/build_deps.sh', 'android/bionic/build_fex.sh') }}
+          key: tlou-bionic-arm64-aot-v3-${{ runner.os }}-${{ hashFiles('android/bionic/build_deps.sh', 'android/bionic/build_aot_cpu.sh') }}
           save-always: true
       # Ccache is incremental across source-fix commits, unlike the pinned dependency archive.
       - name: Restore incremental ARM64 native object cache
@@ -128,9 +127,9 @@ jobs:
       - name: Build real Bionic target dependencies
         shell: bash -el {0}
         run: bash android/bionic/build_deps.sh
-      - name: Build actual TLOU FEX ARM64 native translator
+      - name: Compile production TLOU ARM64 AOT CPU
         shell: bash -el {0}
-        run: bash android/bionic/build_fex.sh
+        run: bash android/bionic/build_aot_cpu.sh
       - name: Configure TLOU-specific native Vulkan GPU
         shell: bash -el {0}
         run: bash android/bionic/build_gpu.sh --configure-only

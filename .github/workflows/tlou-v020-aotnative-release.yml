@@ -33,6 +33,11 @@ jobs:
           grep -Fq "versionName '0.2.0'" android-launcher/app/build.gradle
           grep -Fq "applicationIdSuffix '.aotnative2'" android-launcher/app/build.gradle
           test -s android/bionic/package_aotnative_v020.sh
+          # Verify the final v0.2.0 code cleanup is in THIS release build,
+          # not just the earlier AOT-only linker change.
+          grep -Fq 'tlou-aot-native-launcher' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          ! grep -Fq 'FEX_APP_CONFIG_LOCATION' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          grep -Fq 'TLOU_CPU_BACKEND' android/bionic/build_runtime.sh
       - name: Restore exact EXISTING AOTNative v2 private signing identity
         uses: actions/cache/restore@v4
         with:

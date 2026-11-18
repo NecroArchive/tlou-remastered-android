@@ -14,7 +14,7 @@ import java.security.MessageDigest;
 /**
  * Validates locally generated ARM64 native code before the runtime is launched.
  *
- * The normal FEX binary and the user's game files are never changed.
+ * The user's game files are never modified by the on-device AOT compiler.
  * The native code generated from the player's own PS4 game stays private to
  * this application; the standalone AOT CPU engine is a separate libgow3cpu.so
  * loaded by the child process through LD_LIBRARY_PATH.
@@ -281,8 +281,8 @@ final class RuntimeAot {
             throw new java.io.IOException("Biblioteca ARM64 alterada ou corrompida");
         File engineDir=new File(context.getFilesDir(),"tlou/runtime-aot");
         File engine=new File(engineDir,"libgow3cpu.so");
-        // Unpack a separate CPU engine. The FEX library in nativeLibraryDir
-        // is left byte-identical, and normal gameplay continues to use it.
+        // Unpack the native AOT engine used by the executable and the
+        // newly compiled game library. No FEX CPU fallback is permitted.
         stageAsset(context,"runtime-aot/libgow3cpu.so",engine,4096);
         // bb-recomp's output depends on SONAME libbbcpu.so. The tiny shim
         // depends on libgow3cpu.so, ensuring bbr_* symbols resolve from

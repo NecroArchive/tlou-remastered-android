@@ -158,51 +158,76 @@ bool TryQualcommNarrowImage1DVariant(vk::Device device,
     });
     if (names.size() != 1) {
         std::fprintf(stderr,
-                     "Qualcomm compute 1D coordinate: refusing %zu ambiguous shader variants\n",
+                     "Qualcomm compute image compatibility: refusing %zu ambiguous shader variants\n",
                      names.size());
         return false;
     }
     std::vector<u32> spirv;
     db.Load(Storage::BlobType::ShaderBinary, names[0], spirv);
-    std::vector<u32> coordinate_narrowed;
-    if (!QualcommImage1DCompat::NarrowNonArrayed1DWrite(spirv, coordinate_narrowed)) {
+    if (spirv.size() < 5 || spirv[0] != 0x07230203) return false;
+
+    // The attached 6020-byte shader declares read-without-format but NEVER
+    // executes OpImageRead. The VkDevice previously enabled only the write
+    // feature, making the unused read capability an avoidable requirement.
+    // Try removing that UNUSED declaration first (zero functional changes).
+    // If needed, also narrow this non-arrayed 1D image write's uint2
+    // coordinate to its precomputed scalar X; Y was never consumed.
+    std::vector<u32> no_read, x_only, x_no_read, x_float, x_no_read_float;
+    const bool have_no_read =
+        QualcommImage1DCompat::DropUnusedImageReadCapability(spirv, no_read);
+    const bool have_x =
+        QualcommImage1DCompat::NarrowNonArrayed1DWrite(spirv, x_only);
+    const bool have_x_no_read = have_no_read &&
+        QualcommImage1DCompat::NarrowNonArrayed1DWrite(no_read, x_no_read);
+    const bool have_x_float = have_x &&
+        QualcommFloatCompat::DropExplicitFloatControls(x_only, x_float);
+    const bool have_x_no_read_float = have_x_no_read &&
+        QualcommFloatCompat::DropExplicitFloatControls(x_no_read, x_no_read_float);
+    struct Candidate {
+        const char* description;
+        const std::vector<u32>* words;
+    };
+    std::vector<Candidate> candidates;
+    if (have_no_read) candidates.push_back({"unused image read capability removed", &no_read});
+    if (have_x_no_read) candidates.push_back({"1D coordinate X-only + unused read capability removed", &x_no_read});
+    if (have_x) candidates.push_back({"1D coordinate X-only", &x_only});
+    if (have_x_no_read_float) candidates.push_back({"1D coordinate X-only + no read cap + FP mode relaxed", &x_no_read_float});
+    if (have_x_float) candidates.push_back({"1D coordinate X-only + FP mode relaxed", &x_float});
+    if (candidates.empty()) {
         std::fprintf(stderr,
-                     "Qualcomm compute 1D coordinate: unmatched shader layout %016llx\n",
+                     "Qualcomm compute image compatibility: no valid transformations for %016llx\n",
                      static_cast<unsigned long long>(shader_hash));
         return false;
     }
-    std::vector<u32> combined;
-    const bool supports_combined =
-        QualcommFloatCompat::DropExplicitFloatControls(coordinate_narrowed, combined);
-    for (int attempt = 0; attempt < (supports_combined ? 2 : 1); ++attempt) {
-        const auto& candidate = attempt == 0 ? coordinate_narrowed : combined;
-        const vk::ShaderModuleCreateInfo shader_info{
-            .codeSize = candidate.size() * sizeof(u32),
-            .pCode = candidate.data(),
+    for (const Candidate& candidate : candidates) {
+        const vk::ShaderModuleCreateInfo module_info{
+            .codeSize = candidate.words->size() * sizeof(u32),
+            .pCode = candidate.words->data(),
         };
-        auto [shader_result, shader_module] = device.createShaderModuleUnique(shader_info);
-        if (shader_result != vk::Result::eSuccess) {
+        auto [module_result, alt_module] = device.createShaderModuleUnique(module_info);
+        if (module_result != vk::Result::eSuccess) {
             std::fprintf(stderr,
-                         "Qualcomm compute 1D coordinate attempt=%d module error=%s\n",
-                         attempt, vk::to_string(shader_result).c_str());
+                         "Qualcomm compute image compatibility: module rejected (%s): %s\n",
+                         candidate.description, vk::to_string(module_result).c_str());
             continue;
         }
         auto ci = original;
-        ci.stage.module = *shader_module; // preserve layout and subgroup pNext
+        ci.stage.module = *alt_module;
+        // Preserve Vulkan descriptor layout, required subgroup size and
+        // compute workgroup dimensions in every candidate.
         auto [result, fallback] =
             device.createComputePipelineUnique(vk::PipelineCache{}, ci);
         if (result == vk::Result::eSuccess) {
             pipeline = std::move(fallback);
             std::fprintf(stderr,
-                         "Qualcomm compute recovered: 1D coordinate X-only"
-                         " shader=%016llx combined_float_control_change=%d\n",
-                         static_cast<unsigned long long>(shader_hash), attempt);
+                         "Qualcomm compute recovered: %s shader=%016llx (%zu -> %zu bytes)\n",
+                         candidate.description, static_cast<unsigned long long>(shader_hash),
+                         spirv.size() * sizeof(u32), candidate.words->size() * sizeof(u32));
             return true;
         }
         std::fprintf(stderr,
-                     "Qualcomm compute 1D coordinate attempt=%d shader=%016llx "
-                     "still rejected: %s\n", attempt,
-                     static_cast<unsigned long long>(shader_hash),
+                     "Qualcomm compute image compatibility: rejected (%s) shader=%016llx: %s\n",
+                     candidate.description, static_cast<unsigned long long>(shader_hash),
                      vk::to_string(result).c_str());
     }
     return false;

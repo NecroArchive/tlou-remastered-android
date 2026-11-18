@@ -58,18 +58,28 @@ public class RuntimeAotCatalogTest {
 
     @Test public void acceptsVerified100MidfunctionCallEntry() throws Exception {
         JSONObject report=catalog("1.00");
-        report.put("verified_100_entry_policy","tlou-100-midcall-910580-v1");
+        report.put("verified_100_entry_policy","tlou-100-batched-call-hotspots-v2");
+        report.put("granular_policy","tlou-100-batched-call-hotspots-v1");
         report.put("verified_100_midcall_entries",new JSONArray()
             .put("+0x910580"));
         report.put("extra_entry_count",1);
-        report.put("granular_risk_hint_count",5);
+        report.put("granular_risk_hint_count",151560);
+        report.put("resume_enabled",true);
         report.put("translation_command",new JSONArray()
             .put("--variants").put("all.txt")
+            .put("--resume")
             .put("--extra-entries").put("call-targets.txt")
             .put("--granular-funcs").put("granular.txt")
             .put("--check-entries").put("910580"));
         assertTrue(RuntimeAot.hasVerified100MidCall(report));
-        report.put("verified_100_entry_policy","incomplete-legacy");
+
+        report.put("resume_enabled",false);
+        assertFalse(RuntimeAot.hasVerified100MidCall(report));
+        report.put("resume_enabled",true);
+        report.put("granular_risk_hint_count",5);
+        assertFalse(RuntimeAot.hasVerified100MidCall(report));
+        report.put("granular_risk_hint_count",151560);
+        report.put("verified_100_entry_policy","tlou-100-midcall-910580-v1");
         assertFalse(RuntimeAot.hasVerified100MidCall(report));
     }
 
@@ -77,12 +87,16 @@ public class RuntimeAotCatalogTest {
         JSONObject report=catalog("1.00");
         assertTrue(RuntimeAot.hasCompleteVariantCatalog(report));
         assertFalse(RuntimeAot.hasVerified100MidCall(report));
-        report.put("verified_100_entry_policy","tlou-100-midcall-910580-v1");
+        report.put("verified_100_entry_policy","tlou-100-batched-call-hotspots-v2");
+        report.put("granular_policy","tlou-100-batched-call-hotspots-v1");
+        report.put("resume_enabled",true);
         report.put("verified_100_midcall_entries",new JSONArray()
             .put("+0x910580"));
         report.put("extra_entry_count",1);
-        report.put("granular_risk_hint_count",5);
+        report.put("granular_risk_hint_count",151560);
         report.put("translation_command",new JSONArray()
+            .put("--extra-entries").put("target-list.txt")
+            .put("--granular-funcs").put("risk-list.txt")
             .put("--check-entries").put("946180"));
         assertFalse(RuntimeAot.hasVerified100MidCall(report));
     }

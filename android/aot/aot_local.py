@@ -137,7 +137,7 @@ TLOU_100_CALL_HOTSPOTS = (
     (0x9000, 0x11000),    # low-level dispatch (+0xb266,+0xfd27)
 )
 TLOU_100_CALL_HOTSPOT_STEP = 1
-TLOU_100_ENTRY_POLICY = "tlou-100-midcall-910580-v1"
+TLOU_100_ENTRY_POLICY = "tlou-100-batched-call-hotspots-v2"
 
 
 def verified_100_midcall_entries(boot: Path, eboot_sha: str) -> list[int]:
@@ -886,10 +886,10 @@ def main(argv=None):
                 # that all 64 shards could necessarily be reused.
                 stats = (aot / "compile.txt").read_text(
                     encoding="utf-8", errors="replace")
-                reuse = re.search(r"reuse:\\s*(\\d+) of (\\d+) shards kept", stats)
+                reuse = re.search(r"reuse:\s*(\d+) of (\d+) shards kept", stats)
                 if not reuse:
                     reuse = re.search(
-                        r"resume:\\s*reused (\\d+) of (\\d+) shards", stats)
+                        r"resume:\s*reused (\d+) of (\d+) shards", stats)
                 if not reuse:
                     raise ValueError("Native 01.00 resume statistics missing")
                 reused, total = (int(reuse.group(1)), int(reuse.group(2)))

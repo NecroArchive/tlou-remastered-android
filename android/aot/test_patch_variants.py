@@ -24,6 +24,54 @@ def fixture():
     return expected, code
 
 class AllPatchVariants(unittest.TestCase):
+    def test_100_native_catalog_covers_base_patches_and_all_user_options(self):
+        # The original 1.00 AOT compiled all x86 code but had zero variants;
+        # the first guest patch entered +0x946180 and stopped with code 22.
+        originals={}
+        groups=list(patches.BASE_PATCHES.values())
+        groups += [patches.scene_aim_resolution_patches(r) for r in mod.RESOLUTIONS]
+        groups += [patches.PERFORMANCE_EFFECTS[r] for r in mod.EFFECTS_100]
+        for spans in groups:
+            for address,old,new in spans:
+                key=(address,len(bytes.fromhex(old)))
+                before=bytes.fromhex(old)
+                if key in originals:
+                    self.assertEqual(originals[key],before)
+                originals[key]=before
+        catalog,names,writes,data=mod.catalog_data_100(
+            patches,lambda a,n:originals.get((a,n),b""),
+            [(0,0x1da8050,True)],0x1da8050)
+        self.assertEqual(mod.PROFILE_100,"tlou-100-variants-v1")
+        self.assertEqual(len(names),13)
+        self.assertEqual(len(set(names)),13)
+        self.assertIn("group base_null_component_transforms",catalog)
+        self.assertIn("group base_static_ray_hit_submesh_bounds",catalog)
+        self.assertIn("group base_job_sleep",catalog)
+        self.assertIn("group resolution_720 excl=resolution",catalog)
+        self.assertIn("group effect_ssao",catalog)
+        self.assertIn("w 946363 00",catalog)
+        self.assertGreater(writes,30)
+        self.assertEqual(data,0)
+        compiler=(ROOT/"aot_local.py").read_text()
+        self.assertIn("catalog_mode_100 = version == \"1.00\"",compiler)
+        self.assertIn("create_catalog_100(",compiler)
+        self.assertIn('command.remove("--resume")',compiler)
+
+    def test_100_refuses_any_unverified_patch_bytes(self):
+        originals={}
+        for spans in [*patches.BASE_PATCHES.values(),
+                      *[patches.scene_aim_resolution_patches(r)
+                        for r in mod.RESOLUTIONS],
+                      *[patches.PERFORMANCE_EFFECTS[k]
+                        for k in mod.EFFECTS_100]]:
+            for addr,old,new in spans:
+                originals[(addr,len(bytes.fromhex(old)))]=bytes.fromhex(old)
+        originals[(0x946363,1)]=b"\\xff"
+        with self.assertRaisesRegex(ValueError,"byte guard mismatch"):
+            mod.catalog_data_100(
+                patches,lambda a,n:originals.get((a,n),b""),
+                [(0,0x1da8050,True)],0x1da8050)
+
     def test_every_verified_effect_and_resolution_has_a_native_variant(self):
         old,segments=fixture()
         catalog,groups,code_count,data_count=mod.catalog_data(

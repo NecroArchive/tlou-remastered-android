@@ -54,7 +54,11 @@ public class PresentationTest {
             LinearLayout about=AboutPanel.create(a,()->{},()->{});a.setContentView(about);
             String text=labels(about);
             assertTrue(text.contains("@daedalusemulator"));assertTrue(text.contains("ravencaio/tlou-remastered-pc"));
-            assertTrue(text.contains("Bugs e sugestões"));assertFalse(text.contains("CUSA00552"));
+            assertTrue(text.contains("Bugs e sugestões"));
+            assertFalse(text.contains("Execução da CPU"));
+            assertFalse(text.contains("ARM64 recompilado (AOT)"));
+            assertFalse(text.contains("Port para Android com runtime Bionic."));
+            assertFalse(text.contains("CUSA00552"));
             assertFalse(text.toLowerCase().contains("log 32"));assertFalse(text.toLowerCase().contains("readback"));
             render(about,411,"about-pt.png");
             PortSettings.prefs(a).edit().putString("ui_language","en").commit();

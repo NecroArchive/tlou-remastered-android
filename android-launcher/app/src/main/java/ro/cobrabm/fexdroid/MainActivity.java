@@ -375,7 +375,30 @@ public final class MainActivity extends Activity {
     /** Every update source (PKG or folder) converges on one transactional physical install.
      * The extracted PKG is only a temporary staging source, NEVER a persisted overlay.
      */
+    private static String bootSha256(File boot) throws Exception {
+        java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
+        try(java.io.InputStream stream=new java.io.BufferedInputStream(
+                new java.io.FileInputStream(boot))) {
+            byte[] bytes=new byte[1024*1024];
+            int length;
+            while((length=stream.read(bytes))!=-1)digest.update(bytes,0,length);
+        }
+        StringBuilder hash=new StringBuilder(64);
+        for(byte value:digest.digest())
+            hash.append(String.format(java.util.Locale.ROOT,"%02x",value&255));
+        return hash.toString();
+    }
+
+    private static final class MigrationWouldInvalidateAot extends IOException {
+        MigrationWouldInvalidateAot(String message) { super(message); }
+    }
+
     private void installPhysicalUpdate(File game,File patch) throws Exception {
+        installPhysicalUpdate(game,patch,false);
+    }
+
+    private void installPhysicalUpdate(File game,File patch,
+                                       boolean preserveExistingAot) throws Exception {
         if(game.getCanonicalFile().equals(patch.getCanonicalFile()))
             throw new IOException("A atualização deve ser diferente da pasta do jogo.");
         // Validate title, update and game assets BEFORE mutating the base.
@@ -385,15 +408,39 @@ public final class MainActivity extends Activity {
         String expected=source==null?"":source.optString("update_version","");
         if(expected.isEmpty() || "null".equals(expected))
             throw new IOException("Atualização não reconhecida; pasta do jogo preservada.");
+        String compiledBootHash="";
+        if(preserveExistingAot) {
+            // A previous 1.11 native compilation was created from the
+            // combined base + update. Moving the files must not invalidate it.
+            File report=new File(TsoProfile.work(this),"aot-report.json");
+            if(report.isFile()) {
+                org.json.JSONObject aotReport=new org.json.JSONObject(
+                    new String(java.nio.file.Files.readAllBytes(report.toPath()),
+                        java.nio.charset.StandardCharsets.UTF_8));
+                if("1.11".equals(aotReport.optString("version")) &&
+                   "aarch64_generated_native_ready".equals(aotReport.optString("status")))
+                    compiledBootHash=aotReport.optString("input_boot_sha256","");
+            }
+            if(compiledBootHash.length()==64 &&
+               !compiledBootHash.equalsIgnoreCase(
+                    bootSha256(new File(preview,"boot-linked.bin"))))
+                throw new MigrationWouldInvalidateAot(
+                    "A preparação 1.11 já difere da CPU ARM64 compilada. Mantendo o update separado.");
+        }
         try(SaveArchive.Guard guard=SaveArchive.lock(new File(getFilesDir(),"tlou/user"))) {
             try(UpdateInPlace.Transaction transaction=UpdateInPlace.apply(game,patch,this::update)) {
                 File prepared=tools.prepare(game,null,this::update);
                 org.json.JSONObject record=GameInstallState.marker(prepared);
                 if(record==null || !expected.equals(record.optString("version")))
                     throw new IOException("Versão instalada não corresponde ao update; alteração revertida.");
-                // Commit only after the real on-disk game and standalone
-                // preparation are verified. No reference to the update source
-                // is retained; deleting temporary PKG extraction is safe.
+                if(preserveExistingAot && compiledBootHash.length()==64 &&
+                   !compiledBootHash.equalsIgnoreCase(
+                        bootSha256(new File(prepared,"boot-linked.bin"))))
+                    throw new MigrationWouldInvalidateAot(
+                        "A migração modificaria o executável usado pela CPU ARM64 1.11. Update mantido separado.");
+                // Only commit after matching BOTH the installed version and
+                // the existing ARM64 boot hash. Transaction close rolls back
+                // every changed base-game file on any failure.
                 transaction.commit();
                 prefs.edit().remove("update_game").remove("update_path")
                     .putString("game_path",game.getAbsolutePath())
@@ -436,27 +483,51 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Preserve existing 1.11 AOT builds across APK upgrades. A separate 1.11
-     * update overlay is valid and MUST NOT be physically merged into the game
-     * merely because the user pressed Play or Compile CPU.
-     *
-     * The previous automatic migration regenerated boot-linked.bin and made
-     * the already compiled library fail its input_boot_sha256 validation,
-     * even without compiling or selecting 1.00. Physical update installation
-     * remains an explicit user action in installPhysicalUpdate().
+     * Automatic 1.11 migration is conditional on the actual PS4 param.sfo:
+     * a folder already at 1.11 is never updated twice, while a 1.00 base
+     * with a valid separate 1.11 update is migrated transactionally.
+     * Existing ARM64 1.11 code is protected by comparing its original
+     * boot-linked.bin SHA-256 before committing the physical update.
      */
     private File prepareForNativeAot(File game) throws Exception {
+        String physicalVersion=Ps4SfoVersion.fromFolder(game);
+        if("1.11".equals(physicalVersion)) {
+            // Ignore a legacy update_path or stale .previous marker.
+            // Physical 1.11 is already current and its compiled AOT stays put.
+            File prepared=tools.prepare(game,null,this::update);
+            RunLog.write(this,"Jogo já está em 1.11. Migração desnecessária; CPU ARM64 preservada.");
+            return prepared;
+        }
+        if(!"1.00".equals(physicalVersion))
+            throw new IOException("Versão PS4 não reconhecida: "+physicalVersion);
         File installedUpdate=updateForGame(game);
-        File prepared=tools.prepare(game,installedUpdate,this::update);
-        org.json.JSONObject marker=GameInstallState.marker(prepared);
-        if(marker==null)throw new IOException("Preparação sem identificação do jogo.");
-        String effective=TsoProfile.gameCode(marker);
-        if(installedUpdate!=null && !"111".equals(effective))
-            throw new IOException("Atualização selecionada não corresponde ao jogo 1.11.");
-        RunLog.write(this,"Preparação AOT preservada: versão efetiva="+effective+
-            " • atualização separada="+(installedUpdate!=null)+
-            " • nenhuma migração física durante inicialização.");
-        return prepared;
+        if(installedUpdate==null) {
+            File prepared=tools.prepare(game,null,this::update);
+            RunLog.write(this,"Jogo 1.00: desempenho inferior; atualização 1.11 recomendada.");
+            return prepared;
+        }
+        if(!"1.11".equals(Ps4SfoVersion.fromFolder(installedUpdate)))
+            throw new IOException("O update selecionado não é 1.11; pasta base 1.00 preservada.");
+        update("Migrando automaticamente a atualização 1.11 para a pasta do jogo…");
+        try {
+            installPhysicalUpdate(game,installedUpdate,true);
+            File prepared=tools.prepare(game,null,this::update);
+            if(!"1.11".equals(Ps4SfoVersion.fromFolder(game)) ||
+               !"111".equals(TsoProfile.gameCode(GameInstallState.marker(prepared))))
+                throw new IOException("Migração 1.11 não confirmada após instalação.");
+            RunLog.write(this,"Migração automática 1.00 → 1.11 concluída, CPU ARM64 preservada.");
+            return prepared;
+        } catch(MigrationWouldInvalidateAot unsafe) {
+            // Do not make the user recompile 75k ARM64 units just because the
+            // physical update maps the executable differently. Keep playing
+            // via the established 1.11 overlay and retry migration only if safe.
+            RunLog.write(this,"Migração física adiada: "+unsafe.getMessage());
+            update("Atualização 1.11 mantida separada para preservar a CPU ARM64 compilada.");
+            File prepared=tools.prepare(game,installedUpdate,this::update);
+            if(!"111".equals(TsoProfile.gameCode(GameInstallState.marker(prepared))))
+                throw new IOException("O update 1.11 não está ativo.");
+            return prepared;
+        }
     }
 
     private void exportLogs() {

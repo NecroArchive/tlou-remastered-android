@@ -38,19 +38,42 @@ for library in libgow3cpu.so libgow3gpu.so libgow3present.so libc++_shared.so; d
 done
 stage="$out/apk-jni/arm64-v8a"
 assets="$out/apk-assets/runtime"
-# Only experimental builds requested explicitly carry the approximately 50 MB
-# on-device recompilation tool. The stable FEX APK stays byte-for-byte unaffected.
-if [[ "${TLOU_EXPERIMENTAL_LOCAL_AOT:-0}" == "1" ]]; then
-  bash android/bionic/stage_aot_compiler.sh
+# The original v0.1.1 full-native workflow calls this packager after it has
+# built Bionic, FEX linkage, Vulkan, Python and the PKG tools. Keep that job
+# hierarchy untouched. Stage the mandatory v0.2.0 ARM64 engine here.
+if [[ ! -s "$out/apk-assets/runtime-aot/libgow3cpu.so" ||
+      ! -s "$out/apk-assets/runtime-aot/libbbcpu.so" ]]; then
+  bash android/bionic/build_aot_cpu.sh
 fi
-# The stable 0.2.0 installer requires a current native AOT dispatcher and
-# one pinned ARM64 TSO compiler. Do not silently package an FEX-only update.
+# Build the pinned, TLOU-patched TSO compiler from SOURCE in this same release
+# job when no verified archive is supplied. Never silently ship upstream
+# bb-recomp 1.3.0: it lacks the required TSO lowering.
+compiler_archive=${TLOU_AOT_COMPILER_ARCHIVE:-$out/aot-tso-compiler/bb-recomp-android-aarch64.tar.xz}
+if [[ ! -s "$compiler_archive" ]]; then
+  echo "Building TLOU ARM64 TSO compiler from pinned sources within original native release job"
+  ANDROID_NDK_HOME="$ndk" TLOU_AOT_BUILD_JOBS="${TLOU_JOBS:-3}" \
+    bash android/aot/build_recompiler_tso.sh
+fi
+[[ -s "$compiler_archive" ]] || {
+  echo "Mandatory patched compiler archive unavailable: $compiler_archive" >&2
+  exit 8
+}
+if [[ -s "$compiler_archive.sha256" ]]; then
+  (cd "$(dirname "$compiler_archive")" &&
+    sha256sum -c "$(basename "$compiler_archive").sha256")
+fi
+TLOU_TSO_REQUIRED=1 TLOU_AOT_COMPILER_ARCHIVE="$compiler_archive" \
+  bash android/bionic/stage_aot_compiler.sh
 for required in "$out/apk-assets/runtime-aot/libgow3cpu.so" \
                 "$out/apk-assets/runtime-aot/libbbcpu.so" \
                 "$out/aot-compiler/bin/libbbrecomp.so" \
                 "$out/aot-compiler/upstream.sha256"; do
   [[ -s "$required" ]] || { echo "Missing mandatory v0.2.0 AOT payload: $required" >&2; exit 8; }
 done
+# Sanity check AArch64 runtime: the compiler and CPU backend must match the
+# pinned AOT ABI, not any accidental FEX-only package.
+require_command_regex 'Machine:.*AArch64' "$llvm/llvm-readelf" -h "$out/apk-assets/runtime-aot/libgow3cpu.so"
+require_command_regex 'Machine:.*AArch64' "$llvm/llvm-readelf" -h "$out/aot-compiler/bin/libbbrecomp.so"
 python3 android/bionic/stage_tools.py
 mkdir -p "$stage" "$assets" "$root/out/release"
 # Pinned official Turnip 27 R2 / Gen8 V39 patched. Never use a rolling Mesa

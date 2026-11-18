@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package the real TLOU ARM64/FEX executable and GPU, not a placeholder APK.
+# Package the ARM64 AOT-only TLOU loader and Vulkan GPU for Android.
 set -Eeuo pipefail
 trap 'echo "TLOU APK packaging failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 cd "$(dirname "$0")/../.."
@@ -14,7 +14,7 @@ if [[ -z "$sdk" ]]; then sdk="$ANDROID_SDK_ROOT"; fi
 [[ -n "$sdk" ]] || { echo "Set ANDROID_HOME or ANDROID_SDK_ROOT" >&2; exit 2; }
 build_tools=35.0.0
 android_tools="$sdk/build-tools/$build_tools"
-[[ -s "$out/bin/gow3-probe" ]] || { echo "Missing actual TLOU FEX loader" >&2; exit 2; }
+[[ -s "$out/bin/gow3-probe" ]] || { echo "Missing TLOU ARM64 AOT loader" >&2; exit 2; }
 for library in libgow3cpu.so libgow3gpu.so libgow3present.so libc++_shared.so; do
   [[ -s "$out/lib/$library" ]] || { echo "Missing native $library" >&2; exit 2; }
 done
@@ -36,10 +36,20 @@ require_command_regex '/system/bin/linker64' "$llvm/llvm-readelf" -l "$out/bin/g
 for library in libgow3cpu.so libgow3gpu.so libgow3present.so libc++_shared.so; do
   require_command_regex 'Machine:.*AArch64' "$llvm/llvm-readelf" -h "$out/lib/$library"
 done
+# Release 0.2.0 must have exactly the same native CPU in the package and
+# in the AOT guest runtime; reject old FEX-built libgow3cpu.so from any cache.
+test -s "$out/lib/libgow3cpu.so"
+test -s "$out/apk-assets/runtime-aot/libgow3cpu.so"
+cmp "$out/lib/libgow3cpu.so" "$out/apk-assets/runtime-aot/libgow3cpu.so" || {
+  echo "Refusing mismatched CPU implementations (FEX vs ARM64 AOT)" >&2
+  exit 8
+}
+require_command_regex 'guest_cpu_fiber_switch' "$llvm/llvm-readelf" --dyn-syms --wide "$out/lib/libgow3cpu.so"
+require_command_regex 'bbr_dispatch' "$llvm/llvm-readelf" --dyn-syms --wide "$out/lib/libgow3cpu.so"
 stage="$out/apk-jni/arm64-v8a"
 assets="$out/apk-assets/runtime"
 # The original v0.1.1 full-native workflow calls this packager after it has
-# built Bionic, FEX linkage, Vulkan, Python and the PKG tools. Keep that job
+# built Bionic, ARM64 AOT, Vulkan, Python and the PKG tools. Keep that job
 # hierarchy untouched. Stage the mandatory v0.2.0 ARM64 engine here.
 if [[ ! -s "$out/apk-assets/runtime-aot/libgow3cpu.so" ||
       ! -s "$out/apk-assets/runtime-aot/libbbcpu.so" ]]; then

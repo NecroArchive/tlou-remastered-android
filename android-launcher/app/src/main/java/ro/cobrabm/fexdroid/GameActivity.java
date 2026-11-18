@@ -41,7 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Loads only the real TLOU ARM64/FEX executable, never a renamed GOW3 game. */
+/** Loads the real TLOU ARM64 runtime with mandatory AOT guest code. */
 public final class GameActivity extends Activity {
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final AtomicBoolean closing=new AtomicBoolean();
@@ -170,7 +170,7 @@ public final class GameActivity extends Activity {
             error("Não foi possível iniciar AHardwareBuffer: "+err);
             return;
         }
-        Thread starter=new Thread(this::launch,"tlou-fex-launcher");
+        Thread starter=new Thread(this::launch,"tlou-aot-native-launcher");
         starter.start();
         handler.postDelayed(this::refreshFps,500);
     }
@@ -308,13 +308,10 @@ public final class GameActivity extends Activity {
             }
             ProcessBuilder builder=new ProcessBuilder(RuntimeProcess.command(args,runtimePidFile));
             Map<String,String> env=builder.environment();
-            File home=new File(state,"home"), temp=new File(state,"tmp"), config=new File(home,".fex-emu"), cache=new File(home,".cache/fex-emu");
-            for(File directory:new File[]{home,temp,config,cache})
+            File home=new File(state,"home"), temp=new File(state,"tmp");
+            for(File directory:new File[]{home,temp})
                 if(!directory.isDirectory()&&!directory.mkdirs())throw new java.io.IOException("Falha ao criar "+directory);
             env.put("HOME",home.getAbsolutePath()); env.put("TMPDIR",temp.getAbsolutePath()); env.put("XDG_RUNTIME_DIR",temp.getAbsolutePath());
-            env.put("FEX_APP_CONFIG_LOCATION",config.getAbsolutePath()+"/");
-            env.put("FEX_APP_DATA_LOCATION",config.getAbsolutePath()+"/");
-            env.put("FEX_APP_CACHE_LOCATION",cache.getAbsolutePath()+"/");
             if(!audio.awaitReady(5000)) {
                 env.put("GOW3_AUDIO","none");
                 RunLog.write(this,"Áudio indisponível após 5 s: usando timer sem som nesta sessão");
@@ -326,7 +323,7 @@ public final class GameActivity extends Activity {
                 // Native AOT units use the host ARM64 C++ call stack. The
                 // original 320 KiB pthreads are too small for nested calls;
                 // preload our already-verified AOT CPU to enlarge ONLY the
-                // 320 KiB worker stacks, leaving FEX/system stacks untouched.
+                // 320 KiB worker stacks, leaving other system stacks untouched.
                 String originalPreload=env.get("LD_PRELOAD");
                 String aotPreload=new File(nativeAot.engineDirectory,"libgow3cpu.so").getAbsolutePath();
                 env.put("LD_PRELOAD",aotPreload+(originalPreload==null||originalPreload.isEmpty()?"":" "+originalPreload));
@@ -463,7 +460,7 @@ public final class GameActivity extends Activity {
             RunLog.write(this,"Processo "+backend+" criado");
             // Full /proc/PID/task scans are diagnostic, not part of the FPS HUD.
             // Avoid a second competing sampler during normal gameplay. The
-            // explicit detailed-diagnostics setting restores the old data.
+            // do not enable the removed expensive AOT diagnostics.
             final boolean scanThreads=false;
             final TlouCpuThreads threadCpu=scanThreads
                     ?new TlouCpuThreads(runtimePidFile,RuntimeProcess.readPid(runtimePidFile),backend,

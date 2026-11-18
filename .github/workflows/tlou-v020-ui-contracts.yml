@@ -1,0 +1,52 @@
+name: TLOU 0.2.0 UI and AOT contract checks
+on:
+  push:
+    branches: [tlou-v020-from-stable-011]
+    paths:
+      - '.github/workflows/tlou-v020-ui-contracts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - name: Assert all requested 0.2.0 settings are present in release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          main=android-launcher/app/src/main/java/ro/cobrabm/fexdroid/MainActivity.java
+          menu=android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortMenu.java
+          game=android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
+          settings=android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
+          pad=android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PadBridge.java
+          overlay=android-launcher/app/src/main/java/ro/cobrabm/fexdroid/TouchControllerOverlay.java
+          grep -Fq 'controlSizeSetting(controls)' "$main"
+          grep -Fq 'prefs.edit().putInt("control_size",percent).apply()' "$main"
+          grep -Fq 'slider("control_size"' "$menu"
+          grep -Fq 'controlSize()' "$overlay"
+          grep -Fq '"shake"' "$overlay"
+          grep -Fq 'keys.contains("l3") && keys.contains("r3")' "$pad"
+          grep -Fq 'RuntimeAot.prepare(this,base)' "$game"
+          ! grep -Fq 'FEX_APP_CONFIG_LOCATION' "$game"
+          grep -Fq 'TLOU_AOT_SPLIT_PRIME' "$settings"
+          grep -Fq 'env.put("TLOU_FAST_RENDER_CORES","0")' "$settings"
+          grep -Fq 'TlouDevicePolicy.configureCompactPresent(env)' "$game"
+          grep -Fq 'choice(video,"fps_limit"' "$main"
+          grep -Fq 'Compilar CPU ARM64' "$main"
+          grep -Fq 'prepareForNativeAot(base)' "$main"
+          test -s android/bionic/package_aotnative_v020.sh
+          echo "All requested 0.2.0 source-side settings and AOT-only guards present"
+      - name: Compile launcher and run Android unit tests
+        run: gradle -p android-launcher :app:testDebugUnitTest :app:lintVitalRelease --no-daemon --max-workers=2

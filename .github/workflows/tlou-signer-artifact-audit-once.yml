@@ -1,4 +1,4 @@
-name: TLOU one-time signer artifact and workflow audit
+name: TLOU one-time signer archive candidate scan
 on:
   push:
     branches: [tlou-ui-approval-log32-20261105]
@@ -10,12 +10,9 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Audit artifact manifest and historical workflow upload patterns (no secrets)
+      - name: Scan small historical job artifact archives for original key backups
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -23,33 +20,37 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, subprocess, collections
-          repo='erickmendes22/tlou-remastered-android'
+          import subprocess, json, io, zipfile, re, os, time
+          repo=os.environ['GH_REPO']
           arts=[]
-          page=1
-          while True:
-            p=subprocess.run(['gh','api',f'repos/{repo}/actions/artifacts?per_page=100&page={page}'],capture_output=True,text=True,check=True)
-            data=json.loads(p.stdout)
-            arts.extend(data['artifacts'])
-            if len(data['artifacts'])<100: break
-            page+=1
-          print('ARTIFACT_TOTAL',len(arts))
-          names=collections.Counter(a['name'] for a in arts)
-          print('ARTIFACT_UNIQUE_NAMES',len(names))
-          for name,count in names.most_common(100):
-            bytes_sizes=sorted(a['size_in_bytes'] for a in arts if a['name']==name)
-            print('ARTIFACT_NAME',json.dumps(name), 'COUNT',count,'MAX_MB',round(max(bytes_sizes)/1e6,2))
-          for a in arts:
-            n=a['name'].lower()
-            if any(t in n for t in ('sign','key','backup','native','diagnostic','release','source','tool')):
-              print('CANDIDATE',a['id'],json.dumps(a['name']),a['size_in_bytes'],a['created_at'],a['expired'])
+          for page in range(1,30):
+              x=subprocess.run(['gh','api',f'repos/{repo}/actions/artifacts?per_page=100&page={page}'],capture_output=True,text=True)
+              if x.returncode!=0: print('LIST_ERROR',x.stderr[:250]);break
+              d=json.loads(x.stdout)['artifacts']
+              arts+=d
+              if len(d)<100:break
+          selected=[a for a in arts if a.get('size_in_bytes',0)<=1200000 and not a.get('expired',True)]
+          selected.sort(key=lambda a:(0 if any(t in a['name'].lower() for t in ('diagnos','error','native','backup','sign','source')) else 1,a['created_at']))
+          print('ARTIFACTS_SELECTED',len(selected))
+          print('ARCHIVES_WITH_KEY_FILE_NAMES')
+          count=success=fail=0
+          for a in selected:
+              count+=1
+              run=subprocess.run(['gh','api',f'repos/{repo}/actions/artifacts/{a["id"]}/zip'],capture_output=True,timeout=50)
+              if run.returncode:
+                  fail+=1
+                  if fail<=5:print('ARCHIVE_DOWNLOAD_ERROR',a['id'],run.stderr[:150].decode(errors='replace'))
+                  continue
+              try:
+                  z=zipfile.ZipFile(io.BytesIO(run.stdout))
+                  names=z.namelist()
+                  matching=[x for x in names if re.search(r'(^|/)[^/]+\.(jks|keystore|p12|pfx|pem|key)$',x,re.I) or 'experimental-development' in x.lower()]
+                  if matching:
+                      print('KEY_NAME_CANDIDATE',a['id'],repr(a['name']),repr(matching[:20]))
+                  success+=1
+              except Exception as e:
+                  fail+=1
+                  if fail<=5:print('ARCHIVE_BAD_ZIP',a['id'],str(e)[:120])
+              if count%40==0:print('SCAN_PROGRESS',count,'success',success,'failed',fail)
+          print('SCAN_FINAL',count,'success',success,'failed',fail)
           PY
-          echo "HISTORICAL_WORKFLOW_UPLOAD_PATTERNS"
-          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --quiet
-          git rev-list --objects --all | awk '$2 ~ /^.github\/workflows\/.*\.(yml|yaml)$/ {print $1 " " $2}' | sort -u | while read -r obj path; do
-            body=$(git show "$obj" 2>/dev/null || true)
-            if [[ "$body" == *"upload-artifact"* ]] && [[ "$body" == *"out/android-bionic/"* || "$body" == *"out/**"* ]]; then
-              printf 'UPLOAD_WORKFLOW %s %s\n' "$obj" "$path"
-              echo "$body" | grep -B 3 -A 12 'uses: actions/upload-artifact' | grep -E 'name:|path:|out/|android-bionic/|\.jks|\.keystore' | head -20 || true
-            fi
-          done

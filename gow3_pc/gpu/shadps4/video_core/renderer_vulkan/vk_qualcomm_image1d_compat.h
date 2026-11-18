@@ -69,4 +69,45 @@ inline bool NarrowNonArrayed1DWrite(std::span<const uint32_t> original,
     return true;
 }
 
+// The 6020-byte ZIP33 shader declares StorageImageReadWithoutFormat
+// (capability 55) but only writes its single storage image. Some Qualcomm
+// drivers reject declared features not enabled on the VkDevice, even if no
+// instruction uses them. Strip precisely this unused declaration; retain
+// StorageImageWriteWithoutFormat (56), its OpImageWrite and all instructions.
+inline bool DropUnusedImageReadCapability(std::span<const uint32_t> original,
+                                          std::vector<uint32_t>& patched) {
+    patched.clear();
+    if (original.size() < 5 || original.size() > 1024 * 1024 ||
+        original[0] != 0x07230203) return false;
+    constexpr uint32_t OpCapability = 17, OpImageRead = 98,
+                       OpImageSparseRead = 320, OpImageWrite = 99;
+    constexpr uint32_t StorageImageReadWithoutFormat = 55;
+    constexpr uint32_t StorageImageWriteWithoutFormat = 56;
+    unsigned unused_read_cap = 0, write_cap = 0, writes = 0;
+    for (size_t i = 5; i < original.size();) {
+        const size_t n = original[i] >> 16;
+        const uint32_t op = original[i] & 0xffffu;
+        if (!n || n > original.size() - i) return false;
+        if (op == OpImageRead || op == OpImageSparseRead) return false;
+        if (op == OpCapability && n == 2) {
+            unused_read_cap += original[i + 1] == StorageImageReadWithoutFormat;
+            write_cap += original[i + 1] == StorageImageWriteWithoutFormat;
+        }
+        writes += op == OpImageWrite;
+        i += n;
+    }
+    if (unused_read_cap != 1 || write_cap != 1 || writes != 1) return false;
+    patched.insert(patched.end(), original.begin(), original.begin() + 5);
+    for (size_t i = 5; i < original.size();) {
+        const size_t n = original[i] >> 16;
+        const uint32_t op = original[i] & 0xffffu;
+        if (!(op == OpCapability && n == 2 &&
+              original[i + 1] == StorageImageReadWithoutFormat)) {
+            patched.insert(patched.end(), original.begin() + i, original.begin() + i + n);
+        }
+        i += n;
+    }
+    return patched.size() + 2 == original.size();
+}
+
 } // namespace Vulkan::QualcommImage1DCompat

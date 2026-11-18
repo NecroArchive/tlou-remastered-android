@@ -104,6 +104,64 @@ def synthetic_switch_boot(path: Path) -> bytes:
 
 class TestBridge(unittest.TestCase):
 
+    def test_100_midfunction_call_seeded_and_verified_before_codegen(self):
+        """A repeatable kind=call at +0x910580 must NOT require a second
+        failed Android launch to seed it. Synthetic image; no game bytes.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            boot=root/"synthetic-100-boot.bin"
+            fake_boot(boot)
+            old_size=16384
+            image_start=boot.stat().st_size-old_size
+            image_size=mod.TLOU_100_MIDCALL_PC+512
+            fake_signature=bytes(range(mod.TLOU_100_MIDCALL_SIGNATURE_LEN))
+            with boot.open("r+b") as stream:
+                stream.seek(8)
+                stream.write(struct.pack("<Q",image_size))
+                stream.truncate(image_start+image_size)
+                stream.seek(image_start+mod.TLOU_100_MIDCALL_PC)
+                stream.write(fake_signature)
+            digest=mod.TLOU_100_CALL_SELF_SHA256
+            with patch.object(mod,"TLOU_100_MIDCALL_SIGNATURE_SHA256",
+                              hashlib.sha256(fake_signature).hexdigest()):
+                self.assertEqual(
+                    mod.verified_100_midcall_entries(boot,digest),
+                    [0x910580])
+                known,extra=mod.prepare_extra_entries(
+                    boot,digest,None,root/"extra-entries.txt")
+                self.assertEqual(known,[])
+                self.assertIn(0x910580,extra)
+                self.assertIn("+0x910580",(root/"extra-entries.txt").read_text())
+                risk=mod.granular_risk_entries(digest,None,image_size)
+                for target in (0x910510,0x910580,0x9105C0,0x910670,0x8E4421):
+                    self.assertIn(target,risk)
+                self.assertNotIn(0x910580,
+                    mod.granular_risk_entries(mod.TLOU_111_SWITCH_SHA256,None,0x910600))
+                # AOT must never seed 01.00 addresses on a 01.11 binary.
+                self.assertEqual(mod.verified_100_midcall_entries(
+                    boot,mod.TLOU_111_SWITCH_SHA256),[])
+                with boot.open("r+b") as stream:
+                    stream.seek(image_start+mod.TLOU_100_MIDCALL_PC)
+                    stream.write(b"\\xcc")
+                with self.assertRaisesRegex(ValueError,"CALL signature mismatch"):
+                    mod.verified_100_midcall_entries(boot,digest)
+
+    def test_100_midfunction_call_log_is_granularized_with_callers(self):
+        with tempfile.TemporaryDirectory() as td:
+            misses=Path(td)/"aot-misses.log"
+            misses.write_text(
+                "miss +0x910580 kind=call thread=NdJobWorkerThre "
+                "backtrace=+0x8e4421,+0xfd27,+0xb266\\n")
+            risk=mod.granular_risk_entries(
+                mod.TLOU_100_CALL_SELF_SHA256,misses,0x910800)
+            self.assertIn(0x910580,risk)
+            self.assertIn(0x8e4421,risk)
+            self.assertIn(0xfd27,risk)
+            self.assertIn(0xb266,risk)
+            self.assertEqual(mod.verified_miss_entries(misses,0x910800),
+                             [0x910580])
+
     def test_native_111_animation_patch_isolated_and_guarded(self):
         # Synthetic header and invented filler, NO original PS4 data.
         import importlib.util

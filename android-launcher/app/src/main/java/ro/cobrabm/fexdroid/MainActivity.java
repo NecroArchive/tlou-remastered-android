@@ -615,6 +615,10 @@ public final class MainActivity extends Activity {
                 .putString("game_path",base.getAbsolutePath())
                 .putString("prepared_path",prepared.getAbsolutePath());
             saved.apply();
+            // A 1.00 base with an installed 1.11 update was already
+            // resolved/migrated by prepareForNativeAot(). Only the effective
+            // unsupported 1.00 image is blocked, before any AOT work.
+            if(blockUnsupported100Prepared(prepared))return;
             update("Pronto para jogar.");
             if(launch) {
                 try {
@@ -622,61 +626,43 @@ public final class MainActivity extends Activity {
                     if(!check.pendingCodePatches.isEmpty())
                         throw new IOException("Biblioteca ARM64 desatualizada.");
                 } catch(Exception aotProblem) {
-                    Exception reason=aotProblem;
-                    // Existing 1.00 ARM64 compilations with all patch groups
-                    // but missing indirect CALL entries must be repaired
-                    // automatically. Do not make the user find the new
-                    // compilation button or recompile the protected 1.11.
-                    if(RuntimeAot.needs100EntryRepair(this,prepared)) {
-                        try {
-                            update("Reparando automaticamente entradas ARM64 1.00 faltantes…");
-                            RunLog.write(this,"CPU ARM64 1.00 antiga detectada; "+
-                                "recompilando apenas shards invalidados pelo novo lote "+
-                                "de entradas, com --resume e validação de entradas.");
-                            tools.buildExperimentalAot(prepared,this::update);
-                            RuntimeAot.Ready fixed=RuntimeAot.prepare(this,prepared);
-                            if(!fixed.pendingCodePatches.isEmpty())
-                                throw new IOException("O reparo ARM64 deixou patches pendentes.");
-                            RunLog.write(this,"Reparo ARM64 1.00 verificado; "+
-                                "execução permitida sem recompilar 1.11.");
-                            reason=null;
-                        } catch(Exception repairFailed) {
-                            reason=repairFailed;
-                            RunLog.failure(this,"Reparo automático ARM64 1.00 falhou",
-                                repairFailed);
-                        }
-                    }
-                    if(reason!=null) {
-                        final Exception failure=reason;
-                        RunLog.failure(this,"AOT não pronto; compilação obrigatória",failure);
-                        prefs.edit().putBoolean("launch_direct",false).apply();
-                        runOnUiThread(()->{
-                            if(!isDestroyed())showAotUnavailable(prepared,failure);
-                        });
-                        return;
-                    }
-                }
-                if("100".equals(TsoProfile.gameCode(GameInstallState.marker(prepared)))) {
-                    // Warn on each launch attempt; 1.00 is measurably slower
-                    // than 1.11. The choice never changes user patches/data.
+                    RunLog.failure(this,"AOT 1.11 não pronto",aotProblem);
+                    prefs.edit().putBoolean("launch_direct",false).apply();
                     runOnUiThread(()->{
-                        if(isFinishing()||isDestroyed())return;
-                        TlouDialogs.show(this,new AlertDialog.Builder(this)
-                            .setTitle(TlouLanguage.t(this,"Versão 1.00 — desempenho inferior"))
-                            .setMessage(TlouLanguage.t(this,
-                                "A versão 1.00 é mais lenta no Android. Recomendamos atualizar o jogo para a versão 1.11 para obter melhor desempenho."))
-                            .setNegativeButton(TlouLanguage.t(this,"Cancelar"),null)
-                            .setPositiveButton(TlouLanguage.t(this,"Jogar 1.00"),
-                                (dialog,which)->startPreparedGame(prepared)));
+                        if(!isDestroyed())showAotUnavailable(prepared,aotProblem);
                     });
-                } else startPreparedGame(prepared);
+                    return;
+                }
+                startPreparedGame(prepared);
             }
         });
     }
+    private boolean blockUnsupported100Prepared(File prepared) throws Exception {
+        // The effective version includes valid 1.11 update overlays, so
+        // choosing an original 1.00 base with the 1.11 update remains valid.
+        if(!"100".equals(TsoProfile.gameCode(GameInstallState.marker(prepared))))
+            return false;
+        prefs.edit().putBoolean("launch_direct",false).apply();
+        RunLog.write(this,"Jogo 1.00 não suportado: atualize para 1.11. "+
+            "Bloqueados o lançamento, a recompilação e o reparo AOT 1.00.");
+        update("Versão 1.00 não suportada");
+        runOnUiThread(()->{
+            if(isFinishing()||isDestroyed())return;
+            TlouDialogs.show(this,new AlertDialog.Builder(this)
+                .setTitle(TlouLanguage.t(this,"Versão 1.00 não suportada"))
+                .setMessage(TlouLanguage.t(this,
+                    "The Last of Us Remastered 1.00 não é suportado nesta versão do aplicativo. Atualize o jogo para a versão 1.11 para poder jogar."))
+                .setPositiveButton(TlouLanguage.t(this,"OK"),null));
+        });
+        return true;
+    }
+
     private void startPreparedGame(File prepared) {
         runOnUiThread(()->{
             if(isDestroyed())return;
             try {
+                if(blockUnsupported100Prepared(prepared))return;
+                TsoProfile.requireSupported111(prepared);
                 RunLog.write(this,"Preparação verificada. Abrindo GameActivity: "+prepared);
                 Intent i=new Intent(this,GameActivity.class);
                 i.putExtra("prepared_path",prepared.getAbsolutePath());
@@ -724,6 +710,8 @@ public final class MainActivity extends Activity {
         task("Compilando patches e CPU ARM64…",()->{
             File base=GameInstallState.base(selected());
             File prepared=prepareForNativeAot(base);
+            if(blockUnsupported100Prepared(prepared))return;
+            TsoProfile.requireSupported111(prepared);
             update("Compilando a CPU ARM64 com todos os patches disponíveis…");
             File result=tools.buildExperimentalAot(prepared,this::update);
             File coverageFile=new File(TsoProfile.workForPrepared(this,prepared),"aot-report.json");

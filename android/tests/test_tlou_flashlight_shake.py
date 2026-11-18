@@ -21,6 +21,10 @@ class FlashlightShakeIntegration(unittest.TestCase):
         self.assertIn('all.remove("l3");', self.bridge)
         self.assertIn('all.remove("r3");', self.bridge)
         self.assertIn('all.add("shake");', self.bridge)
+        self.assertIn('if(shakePhysical) physicalShakeLatch=true;', self.bridge)
+        self.assertIn('if(physicalShakeLatch) {', self.bridge)
+        self.assertIn('if(!keys.contains("l3") && !keys.contains("r3"))', self.bridge)
+        self.assertIn('physicalShakeLatch=false;', self.bridge)
         # On-screen L3 and R3 remain normal independent buttons.
         self.assertIn('all.addAll(virtualKeys);', self.bridge)
         self.assertLess(self.bridge.index('all.add("shake");'),

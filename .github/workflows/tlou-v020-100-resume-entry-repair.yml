@@ -1,4 +1,4 @@
-name: TLOU 0.2.0 AOTNative v2 1.00 resumable entry repair
+name: TLOU 0.2.0 AOTNative v2 1.00 verified full-rebuild fallback
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -52,7 +52,11 @@ jobs:
           grep -Fq 'hasVerified100MidCall(source)' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RuntimeAot.java
           grep -Fq 'tlou-100-batched-call-hotspots-v2' android/aot/aot_local.py
           grep -Fq '"resume_enabled": "--resume" in command' android/aot/aot_local.py
-          ! grep -Fq 'command.remove("--resume")' android/aot/aot_local.py
+          # Unsafe legacy cache may be rebuilt fully; do not forbid that
+          # legitimate compiler fallback as the old workflow did.
+          grep -Fq 'if full_rebuild_100:' android/aot/aot_local.py
+          grep -Fq 'command.remove("--resume")' android/aot/aot_local.py
+          grep -Fq 'entry_check_completed' android/aot/aot_local.py
       - name: Restore original AOTNative v2 certificate (never create a new key)
         uses: actions/cache/restore@v4
         with:
@@ -238,15 +242,15 @@ jobs:
             print('Verified',len(native),'native/driver assets unchanged and only 2 AOT tooling scripts updated')
           PY
           mkdir -p out/release
-          cp "$apk" out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-RESUME-FIX-arm64.apk
-          sha256sum out/release/*.apk > out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-RESUME-FIX-arm64.apk.sha256
+          cp "$apk" out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64.apk
+          sha256sum out/release/*.apk > out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64.apk.sha256
       - name: Publish corrected FINAL APK from current release source
         uses: actions/upload-artifact@v4
         with:
-          name: TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-RESUME-FIX-arm64
+          name: TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64
           path: |
-            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-RESUME-FIX-arm64.apk
-            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-RESUME-FIX-arm64.apk.sha256
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64.apk
+            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-100-AOT-REBUILD-FIX-arm64.apk.sha256
             release-source-commit.txt
           if-no-files-found: error
           retention-days: 30

@@ -21,6 +21,9 @@ final class PadBridge {
     private int lx=128, ly=128, rx=128, ry=128, l2, r2, hatX, hatY;
     private int virtualLx=128, virtualLy=128, virtualRx=128, virtualRy=128, virtualL2, virtualR2;
     private boolean virtualLeftActive, virtualRightActive;
+    // Suppress the remaining stick click after an L3+R3 shortcut until both
+    // physical buttons are released, preventing accidental flashlight toggles.
+    private boolean physicalShakeLatch;
     private boolean queued;
 
     PadBridge(File state) { this.state=state; reset(); }
@@ -126,7 +129,8 @@ final class PadBridge {
     }
 
     void reset() {
-        keys.clear(); lx=ly=rx=ry=128; l2=r2=hatX=hatY=0;
+        keys.clear(); physicalShakeLatch=false;
+        lx=ly=rx=ry=128; l2=r2=hatX=hatY=0;
         virtualKeys.clear(); virtualLx=virtualLy=virtualRx=virtualRy=128;
         virtualL2=virtualR2=0; virtualLeftActive=virtualRightActive=false;
         write();
@@ -139,10 +143,13 @@ final class PadBridge {
         // motion sensors for the TLOU flashlight. Single L3/R3 keep their
         // normal gameplay actions; touch-screen L3/R3 are independent.
         final boolean shakePhysical=keys.contains("l3") && keys.contains("r3");
-        if(shakePhysical) {
+        if(shakePhysical) physicalShakeLatch=true;
+        if(physicalShakeLatch) {
             all.remove("l3");
             all.remove("r3");
-            all.add("shake");
+            if(shakePhysical) all.add("shake");
+            if(!keys.contains("l3") && !keys.contains("r3"))
+                physicalShakeLatch=false;
         }
         all.addAll(virtualKeys);
         int leftTrigger=Math.max(l2,virtualL2), rightTrigger=Math.max(r2,virtualR2);

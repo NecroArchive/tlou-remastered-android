@@ -1,0 +1,90 @@
+name: TLOU AOTNative v2 encrypted signing backup outside Actions cache
+on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - '.github/workflows/tlou-aotnative-encrypted-key-backup.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Restore original private keystore from verified AOTNative v2 cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tlou-aotnative-development-signing-v1
+          restore-keys: |
+            tlou-aotnative-v2-signer-backup-20261118-a
+            tlou-aotnative-v2-signer-backup-20261118-b
+          fail-on-cache-miss: true
+      - name: Validate original public signing fingerprint without disclosing private key
+        run: |
+          set -euo pipefail
+          test -s "$HOME/.android/debug.keystore"
+          cert=$(keytool -exportcert -alias androiddebugkey -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | sha256sum | cut -d ' ' -f1)
+          test "$cert" = adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c
+          echo 'Original AOTNative v2 certificate matched'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install public-key backup encryption
+        run: python3 -m pip install 'cryptography>=43,<47'
+      - name: Encrypt keystore to external recovery public key (no secret uploaded)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/aotnative-v2-recovery
+          python3 - <<'PY'
+          from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+          from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+          from cryptography.hazmat.primitives import hashes
+          from cryptography.hazmat.primitives.serialization import Encoding,PublicFormat
+          from pathlib import Path
+          import os
+          public=X25519PublicKey.from_public_bytes(bytes.fromhex('824996ca60658d422517bfed852053e89838e43abb81a5c9ba82b3d5f750446e'))
+          ephemeral=X25519PrivateKey.generate()
+          shared=ephemeral.exchange(public)
+          magic=b'TLOU-AOTNATIVE2-KEYBOX-20261118-v1\\n'
+          key=HKDF(algorithm=hashes.SHA256(),length=32,salt=None,
+                   info=b'tlou-aotnative-v2-signer-recovery-v1').derive(shared)
+          nonce=os.urandom(12)
+          plaintext=Path.home().joinpath('.android/debug.keystore').read_bytes()
+          assert len(plaintext)>1024
+          blob=magic+ephemeral.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw)+nonce+AESGCM(key).encrypt(nonce,plaintext,magic)
+          target=Path('out/aotnative-v2-recovery/tlou-aotnative-v2-signer.box')
+          target.write_bytes(blob)
+          print('Private keystore encrypted to separate recovery public key; ciphertext bytes:',len(blob))
+          PY
+          sha256sum out/aotnative-v2-recovery/tlou-aotnative-v2-signer.box
+      - name: Publish encrypted-only backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TLOU-AOTNative-v2-original-signer-ENCRYPTED
+          path: out/aotnative-v2-recovery/tlou-aotnative-v2-signer.box
+          if-no-files-found: error
+          retention-days: 90
+      - name: Store encrypted-only recovery blob permanently in Git history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=".github/key-backups/tlou-aotnative-v2-signer.box"
+          src="out/aotnative-v2-recovery/tlou-aotnative-v2-signer.box"
+          if gh api "repos/$GH_REPO/contents/$target?ref=experiment/tlou-local-aot-20261112" >/dev/null 2>&1; then
+            echo "::error::Encrypted backup file already exists. Refusing to overwrite original recovery copy."
+            exit 8
+          fi
+          gh api -X PUT "repos/$GH_REPO/contents/$target" \
+            -f "message=backup(tlou): preserve AOTNative v2 signer ENCRYPTED to external recovery public key" \
+            -f "content=$(base64 -w0 "$src")" \
+            -f "branch=experiment/tlou-local-aot-20261112" \
+            --jq '.content.path'
+          echo "Ciphertext-only Git backup published. Private signer and external decryption key NEVER uploaded."

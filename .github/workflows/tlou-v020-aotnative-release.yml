@@ -1,4 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
+# Trigger 2026-11-18: build the release-source Adreno A6xx sparse-arena OOM correction.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

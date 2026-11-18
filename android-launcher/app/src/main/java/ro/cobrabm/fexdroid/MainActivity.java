@@ -427,6 +427,36 @@ public final class MainActivity extends Activity {
         return GameInstallState.update(game,selected(),new File(getFilesDir(),"tlou-prepared"),prefs);
     }
 
+    /**
+     * 0.2.0 migration: older launchers kept 01.11 in a separate --update
+     * folder. Before starting the native compiler, merge that update into the
+     * original game directory, transactionally, and prepare WITHOUT --update.
+     * Save data and external update sources are never removed. No silent
+     * downgrade to 01.00 and no partial copy on failure.
+     */
+    private File prepareForNativeAot(File game) throws Exception {
+        File legacy=updateForGame(game);
+        if(legacy!=null) {
+            update("Migrando atualização antiga 1.11 para a pasta do jogo…");
+            RunLog.write(this,"Migrando update legado: "+legacy+" -> "+game);
+            File preview=tools.prepare(game,legacy,this::update);
+            org.json.JSONObject marker=GameInstallState.marker(preview);
+            if(marker==null || !"01.11".equals(marker.optString("update_version","")))
+                throw new IOException("A atualização antiga não é 1.11; migração automática recusada.");
+            installPhysicalUpdate(game,legacy);
+            RunLog.write(this,"Migração 1.11 concluída; preparando sem --update.");
+        }
+        // A physically merged game must always be prepared from its base
+        // folder; the previous --update path is no longer used.
+        File prepared=tools.prepare(game,null,this::update);
+        if(legacy!=null) {
+            org.json.JSONObject marker=GameInstallState.marker(prepared);
+            if(marker==null || !"01.11".equals(marker.optString("version","")))
+                throw new IOException("Atualização 1.11 não confirmada após migração.");
+        }
+        return prepared;
+    }
+
     private void exportLogs() {
         Intent save=new Intent(Intent.ACTION_CREATE_DOCUMENT);save.setType("application/zip");save.addCategory(Intent.CATEGORY_OPENABLE);
         save.putExtra(Intent.EXTRA_TITLE,"TLOU-Android-Logs.zip");startActivityForResult(save,SAVE_LOGS);
@@ -503,8 +533,8 @@ public final class MainActivity extends Activity {
             // physically using the new buttons. Newly installed updates never
             // store a separate update_path.
             File base=GameInstallState.base(selected());
-            File updateFolder=updateForGame(base);
-            File prepared=tools.prepare(base,updateFolder,this::update);
+            File prepared=launch?prepareForNativeAot(base):
+                tools.prepare(base,updateForGame(base),this::update);
             SharedPreferences.Editor saved=prefs.edit()
                 .putString("game_path",base.getAbsolutePath())
                 .putString("prepared_path",prepared.getAbsolutePath());
@@ -577,8 +607,7 @@ public final class MainActivity extends Activity {
         }
         task("Compilando patches e CPU ARM64…",()->{
             File base=GameInstallState.base(selected());
-            File updateFolder=updateForGame(base);
-            File prepared=tools.prepare(base,updateFolder,this::update);
+            File prepared=prepareForNativeAot(base);
             update("Compilando a CPU ARM64 com todos os patches disponíveis…");
             File result=tools.buildExperimentalAot(prepared,this::update);
             File coverageFile=new File(TsoProfile.work(this),"aot-report.json");

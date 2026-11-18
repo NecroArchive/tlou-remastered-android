@@ -2,12 +2,12 @@
 
 Adaptação do **The Last of Us Remastered de PS4 para Android**, baseada no
 [port de PC de ravencaio](https://github.com/ravencaio/tlou-remastered-pc), com
-runtime Bionic ARM64, tradução de CPU pelo FEX e renderização Vulkan.
+runtime Bionic ARM64, compilação nativa da CPU ARM64 (AOT) e renderização Vulkan.
 
-**Versão 0.1.1 · Atualização do port Android**
+**Versão 0.2.0 · Port Android ARM64 nativo**
 
 [English](README.md) · [Notas da versão](RELEASE_NOTES.md) ·
-[Releases](https://github.com/erickmendes22/tlou-remastered-android/releases) · [Código Android](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-ui-approval-log32-20261105) ·
+[Releases](https://github.com/erickmendes22/tlou-remastered-android/releases) · [Código Android](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-v020-from-stable-011) ·
 [YouTube — @daedalusemulator](https://www.youtube.com/@daedalusemulator)
 
 ## Recursos
@@ -20,7 +20,7 @@ runtime Bionic ARM64, tradução de CPU pelo FEX e renderização Vulkan.
 - HUD de FPS/GPU/CPU em uma linha, com posição e visibilidade configuráveis.
 - Resolução original e patches de 720p, 540p e 360p; patches opcionais para SSAO,
   motion blur, profundidade de campo, bloom, sombras solares e subsurface.
-- Limites de 30 ou 60 FPS e configuração de VSync. O limite de 60 FPS não
+- Limites de 30, 60 ou 120 FPS e configuração de VSync. O limite selecionado não
   significa que todas as cenas ou aparelhos atingirão essa taxa.
 - Drivers Vulkan incluídos e importação de drivers ZIP ou SO.
 - Importação/exportação de saves em ZIP; seletor de saves com metadados reais
@@ -36,9 +36,10 @@ internamente. Os controles experimentais de medição foram retirados da interfa
 ## Requisitos e versão do jogo
 
 - **Android 11 ou superior**, com ambiente Android ARM de 64 bits e suporte a Vulkan.
-- Uma cópia própria do jogo de PS4. O port reconhece executáveis **01.00** e
-  **01.11**; os patches são selecionados pelo SHA-256 do executável validado,
-  não apenas pelo CUSA.
+- Uma cópia própria do jogo de PS4, **atualizada para 01.11**. A versão **01.00
+  não é suportada para jogar nem para compilar a CPU ARM64**. O aplicativo orienta
+  a atualizar para 01.11. A pasta 01.00 ainda pode receber a migração automática
+  de um update 01.11 válido; os patches são selecionados pelo SHA-256 verificado.
 - O título de referência é **CUSA00552**; IDs regionais como CUSA00556
   exigem um executável conhecido. O CUSA sozinho não garante os patches.
 - Espaço para o jogo extraído. A instalação por PKG precisa de espaço para a
@@ -62,15 +63,18 @@ padrão não confirma compatibilidade com todos os modelos dessas famílias.
    instale por cima da anterior, preservando os dados e saves.
 2. Conceda o acesso a arquivos solicitado e selecione a pasta extraída do jogo
    ou use a instalação por PKG no launcher.
-3. Aguarde a preparação automática e toque em **Jogar**.
+3. Se o jogo estiver em 01.00, instale o update 01.11. O aplicativo pode
+   migrar automaticamente uma atualização 01.11 válida já existente. Depois,
+   conclua a preparação, compile a CPU ARM64 e toque em **Jogar**.
 4. Ajuste resolução, patches e controles. Durante o jogo, deslize da borda
    esquerda para a direita para abrir o menu.
 
 Exporte os saves antes de desinstalar o aplicativo ou limpar os dados dele.
 
-## Estado da versão 0.1.1
+## Estado da versão 0.2.0
 
-Esta atualização aprimora a interface e a preservação das atualizações do jogo,
+Esta versão exige compilação nativa ARM64 (AOT) do jogo 01.11.
+A atualização aprimora a interface e a preservação das atualizações do jogo,
 sem afirmar compatibilidade universal ou campanha completa validada.
 
 - A compilação de shaders pode causar pausas, principalmente ao entrar em uma

@@ -1,5 +1,9 @@
 name: TLOU 0.2.0 AOTNative v2 final updated launcher APK
 on:
+  push:
+    branches: [experiment/tlou-local-aot-20261112]
+    paths:
+      - '.github/workflows/tlou-v020-aotnative-finalize-ui.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -93,6 +97,8 @@ jobs:
           assert count>=10, 'No native runtime staged'
           print('Reused byte-identical full native AOT v0.2.0 payload',count,'APK files')
           PY
+      - name: Generate native save-choice fixture used by actual launcher tests
+        run: python3 gow3_pc/tests/test_android_save_choice.py
       - name: Compile and test CORRECTED 0.2.0 launcher UI and settings
         run: gradle -p android-launcher :app:testDebugUnitTest :app:assembleDebug --no-daemon --max-workers=2
       - name: Verify native equality, actual package, version and original signing cert

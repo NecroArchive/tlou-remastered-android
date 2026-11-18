@@ -49,12 +49,9 @@ final class TlouDevicePolicy {
         try {
             int currentW=Integer.parseInt(env.get("GOW3_SCREEN_W"));
             int currentH=Integer.parseInt(env.get("GOW3_SCREEN_H"));
-            // Always use a 720p Android presentation surface, even on displays
-            // with lower pixel dimensions. The Android compositor does the scaling.
-            // Do not tie native presentation dimensions to the physical panel.
-        } catch(RuntimeException ex) {
-            // Still request the fixed output if Android reports invalid geometry.
-        }
+            if(currentW<currentH || currentW<targetW || currentH<targetH)
+                return "display-smaller-than-720p";
+        } catch(RuntimeException ex) {return "display-size-unavailable";}
         env.put("GOW3_SCREEN_W",Integer.toString(targetW));
         env.put("GOW3_SCREEN_H",Integer.toString(targetH));
         return "fixed-1280x720";

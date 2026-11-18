@@ -43,6 +43,14 @@ assets="$out/apk-assets/runtime"
 if [[ "${TLOU_EXPERIMENTAL_LOCAL_AOT:-0}" == "1" ]]; then
   bash android/bionic/stage_aot_compiler.sh
 fi
+# The stable 0.2.0 installer requires a current native AOT dispatcher and
+# one pinned ARM64 TSO compiler. Do not silently package an FEX-only update.
+for required in "$out/apk-assets/runtime-aot/libgow3cpu.so" \
+                "$out/apk-assets/runtime-aot/libbbcpu.so" \
+                "$out/aot-compiler/bin/libbbrecomp.so" \
+                "$out/aot-compiler/upstream.sha256"; do
+  [[ -s "$required" ]] || { echo "Missing mandatory v0.2.0 AOT payload: $required" >&2; exit 8; }
+done
 python3 android/bionic/stage_tools.py
 mkdir -p "$stage" "$assets" "$root/out/release"
 # Pinned official Turnip 27 R2 / Gen8 V39 patched. Never use a rolling Mesa
@@ -86,7 +94,7 @@ gradle -p "$root/android-launcher" :app:assembleRelease --no-daemon --max-worker
 unsigned="$root/android-launcher/app/build/outputs/apk/release/app-release-unsigned.apk"
 [[ -s "$unsigned" ]] || { echo "Gradle did not produce an unsigned APK" >&2; exit 2; }
 aligned="$out/tlou-release-aligned.apk"
-apk="$root/out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk"
+apk="$root/out/release/TheLastOfUsRemastered-Android-v0.2.0-arm64.apk"
 "$android_tools/zipalign" -f -p 4 "$unsigned" "$aligned"
 key="$out/experimental-development.jks"
 # A different key would make updates impossible. Never regenerate a release key.
@@ -104,6 +112,8 @@ require_command_regex 'lib/arm64-v8a/libgow3cpu[.]so' unzip -Z -1 "$apk"
 require_command_regex 'lib/arm64-v8a/libgow3present[.]so' unzip -Z -1 "$apk"
 require_command_regex 'assets/runtime/gow3-probe' unzip -Z -1 "$apk"
 require_command_regex 'assets/tools[.]zip' unzip -Z -1 "$apk"
+require_command_regex 'assets/runtime-aot/libgow3cpu[.]so' unzip -Z -1 "$apk"
+require_command_regex 'assets/runtime-aot/libbbcpu[.]so' unzip -Z -1 "$apk"
 require_command_regex 'lib/arm64-v8a/libpython3[.]13[.]so' unzip -Z -1 "$apk"
 sha256sum "$apk" > "$apk.sha256"
-echo "Experimental TLOU APK signed and validated: $apk"
+echo "TLOU v0.2.0 APK signed and validated: $apk"

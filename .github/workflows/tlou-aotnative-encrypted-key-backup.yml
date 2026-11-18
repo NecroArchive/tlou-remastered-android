@@ -50,7 +50,7 @@ jobs:
           public=X25519PublicKey.from_public_bytes(bytes.fromhex('824996ca60658d422517bfed852053e89838e43abb81a5c9ba82b3d5f750446e'))
           ephemeral=X25519PrivateKey.generate()
           shared=ephemeral.exchange(public)
-          magic=b'TLOU-AOTNATIVE2-KEYBOX-20261118-v1\\n'
+          magic=b'TLOU-AOTNATIVE2-KEYBOX-20261118-v1\n'
           key=HKDF(algorithm=hashes.SHA256(),length=32,salt=None,
                    info=b'tlou-aotnative-v2-signer-recovery-v1').derive(shared)
           nonce=os.urandom(12)

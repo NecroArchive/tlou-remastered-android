@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <numeric>
@@ -147,7 +148,24 @@ void UniqueBuffer::Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
     } else {
         buffer_ci.flags |=
             vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency;
-        buffer = Vulkan::Check(device.createBuffer(buffer_ci));
+        // The Adreno A640 failure is inside KGSL's sparse GPUOBJ_ALLOC rather
+        // than vmaCreateBuffer. Record the requested virtual BO size and result
+        // before Check exits. Do not retry a smaller VkBuffer here: the arena's
+        // guest address range and BDA page tables must match the full size.
+        static std::atomic<u64> sparse_attempts{0};
+        const u64 attempt = sparse_attempts.fetch_add(1, std::memory_order_relaxed) + 1;
+        auto created = device.createBuffer(buffer_ci);
+        if (created.result != vk::Result::eSuccess || attempt <= 24) {
+            std::fprintf(stderr,
+                         "GPU: sparse vkCreateBuffer #%llu requested=%llu MiB "
+                         "usage=%#x result=%s\n",
+                         static_cast<unsigned long long>(attempt),
+                         static_cast<unsigned long long>(buffer_ci.size >> 20),
+                         static_cast<unsigned int>(buffer_ci.usage),
+                         vk::to_string(created.result).c_str());
+            std::fflush(stderr);
+        }
+        buffer = Vulkan::Check(std::move(created));
     }
 
     if (with_bda) {

@@ -10,12 +10,6 @@ final class TlouDevicePolicy {
     private TlouDevicePolicy() {}
 
     /** Oryon cores: Snapdragon 8 Elite / Elite Gen 5; exclude 8 Gen 3 and older. */
-    static boolean isOryonDevice() {
-        String soc="";
-        if(android.os.Build.VERSION.SDK_INT>=31) soc=android.os.Build.SOC_MODEL;
-        if(soc==null) soc="";
-        return isOryonSoc(soc+" "+android.os.Build.HARDWARE+" "+android.os.Build.BOARD);
-    }
     static boolean isOryonSoc(String soc) {
         if(soc==null)return false;
         String s=soc.toLowerCase(Locale.ROOT);

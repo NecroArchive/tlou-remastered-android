@@ -9,9 +9,10 @@ import static org.junit.Assert.*;
 /** Regression: automatically migrate 1.00 only when APP_VER is actually 01.00. */
 public final class Ps4SfoVersionTest {
     private static byte[] version(String version) {
-        byte[] key="APP_VER\\0".replace("\\0","\u0000")
-            .getBytes(StandardCharsets.UTF_8);
-        byte[] value=(version+"\u0000").getBytes(StandardCharsets.UTF_8);
+        byte[] key=new byte[]{'A','P','P','_','V','E','R',0};
+        byte[] value=new byte[version.length()+1];
+        byte[] versionBytes=version.getBytes(StandardCharsets.UTF_8);
+        System.arraycopy(versionBytes,0,value,0,versionBytes.length);
         int keyTable=36, dataTable=keyTable+key.length;
         ByteBuffer data=ByteBuffer.allocate(dataTable+value.length)
             .order(ByteOrder.LITTLE_ENDIAN);

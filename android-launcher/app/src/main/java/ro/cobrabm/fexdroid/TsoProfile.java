@@ -34,7 +34,12 @@ final class TsoProfile {
     static String gameCode(JSONObject marker) throws java.io.IOException {
         if(marker==null)throw new java.io.IOException(
             "Versão do jogo não identificada. Prepare o jogo antes de compilar.");
-        String gameVersion=marker.optString("version","");
+        // A separately installed PS4 update has a base-game APP_VER of
+        // 01.00 but an effective update_version of 01.11. Resolve the
+        // *effective* version, not merely the base param.sfo version.
+        String update=marker.optString("update_version","");
+        String gameVersion=update.isEmpty() || "null".equalsIgnoreCase(update)
+            ? marker.optString("version","") : update;
         if("01.00".equals(gameVersion)||"1.00".equals(gameVersion))
             return "100";
         if("01.11".equals(gameVersion)||"1.11".equals(gameVersion))

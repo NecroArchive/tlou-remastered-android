@@ -48,7 +48,6 @@ final class AboutPanel {
         TextView title=text("THE LAST OF US REMASTERED",22,TEXT);title.setTypeface(Typeface.create("sans-serif-condensed",Typeface.BOLD));root.addView(title);
         String version="0.2.0";try{version=activity.getPackageManager().getPackageInfo(activity.getPackageName(),0).versionName;}catch(Exception ignored){}
         TextView v=text(tr("Versão")+" "+version,13,ACCENT);v.setPadding(0,dp(6),0,dp(8));root.addView(v);
-        root.addView(text("Port para Android com runtime Bionic.",13,MUTED));
         LinearLayout contact=card(root,"DESENVOLVIMENTO");
         row(contact,"Fork e modificações","erickmendes22 · Daedalus Emulator",null);
         row(contact,"YouTube","@daedalusemulator",url("https://www.youtube.com/@daedalusemulator"));
@@ -57,7 +56,6 @@ final class AboutPanel {
         row(projects,"Projeto de referência para PC","ravencaio/tlou-remastered-pc",url("https://github.com/ravencaio/tlou-remastered-pc"));
         row(projects,"Bugs e sugestões","GitHub Issues",url("https://github.com/erickmendes22/tlou-remastered-android/issues"));
         LinearLayout credits=card(root,"CRÉDITOS");
-        row(credits,"Execução da CPU","ARM64 recompilado (AOT)",null);
         row(credits,"Drivers Vulkan","libadrenotools · Turnip / Mesa",url("https://github.com/bylaws/libadrenotools"));
         LinearLayout data=card(root,"REGISTROS");
         row(data,"Ver logs","TLOU Android",logs);

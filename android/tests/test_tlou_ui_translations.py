@@ -84,21 +84,28 @@ class UITranslationRegression(unittest.TestCase):
         self.assertIn('return 1; // English fallback',code)
         self.assertIn('"ui_language"',code)
 
-    def test_missing_aot_cannot_launch_or_change_backend_silently(self):
+    def test_release_requires_native_aot_and_removes_fex_ui_fallback(self):
         code=(JAVA/"MainActivity.java").read_text(encoding="utf-8")
-        check=code.index("RuntimeAot.Ready check=RuntimeAot.prepare(this,prepared)")
-        launch=code.index("startPreparedGame(prepared);",check)
-        self.assertLess(check,launch)
+        game=(JAVA/"GameActivity.java").read_text(encoding="utf-8")
+        about=(JAVA/"AboutPanel.java").read_text(encoding="utf-8")
+        self.assertIn("RuntimeAot.Ready check=RuntimeAot.prepare(this,prepared)",code)
+        self.assertIn("startPreparedGame(prepared);",code)
         method=code[code.index("private void showAotUnavailable("):
                     code.index("private void showPendingAotPatches(")]
-        self.assertIn('.setNeutralButton(TlouLanguage.t(this,"Usar FEX")',method)
+        self.assertNotIn('"Usar FEX"',method)
         self.assertIn('.setPositiveButton(TlouLanguage.t(this,"Compilar CPU ARM64")',method)
-        self.assertIn('prefs.edit().putString("cpu_backend","fex").apply();',method)
-        self.assertIn('putBoolean("launch_direct",false)',code)
-        # A stale .so or a compiler run that only reached 'staged' must not
-        # show "already compiled" on the launcher.
+        self.assertNotIn('putString("cpu_backend","fex")',code)
+        self.assertNotIn('choice(cpu,"cpu_backend"',code)
+        self.assertNotIn('toggleSetting(cpu,"aot_detailed_diagnostics"',code)
+        self.assertNotIn('toggleSetting(cpu,"fast_render_cores"',code)
+        self.assertNotIn('toggleSetting(box,"shader_scan_scalar"',code)
+        self.assertNotIn('toggleSetting(box,"fps_unlock"',code)
+        self.assertIn('new String[]{"30 FPS","60 FPS","120 FPS"}',code)
+        self.assertIn('RuntimeAot.Ready nativeAot;',game)
+        self.assertIn('nativeAot=RuntimeAot.prepare(this,base)',game)
+        self.assertNotIn('"cpu_backend"',game)
+        self.assertNotIn('"FEX-Emu"',about)
         self.assertIn("RuntimeAot.hasCompletedVariantBuild(this)",code)
-        self.assertNotIn('selectedAot.isFile()?"já compilada"',code)
         preflight=(JAVA/"RuntimeAot.java").read_text(encoding="utf-8")
         quick=preflight[preflight.index("static boolean hasCompletedVariantBuild("):
                         preflight.index("static String pendingSelectedPatches(")]

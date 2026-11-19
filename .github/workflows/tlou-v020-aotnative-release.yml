@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-19: compile signed v0.2.0 release with dense Vulkan buffer arenas for KGSL A6xx without sparse queues (8369c8f).
+# Trigger 2026-11-19 v2: package release commit d7f7c87 with corrected dense-arena multi-page remapping.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

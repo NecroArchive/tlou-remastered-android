@@ -648,8 +648,13 @@ bool Instance::CreateDevice() {
                 break;
             }
         }
-        std::printf("GPU: sparse binds on queue family %u (the graphics family %u has none)\n",
-                    sparse_queue_family_index, queue_family_index);
+        if (!(family_properties[sparse_queue_family_index].queueFlags &
+              vk::QueueFlagBits::eSparseBinding)) {
+            std::printf("GPU: no queue supports sparse binding; using dense buffer arenas\n");
+        } else {
+            std::printf("GPU: sparse binds on queue family %u (graphics family %u has none)\n",
+                        sparse_queue_family_index, queue_family_index);
+        }
     }
 
     const auto vk11_features = feature_chain.get<vk::PhysicalDeviceVulkan11Features>();
@@ -934,9 +939,15 @@ bool Instance::CreateDevice() {
                 queue_count > 2 ? "their own queue (GOW3_PRESENT_QUEUE=0: the graphics queue)"
                 : present_queue_wanted ? "the graphics queue (the family has no third queue)"
                                        : "the graphics queue (GOW3_PRESENT_QUEUE=0)");
-    sparse_queue = sparse_queue_family_index == queue_family_index
-                       ? graphics_queue
-                       : device->getQueue(sparse_queue_family_index, 0);
+    // A graphics queue without SPARSE_BINDING is NOT a legal fallback for
+    // vkQueueBindSparse. On Android KGSL the buffer cache uses dense arenas.
+    sparse_queue = (features.sparseBinding && features.sparseResidencyBuffer &&
+                    (family_properties[sparse_queue_family_index].queueFlags &
+                     vk::QueueFlagBits::eSparseBinding))
+                       ? (sparse_queue_family_index == queue_family_index
+                              ? graphics_queue
+                              : device->getQueue(sparse_queue_family_index, 0))
+                       : vk::Queue{};
 
     if (calibrated_timestamps) {
         const auto [time_domains_result, time_domains] =

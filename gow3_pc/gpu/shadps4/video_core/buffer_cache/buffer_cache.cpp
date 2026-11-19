@@ -507,6 +507,23 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     AmdGpu::g_read_wait_label = [](uintptr_t address) {
         return wait_label_cache->ReadWaitLabel(static_cast<VAddr>(address));
     };
+    // Real Vulkan sparse arenas need BOTH features and a queue advertising
+    // VK_QUEUE_SPARSE_BINDING_BIT. Turnip on Android KGSL can create a sparse
+    // VkBuffer but cannot bind it (vkQueueBindSparse -> DEVICE_LOST).
+    // Use fully backed, small standard buffers instead of calling an unsupported queue.
+    const auto sparse_features = instance.GetPhysicalDevice().getFeatures();
+    const auto sparse_families = instance.GetPhysicalDevice().getQueueFamilyProperties();
+    const bool has_sparse_queue = std::ranges::any_of(sparse_families, [](const auto& family) {
+        return family.queueCount != 0 &&
+               bool(family.queueFlags & vk::QueueFlagBits::eSparseBinding);
+    });
+    dense_arenas = !sparse_features.sparseBinding ||
+                   !sparse_features.sparseResidencyBuffer || !has_sparse_queue;
+    if (dense_arenas) {
+        std::printf("GPU: no supported sparse-residency queue; using host-mapped, dense "
+                    "128 MiB buffer arenas (no vkQueueBindSparse)\n");
+        std::fflush(stdout);
+    }
     // Android A6xx Turnip can return VK_ERROR_OUT_OF_DEVICE_MEMORY directly from
     // vkCreateBuffer when creating a 4-8 GiB *sparse* arena. The sparse buffer
     // reserves GPU virtual address space even before any VkDeviceMemory is bound.
@@ -521,6 +538,9 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         } else if (std::string_view{env} == "2048") {
             requested_arena_page_size = u64{1} << 31;
         }
+    }
+    if (dense_arenas) {
+        requested_arena_page_size = std::min<u64>(requested_arena_page_size, u64{128} << 20);
     }
     while (arena_page_bits > MIN_ARENA_PAGE_BITS &&
            ((u64{2} << arena_page_bits) > instance.GetMaxBufferSize() ||
@@ -541,8 +561,9 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
                  arena_page_size >> 20, instance.GetMaxBufferSize() >> 20);
     }
     const vk::BufferCreateInfo probe_ci = {
-        .flags =
-            vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency,
+        .flags = dense_arenas ? vk::BufferCreateFlags{} :
+                                  vk::BufferCreateFlagBits::eSparseBinding |
+                                  vk::BufferCreateFlagBits::eSparseResidency,
         .size = arena_page_size,
         .usage = ARENA_USAGE,
         .sharingMode = vk::SharingMode::eExclusive,
@@ -665,7 +686,8 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
             scheduler.EnableHostReadBarrier();
         }
     }
-    if (const char* env = std::getenv("GOW3_RESIDENCY_CHUNKS"); !(env && env[0] == '0')) {
+    if (const char* env = std::getenv("GOW3_RESIDENCY_CHUNKS");
+        !dense_arenas && !(env && env[0] == '0')) {
         residency_pool = std::make_unique<ResidencyPool>(instance.GetDevice(),
                                                          arena_memory_type_index, arena_host_mapped);
     }
@@ -6349,6 +6371,9 @@ u64 BufferCache::ReleaseArenaBlocks(u64 first_block, u64 end_block) {
 }
 
 void BufferCache::ReclaimArenaMemory() {
+    // Dense arenas are ordinary VkBuffers; their backing cannot be sparsely
+    // unbound. The sparse-only physical block recycler must not touch them.
+    if (dense_arenas) return;
     // gow3 20 Oct 2026 (GitHub #95): the arenas only grew. Every range the GPU ever used stayed
     // bound to video memory: a laptop, 16 min, one level change: 320 ->
     // 1,920 MiB, never less, while images were collected (1,401 -> 502 MiB). Through a long
@@ -6666,6 +6691,10 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
 }
 
 void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
+    if (dense_arenas) {
+        ASSERT_MSG(pending_binds.empty(), "Dense arena unexpectedly queued sparse binds");
+        return;
+    }
     if (pending_binds.empty()) {
         return;
     }

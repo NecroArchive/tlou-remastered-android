@@ -6180,14 +6180,13 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
         resident_in_use_blocks -= moved_blocks;
         Gow3Stats::arena_in_use_bytes = resident_in_use_blocks << block_shift;
         resident_hit_cache.Invalidate();
-        // Update the complete merged address mapping before regenerating BDA entries.
-        u64 base_page = first_addr >> arena_page_bits;
-        for (u32 page = 0; page < (first_size >> arena_page_bits); ++page) {
-            address_space[base_page + page] = new_arena;
-        }
-        base_page = last_page;
-        for (u32 page = 0; page < (last_size >> arena_page_bits); ++page) {
-            address_space[base_page + page] = new_arena;
+        // A previously merged last arena may begin BEFORE last_page. Re-map
+        // the complete contiguous union, not last_size pages from last_page.
+        // The latter silently left stale arena pointers after repeated merges.
+        for (u64 page = first_addr >> arena_page_bits;
+             page < (first_addr + total_size) >> arena_page_bits; ++page) {
+            ASSERT_MSG(page < address_space.size(), "Dense arena page outside address space");
+            address_space[page] = new_arena;
         }
         for (const auto& [start, end] : moved_ranges) {
             EnsureResident(new_arena, start, end - 1);

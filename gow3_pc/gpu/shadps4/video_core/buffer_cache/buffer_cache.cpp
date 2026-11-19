@@ -6110,7 +6110,11 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
             const u64 num_pages = last_page - first_page + 1;
             const auto* new_arena =
                 &arenas.emplace_back(instance, base_block << block_shift,
-                                     num_pages << arena_page_bits, MemoryType::Sparse);
+                                     num_pages << arena_page_bits,
+                                     dense_arenas ? MemoryType::HostUncached : MemoryType::Sparse);
+            if (dense_arenas) {
+                Gow3Stats::arena_memory_bytes += num_pages << arena_page_bits;
+            }
             address_space[first_page] = new_arena;
             address_space[last_page] = new_arena;
         }
@@ -6126,6 +6130,67 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
     const u64 base_block = first_addr >> block_shift;
     const u64 total_size = first_size + last_size;
     const u64 end_block = (first_addr + total_size) >> block_shift;
+    if (dense_arenas) {
+        // Ordinary buffers cannot alias VkDeviceMemory at arbitrary offsets. Migrate
+        // GPU-resident blocks by recording ordered GPU copies into one new dense BO,
+        // then rewrite only the corresponding BDA table entries. Other guest data
+        // remains CPU-owned and will be uploaded normally when next used.
+        ASSERT_MSG(total_size <= instance.GetMaxBufferSize(),
+                   "Dense merged GPU arena exceeds the device buffer limit");
+        auto* new_arena =
+            &arenas.emplace_back(instance, first_addr, total_size, MemoryType::HostUncached);
+        Gow3Stats::arena_memory_bytes += total_size;
+
+        std::vector<std::pair<u64, u64>> moved_ranges;
+        std::vector<vk::BufferCopy> first_copies, last_copies;
+        resident_ranges.ForEachInRange(base_block, end_block, [&](const Backing& backing) {
+            const u64 start = std::max(base_block, backing.start);
+            const u64 end = std::min(end_block, backing.end);
+            if (start >= end) return;
+            const u64 address = start << block_shift;
+            const Buffer* old = address_space[address >> arena_page_bits];
+            ASSERT_MSG(old == first_arena || old == last_arena,
+                       "Dense arena migration found unrelated backing buffer");
+            const vk::BufferCopy copy{
+                .srcOffset = address - old->cpu_addr,
+                .dstOffset = address - new_arena->cpu_addr,
+                .size = (end - start) << block_shift,
+            };
+            (old == first_arena ? first_copies : last_copies).push_back(copy);
+            moved_ranges.emplace_back(start, end);
+        });
+        if (!first_copies.empty()) runtime.CopyBuffer(first_arena, new_arena, first_copies);
+        if (!last_copies.empty()) runtime.CopyBuffer(last_arena, new_arena, last_copies);
+        resident_ranges.Remove(base_block, end_block,
+                               [this](const Backing& backing, u64 start, u64 end) {
+            Backing part = backing;
+            part.start = start;
+            part.end = end;
+            part.offset = backing.offset + ((start - backing.start) << block_shift);
+            return part;
+        });
+        u64 moved_blocks = 0;
+        for (const auto& [start, end] : moved_ranges) moved_blocks += end - start;
+        ASSERT_MSG(resident_in_use_blocks >= moved_blocks, "Invalid dense resident accounting");
+        resident_in_use_blocks -= moved_blocks;
+        Gow3Stats::arena_in_use_bytes = resident_in_use_blocks << block_shift;
+        resident_hit_cache.Invalidate();
+        // Update the complete merged address mapping before regenerating BDA entries.
+        u64 base_page = first_addr >> arena_page_bits;
+        for (u32 page = 0; page < (first_size >> arena_page_bits); ++page) {
+            address_space[base_page + page] = new_arena;
+        }
+        base_page = last_page;
+        for (u32 page = 0; page < (last_size >> arena_page_bits); ++page) {
+            address_space[base_page + page] = new_arena;
+        }
+        for (const auto& [start, end] : moved_ranges) {
+            EnsureResident(new_arena, start, end - 1);
+        }
+        // Keep the old BO objects alive while in-flight commands/readbacks can
+        // still reference them. Reclaiming those BOs requires GPU-tick retirement.
+        return new_arena;
+    }
     auto* new_arena = &arenas.emplace_back(instance, first_addr, total_size, MemoryType::Sparse);
     auto* bind = BindsForArena(new_arena);
     resident_ranges.ForEachInRange(base_block, end_block, [&](const Backing& backing) {
@@ -6151,6 +6216,56 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
 }
 
 void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_block) {
+    if (dense_arenas) {
+        // Full VkDeviceMemory backing already exists in this ordinary VkBuffer.
+        // Track only the requested guest blocks in the shared resident map, and
+        // publish their real GPU device addresses in the PS4 BDA page table.
+        if (resident_hit_cache.Hit(first_block, last_block)) return;
+        if (resident_ranges.Contains(first_block, last_block + 1)) {
+            resident_hit_cache.Remember(first_block, last_block);
+            return;
+        }
+        IntervalList missing;
+        u64 missing_blocks = 0;
+        resident_ranges.ForEachGap(first_block, last_block + 1, [&](u64 start, u64 end) {
+            missing.Add({start, end});
+            missing_blocks += end - start;
+        });
+        if (!missing_blocks) return;
+        VmaAllocationInfo allocated{};
+        vmaGetAllocationInfo(instance.GetAllocator(), arena->buffer.allocation, &allocated);
+        ASSERT_MSG(allocated.deviceMemory, "Dense arena missing VkDeviceMemory allocation");
+        auto staging = staging_pool.Request(missing_blocks * sizeof(vk::DeviceAddress),
+                                            MemoryType::HostUncached);
+        auto* addresses = reinterpret_cast<vk::DeviceAddress*>(staging.mapped);
+        boost::container::small_vector<vk::BufferCopy, 8> copies;
+        u64 cursor = staging.offset;
+        for (const auto& range : missing) {
+            const u64 byte_offset = (range.start << block_shift) - arena->cpu_addr;
+            Backing backing;
+            backing.start = range.start;
+            backing.end = range.end;
+            backing.memory = vk::DeviceMemory{allocated.deviceMemory};
+            // VMA requests dedicated allocations for BDA buffers, so its mapped
+            // pointer is already at the buffer's base, not at the heap's base.
+            backing.offset = byte_offset;
+            backing.mapped = arena->mapped_data.empty() ? nullptr : arena->mapped_data.data();
+            resident_ranges.Add(backing);
+            for (u64 block = range.start; block < range.end; ++block) {
+                *addresses++ = arena->BufferDeviceAddress() +
+                               ((block << block_shift) - arena->cpu_addr);
+            }
+            const u64 bytes = (range.end - range.start) * sizeof(vk::DeviceAddress);
+            copies.push_back({cursor, range.start * sizeof(vk::DeviceAddress), bytes});
+            cursor += bytes;
+        }
+        staging.Flush();
+        runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
+        resident_in_use_blocks += missing_blocks;
+        Gow3Stats::arena_in_use_bytes = resident_in_use_blocks << block_shift;
+        resident_hit_cache.Remember(first_block, last_block);
+        return;
+    }
     // Most TLOU bindings revisit fully resident arena blocks. A full hit
     // requires no gap-list construction, allocation, or sparse bind. The
     // interval set's Contains() verifies EVERY block, including a range

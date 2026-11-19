@@ -573,7 +573,12 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     };
     const auto device = instance.GetDevice();
     const auto reqs = device.getBufferMemoryRequirements(req_info).memoryRequirements;
-    // Dense probing has smaller alignment than the old sparse buffers. Keep a\n    // 64 KiB logical residency granule so the 1 TiB BDA address table does not\n    // balloon from 128 MiB to 512 MiB on Adreno.\n    block_size = Common::AlignUp(\n        std::max<u64>(reqs.alignment, dense_arenas ? u64{64} << 10 : MIN_BLOCK_SIZE),\n        reqs.alignment);
+    // Dense probing has smaller alignment than the old sparse buffers. Keep a
+    // 64 KiB logical residency granule so the 1 TiB BDA address table does not
+    // balloon from 128 MiB to 512 MiB on Adreno.
+    block_size = Common::AlignUp(
+        std::max<u64>(reqs.alignment, dense_arenas ? u64{64} << 10 : MIN_BLOCK_SIZE),
+        reqs.alignment);
     ASSERT_MSG(std::popcount(block_size) == 1, "Sparse block size {} is not a power of 2",
                block_size);
     block_shift = std::bit_width(block_size) - 1;

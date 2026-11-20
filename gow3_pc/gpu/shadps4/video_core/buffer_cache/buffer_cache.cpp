@@ -521,7 +521,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
                    !sparse_features.sparseResidencyBuffer || !has_sparse_queue;
     if (dense_arenas) {
         std::printf("GPU: no supported sparse-residency queue; using host-mapped, dense "
-                    "128 MiB buffer arena pages (no vkQueueBindSparse)\n");
+                    "64 MiB arena pages with multi-page merging (no vkQueueBindSparse)\n");
         std::fflush(stdout);
     }
     // Android A6xx Turnip can return VK_ERROR_OUT_OF_DEVICE_MEMORY directly from
@@ -540,11 +540,10 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         }
     }
     if (dense_arenas) {
-        // Keep the proven 128 MiB page size: smaller pages can cause a guest
-        // buffer access to span >2 pages (the GetArena contract). The OOM
-        // correction is reclaiming *retired* dense BOs after GPU completion,
-        // rather than making the renderer lose legal large guest ranges.
-        requested_arena_page_size = std::min<u64>(requested_arena_page_size, u64{128} << 20);
+        // The dense-specific GetDenseArena handles requests spanning any
+        // number of 64 MiB pages, migrating resident data as a single BO.
+        // Sparse Vulkan drivers keep their original page layout unchanged.
+        requested_arena_page_size = std::min<u64>(requested_arena_page_size, u64{64} << 20);
     }
     while (arena_page_bits > MIN_ARENA_PAGE_BITS &&
            ((u64{2} << arena_page_bits) > instance.GetMaxBufferSize() ||
@@ -711,6 +710,9 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     // Diagnostics: name the arena and guest address of a GPU fault address.
     Vulkan::g_describe_gpu_address = [this](u64 gpu_address) {
         for (const Buffer& arena : arenas) {
+            // Superseded dense VkBuffers remain as address-stable deque entries
+            // after their VMA allocations have been reclaimed.
+            if (!arena.Handle()) continue;
             const u64 base = arena.BufferDeviceAddress();
             if (gpu_address < base || gpu_address >= base + arena.SizeBytes()) {
                 continue;

@@ -17,6 +17,16 @@ int main() {
         assert(ChromaAddress(base+MovieUvOffset(width,size),base,width,size));
         assert(ChromaAddress(base+ShortUvOffset(width,size),base,width,size));
         assert(ChromaAddress(base+MovieUvOffset(1920,1080),base,width,size));
+        assert(ChromaAddress(base+MovieUvOffset(1280,720),base,width,size));
+        assert(ChromaAddress(base+ShortUvOffset(1280,720),base,width,size));
+        if(size<720) {
+            // Native 720p Y/UV descriptors after a 540p/360p patch must
+            // use the same aligned NV12 remap as the working 720p path.
+            assert(LumaShape(1280,720,width,size));
+            assert(LumaShape(1280,768,width,size));
+            assert(ChromaShape(640,360,width,size));
+            assert(ChromaShape(640,384,width,size));
+        }
         assert(!ChromaAddress(base+9999,base,width,size));
         assert(!ChromaAddress(base-1,base,width,size));
         assert(LumaShape(width,size,width,size));

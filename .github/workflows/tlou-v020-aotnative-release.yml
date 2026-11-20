@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-20 final: rebuild original-signed v0.2.0 using fixed A640 dense arena retirement, 128 MiB pages, UBWC-off and sub-720p movie remap (91462354).
+# Trigger 2026-11-20 release: supersede prior A640 builds and compile final release source 91462354.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -11,7 +11,9 @@ permissions:
   actions: read
 concurrency:
   group: tlou-v020-aotnative-original-signer
-  cancel-in-progress: false
+  # Superseded runs build stale release source and unnecessarily block the APK.
+  # The source signing key is restored read-only and remains unchanged.
+  cancel-in-progress: true
 jobs:
   apk:
     runs-on: ubuntu-24.04

@@ -1825,10 +1825,20 @@ void TextureCache::GarbageCollectImages() {
         }();
         if (instance.IsIntegrated() || forced_budget || !startup_rule) {
             const u64 budget = forced_budget ? forced_budget : instance.GetDeviceMemoryBudgetNow();
-            if (budget != 0) {
-                trigger_gc_memory = budget / 10 * 7;
-                pressure_gc_memory = budget / 100 * 85;
-                critical_gc_memory = budget / 100 * 95;
+            // Adreno 6xx (8 GiB) had a 3.5 GiB dynamic Turnip budget while
+            // image usage was already ~4 GiB. Keep a physical headroom margin
+            // for newly created dense buffers; the renderer still queries the
+            // actual Vulkan budget and never modifies the guest PS4 pool.
+            static const u64 headroom = [] {
+                const char* env = std::getenv("GOW3_GC_HEADROOM_MB");
+                return env ? std::min<u64>(std::strtoull(env, nullptr, 10), 1024) << 20 : 0;
+            }();
+            const u64 effective_budget = budget > headroom + 512_MB
+                                       ? budget - headroom : budget;
+            if (effective_budget != 0) {
+                trigger_gc_memory = effective_budget / 10 * 7;
+                pressure_gc_memory = effective_budget / 100 * 85;
+                critical_gc_memory = effective_budget / 100 * 95;
             }
         }
         reading_above_trigger = total_used_memory >= trigger_gc_memory;

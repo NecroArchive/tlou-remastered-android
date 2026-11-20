@@ -117,7 +117,7 @@ class BufferCache {
     // Allow 512 MiB sparse pages on memory-constrained Adreno/KGSL devices.
     // MAX_ARENA_PAGES also sizes the address_space lookup for the smaller granularity.
     // 128 MiB dense pages when Vulkan sparse buffers are unsupported (e.g. KGSL A640).
-    static constexpr u64 MIN_ARENA_PAGE_BITS = 27;
+    static constexpr u64 MIN_ARENA_PAGE_BITS = 26;
     static constexpr u64 MAX_ARENA_PAGES = u64{1} << (ADDRESS_SPACE_BITS - MIN_ARENA_PAGE_BITS);
     static constexpr u64 MIN_BLOCK_SIZE = 16_KB;
 
@@ -588,6 +588,10 @@ private:
     u64 num_arena_pages{u64{1} << (ADDRESS_SPACE_BITS - MAX_ARENA_PAGE_BITS)};
     bool dense_arenas{false}; // No VK_QUEUE_SPARSE_BINDING_BIT: regular VMA-backed VkBuffers.
     std::deque<Buffer> arenas;
+    // An arena replaced by dense migration remains address-stable in the deque,
+    // but its VMA allocation is freed once the GPU completes the copy submit.
+    struct RetiredDenseArena { Buffer* buffer; u64 release_tick; };
+    std::vector<RetiredDenseArena> retired_dense_arenas;
     std::vector<ArenaBinds> pending_binds;
     Vulkan::Semaphore memory_semaphore;
 

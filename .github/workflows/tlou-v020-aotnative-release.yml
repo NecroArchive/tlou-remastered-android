@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-19 v2: package release commit d7f7c87 with corrected dense-arena multi-page remapping.
+# Trigger 2026-11-20: A640 gameplay fixes - dense arena GPU-timeline reclamation, UBWC-off compositor and sub-720p movie NV12 planes (release commit 19a930d8).
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

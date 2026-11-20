@@ -6104,10 +6104,140 @@ void BufferCache::SynchronizeDmaRange(VAddr address, u64 size) {
     });
 }
 
+// Dense Vulkan arenas have no sparse binds on Adreno/KGSL. Allocate the
+// smallest contiguous BO covering a guest access (64 MiB page granularity),
+// and merge *all* intervening old arenas when a request crosses several pages.
+// The previous two-page-only path forced 128 MiB allocations even for tiny
+// buffers and could not support a 64 MiB page size safely.
+const Buffer* BufferCache::GetDenseArena(u64 first_block, u64 last_block) {
+    const u64 first_page = first_block >> blocks_per_arena_page_shift;
+    const u64 last_page = last_block >> blocks_per_arena_page_shift;
+    ASSERT_MSG(first_page <= last_page && last_page < num_arena_pages,
+               "Dense guest buffer outside address space");
+    const auto* existing = address_space[first_page];
+    if (existing) {
+        bool covered = true;
+        for (u64 page = first_page; page <= last_page; ++page) {
+            if (address_space[page] != existing) { covered = false; break; }
+        }
+        if (covered) return existing;
+    }
+
+    u64 begin_page = first_page;
+    u64 end_page = last_page + 1;
+    // Repeatedly include the *full* extent of each intersecting arena.
+    // This avoids partially superseding a previously merged BO and leaving
+    // stale BDA references/duplicate residency after a multi-page merge.
+    bool expanded;
+    do {
+        expanded = false;
+        for (u64 page = begin_page; page < end_page; ++page) {
+            const Buffer* old = address_space[page];
+            if (!old) continue;
+            const u64 old_begin = old->cpu_addr >> arena_page_bits;
+            const u64 old_end = (old->cpu_addr + old->size_bytes) >> arena_page_bits;
+            ASSERT_MSG(old_begin < old_end && old_end <= num_arena_pages,
+                       "Dense source arena outside address map");
+            if (old_begin < begin_page) { begin_page = old_begin; expanded = true; }
+            if (old_end > end_page) { end_page = old_end; expanded = true; }
+        }
+    } while (expanded);
+    const u64 base_address = begin_page << arena_page_bits;
+    const u64 bytes = (end_page - begin_page) << arena_page_bits;
+    ASSERT_MSG(bytes && bytes <= instance.GetMaxBufferSize(),
+               "Dense guest range exceeds maximum Vulkan buffer size");
+
+    std::vector<const Buffer*> old_arenas;
+    for (u64 page = begin_page; page < end_page; ++page) {
+        const Buffer* old = address_space[page];
+        if (old && std::ranges::find(old_arenas, old) == old_arenas.end()) {
+            old_arenas.push_back(old);
+        }
+    }
+    auto* result = &arenas.emplace_back(instance, base_address, bytes, MemoryType::HostUncached);
+    Gow3Stats::arena_memory_bytes += bytes;
+
+    if (!old_arenas.empty()) {
+        struct Source {
+            const Buffer* buffer;
+            std::vector<vk::BufferCopy> copies;
+        };
+        std::vector<Source> sources;
+        std::vector<std::pair<u64, u64>> moved;
+        const u64 lo = base_address >> block_shift;
+        const u64 hi = (base_address + bytes) >> block_shift;
+        resident_ranges.ForEachInRange(lo, hi, [&](const Backing& backing) {
+            u64 start = std::max(lo, backing.start);
+            const u64 end = std::min(hi, backing.end);
+            while (start < end) {
+                const u64 address = start << block_shift;
+                const Buffer* old = address_space[address >> arena_page_bits];
+                ASSERT_MSG(old && old != result, "Missing old dense arena for resident page");
+                const u64 stop = std::min(end,
+                    (old->cpu_addr + old->size_bytes) >> block_shift);
+                ASSERT_MSG(stop > start, "Invalid dense migration extent");
+                auto it = std::ranges::find_if(sources,
+                    [old](const Source& src) { return src.buffer == old; });
+                if (it == sources.end()) {
+                    sources.push_back({old, {}});
+                    it = std::prev(sources.end());
+                }
+                it->copies.push_back({
+                    .srcOffset = address - old->cpu_addr,
+                    .dstOffset = address - result->cpu_addr,
+                    .size = (stop - start) << block_shift,
+                });
+                moved.emplace_back(start, stop);
+                start = stop;
+            }
+        });
+        // GPU work is recorded in order: copy GPU-written resident data
+        // before installing the new BDA page entries.
+        for (const auto& src : sources) {
+            runtime.CopyBuffer(src.buffer, result, src.copies);
+        }
+        resident_ranges.Remove(lo, hi,
+            [](const Backing& backing, u64 start, u64 end) {
+                Backing part = backing;
+                part.start = start;
+                part.end = end;
+                part.offset = backing.offset + ((start - backing.start) << block_shift);
+                return part;
+            });
+        u64 moved_blocks = 0;
+        for (const auto& [start, end] : moved) moved_blocks += end - start;
+        ASSERT_MSG(resident_in_use_blocks >= moved_blocks,
+                   "Invalid dense resident block accounting");
+        resident_in_use_blocks -= moved_blocks;
+        Gow3Stats::arena_in_use_bytes = resident_in_use_blocks << block_shift;
+        resident_hit_cache.Invalidate();
+
+        for (u64 page = begin_page; page < end_page; ++page) address_space[page] = result;
+        for (const auto& [start, end] : moved) EnsureResident(result, start, end - 1);
+
+        // Old BO memory cannot be freed until the recording copy and all
+        // previous command buffers finish. Existing GPU-timeline reclamation
+        // performs the deferred VMA destruction on the draw thread.
+        const u64 release_tick = scheduler.CurrentTick() + 2;
+        for (const Buffer* old : old_arenas) {
+            if (std::ranges::find(address_space, old) != address_space.end()) continue;
+            if (std::ranges::find_if(retired_dense_arenas,
+                [old](const RetiredDenseArena& r) { return r.buffer == old; })
+                == retired_dense_arenas.end()) {
+                retired_dense_arenas.push_back({const_cast<Buffer*>(old), release_tick});
+            }
+        }
+    } else {
+        for (u64 page = begin_page; page < end_page; ++page) address_space[page] = result;
+    }
+    return result;
+}
+
 const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
     TouchArenaWindows(first_block, last_block);
     const u64 first_page = first_block >> blocks_per_arena_page_shift;
     const u64 last_page = last_block >> blocks_per_arena_page_shift;
+    if (dense_arenas) return GetDenseArena(first_block, last_block);
     ASSERT_MSG(last_page - first_page <= 1,
                "Buffer request cannot span more than two VA arena pages");
 

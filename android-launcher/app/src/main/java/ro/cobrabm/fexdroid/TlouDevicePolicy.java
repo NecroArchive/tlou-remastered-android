@@ -26,6 +26,23 @@ final class TlouDevicePolicy {
         boolean turnip = !path.isEmpty() &&
             (path.endsWith("libvulkan_freedreno.so") || name.contains("turnip"));
         if (!turnip) return "not-turnip-driver";
+        // A6xx/Turnip: forcing this compositor UBWC hint produced visible
+        // scanlines through gameplay AND the Android HUD on Adreno 640.
+        // Do not honor a persisted "on" selection on this GPU generation.
+        if (gpu.matches(".*adreno[^0-9]*6[0-9]{2}([^0-9]|$).*")) {
+            final String feature="enable_tp_ubwc_flag_hint=";
+            String existing=env.get("FD_DEV_FEATURES");
+            if(existing==null || existing.isEmpty()) {
+                env.put("FD_DEV_FEATURES", feature+"0");
+            } else if(existing.contains(feature)) {
+                env.put("FD_DEV_FEATURES", existing.replaceAll(
+                    "enable_tp_ubwc_flag_hint=[^,:;\\s]+", feature+"0"));
+            } else {
+                // Preserve unrelated Mesa overrides.
+                env.put("FD_DEV_FEATURES", existing+",enable_tp_ubwc_flag_hint=0");
+            }
+            return "a6xx-ubwc-off";
+        }
         if ("off".equals(mode)) return "disabled";
         boolean adreno740 = gpu.contains("adreno") && gpu.matches(".*740([^0-9]|$).*");
         if (!"on".equals(mode) && !adreno740) return "auto-not-adreno740";

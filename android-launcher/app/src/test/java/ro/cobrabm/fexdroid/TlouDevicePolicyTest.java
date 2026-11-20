@@ -84,6 +84,8 @@ public final class TlouDevicePolicyTest {
         ok("0".equals(e.get("GOW3_STAGING_LARGE_MB")), "no A640 pinned scratch");
         ok("1".equals(e.get("GOW3_STAGING_PREWARM_BLOCKS")), "one 16 MiB prewarm block");
         ok("384".equals(e.get("GOW3_GC_HEADROOM_MB")), "early image GC margin for A640");
+        ok("1".equals(e.get("GOW3_GC_A6XX_EARLY")), "critical memory must evict older A640 textures");
+        ok("12".equals(e.get("GOW3_ARENA_RECLAIM_AGE_S")), "idle dense GPU arenas retire after 12 seconds");
         ok("90".equals(e.get("GOW3_STAGING_IDLE_FRAMES")), "A640 staging trim interval");
         ok("32".equals(e.get("GOW3_STAGING_IDLE_LIMIT_MB")), "A640 idle staging cache limit");
         ok("512".equals(e.get("GOW3_ARENA_PAGE_MB")),

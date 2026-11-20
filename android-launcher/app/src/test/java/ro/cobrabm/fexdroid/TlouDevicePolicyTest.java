@@ -83,7 +83,9 @@ public final class TlouDevicePolicyTest {
         ok("0".equals(e.get("GOW3_STAGING_KEEP_VRAM_MB")), "A640 idle VRAM");
         ok("0".equals(e.get("GOW3_STAGING_LARGE_MB")), "no A640 pinned scratch");
         ok("1".equals(e.get("GOW3_STAGING_PREWARM_BLOCKS")), "one 16 MiB prewarm block");
-        ok("256".equals(e.get("GOW3_GC_HEADROOM_MB")), "early image GC margin for A640");
+        ok("384".equals(e.get("GOW3_GC_HEADROOM_MB")), "early image GC margin for A640");
+        ok("90".equals(e.get("GOW3_STAGING_IDLE_FRAMES")), "A640 staging trim interval");
+        ok("32".equals(e.get("GOW3_STAGING_IDLE_LIMIT_MB")), "A640 idle staging cache limit");
         ok("512".equals(e.get("GOW3_ARENA_PAGE_MB")),
             "A640 sparse arena pages must cap merged KGSL virtual buffers at 1 GiB");
         ok("768".equals(e.get("GOW3_ARENA_LIMIT_MB")),

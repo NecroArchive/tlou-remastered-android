@@ -32,6 +32,16 @@ constexpr u64 RING_IDLE_FRAMES = 3000;
 constexpr u64 VRAM_RING_IDLE_FRAMES = 600;
 constexpr u64 LARGE_IDLE_FRAMES = 3000;
 constexpr u64 PREWARM_BLOCKS = 8;
+// Only enabled by the 8 GiB A6xx launcher policy. Idle allocations must
+// obey the graphics timeline before VMA destroys their buffers.
+const u64 low_memory_idle_frames = [] {
+    const char* value = std::getenv("GOW3_STAGING_IDLE_FRAMES");
+    return value ? std::clamp<u64>(std::strtoull(value, nullptr, 10), 16, 3000) : 3000;
+}();
+const u64 low_memory_idle_limit = [] {
+    const char* value = std::getenv("GOW3_STAGING_IDLE_LIMIT_MB");
+    return value ? std::min<u64>(std::strtoull(value, nullptr, 10), 2048) * 1_MB : ~u64{0};
+}();
 constexpr u64 LARGE_MIN_GRANULARITY = 64_KB;
 constexpr u64 BLOCK_SIZE = 16_MB;
 
@@ -223,7 +233,8 @@ void StagingBufferPool::TickFrame() {
     for (u32 type = 0; type < rings.size(); ++type) {
         const bool vram = type == u32(MemoryType::DeviceLocal);
         TrimRing(rings[type], vram ? keep_vram_blocks : keep_blocks,
-                 vram ? VRAM_RING_IDLE_FRAMES : RING_IDLE_FRAMES);
+                 std::min<u64>(vram ? VRAM_RING_IDLE_FRAMES : RING_IDLE_FRAMES,
+                               low_memory_idle_frames));
     }
     for (auto& cache : large_caches) {
         TrimLarge(cache);
@@ -273,9 +284,21 @@ void StagingBufferPool::TrimRing(Ring& ring, u64 keep, u64 idle_frames) {
 }
 
 void StagingBufferPool::TrimLarge(std::vector<LargeBuffer>& cache) {
-    std::erase_if(cache, [this](const LargeBuffer& entry) {
-        return !entry.pinned && !entry.held && frame - entry.last_used_frame >= LARGE_IDLE_FRAMES &&
-               scheduler.IsFree(entry.tick);
+    u64 total = 0;
+    for (const auto& entry : cache) total += entry.buffer->SizeBytes();
+    std::erase_if(cache, [this, &total](const LargeBuffer& entry) {
+        if (entry.pinned || entry.held || !scheduler.IsFree(entry.tick)) return false;
+        const u64 bytes = entry.buffer->SizeBytes();
+        // Bound cached staging occupancy on Adreno 640 even during continuous
+        // streaming: idle buffers beyond 32 MiB retire after at least 16 frames.
+        // Live GPU reads/writes, pinned allocations and deferred readbacks remain.
+        const bool over_budget = total > low_memory_idle_limit;
+        const u64 age = frame - entry.last_used_frame;
+        if (age < (over_budget ? 16 : std::min<u64>(LARGE_IDLE_FRAMES, low_memory_idle_frames))) {
+            return false;
+        }
+        total -= bytes;
+        return true;
     });
 }
 

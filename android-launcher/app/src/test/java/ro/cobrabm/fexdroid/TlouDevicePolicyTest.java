@@ -16,9 +16,7 @@ public final class TlouDevicePolicyTest {
             "Turnip v27 R2")), "740 Turnip must enable UBWC");
         ok("enable_tp_ubwc_flag_hint=1".equals(e.get("FD_DEV_FEATURES")),
             "exact Mesa feature syntax");
-        for(String gpu:new String[]{"Adreno (TM) 630","Adreno (TM) 650",
-                                    "Adreno (TM) 660","Adreno (TM) 730",
-                                    "Adreno (TM) 830"}) {
+        for(String gpu:new String[]{"Adreno (TM) 730", "Adreno (TM) 830"}) {
             e=env();
             ok("auto-not-adreno740".equals(TlouDevicePolicy.configureUbwcHint(
                 e,"auto",gpu,"/data/libvulkan_freedreno.so","Turnip")),
@@ -38,9 +36,23 @@ public final class TlouDevicePolicyTest {
             "Adreno (TM) 740","/data/libvulkan_freedreno.so","Turnip")),
             "explicit A/B opt-out");
         e=env();
-        ok("enabled".equals(TlouDevicePolicy.configureUbwcHint(e,"on",
+        ok("a6xx-ubwc-off".equals(TlouDevicePolicy.configureUbwcHint(e,"on",
             "Adreno (TM) 660","/data/libvulkan_freedreno.so","Turnip")),
-            "manual A/B override remains possible");
+            "A6xx must ignore a persisted UBWC-on override");
+        ok("enable_tp_ubwc_flag_hint=0".equals(e.get("FD_DEV_FEATURES")),
+            "Turnip A6xx UBWC disabled at the driver");
+        e=env();
+        e.put("FD_DEV_FEATURES","another_feature=1,enable_tp_ubwc_flag_hint=1");
+        ok("a6xx-ubwc-off".equals(TlouDevicePolicy.configureUbwcHint(e,"auto",
+            "Adreno (TM) 640","/data/libvulkan_freedreno.so","Turnip")),
+            "A640 replaces preexisting conflicting UBWC feature");
+        ok("another_feature=1,enable_tp_ubwc_flag_hint=0".equals(e.get("FD_DEV_FEATURES")),
+            "other Turnip feature overrides must remain");
+        for(String gpu:new String[]{"Adreno (TM) 630","Adreno (TM) 640","Adreno (TM) 650"}) {
+            e=env();
+            ok("a6xx-ubwc-off".equals(TlouDevicePolicy.configureUbwcHint(e,"auto",
+                gpu,"/data/libvulkan_freedreno.so","Turnip")), "A6xx auto must disable UBWC");
+        }
         e=env();
         e.put("FD_DEV_FEATURES","another_feature=1");
         ok("existing-features-preserved".equals(TlouDevicePolicy.configureUbwcHint(

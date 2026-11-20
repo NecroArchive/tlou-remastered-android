@@ -109,6 +109,10 @@ final class TlouDevicePolicy {
             // Leave real room for buffers when image GC sees a shrinking
             // shared Turnip heap, rather than collecting only at OOM.
             env.put("GOW3_GC_HEADROOM_MB","384");
+            // On A640 the critical LRU age of 160 frames blocked texture
+            // eviction while GPU usage exceeded the live heap budget.
+            env.put("GOW3_GC_A6XX_EARLY","1");
+            env.put("GOW3_ARENA_RECLAIM_AGE_S","12");
             // Drain idle Vulkan staging objects after a few seconds instead
             // of holding them for up to 3000 frames on an 8 GiB Adreno.
             env.put("GOW3_STAGING_IDLE_FRAMES","90");

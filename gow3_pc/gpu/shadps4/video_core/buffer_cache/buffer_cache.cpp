@@ -6660,6 +6660,116 @@ void BufferCache::ReclaimArenaMemory() {
             Gow3Stats::arena_memory_bytes -= size;
             it = retired_dense_arenas.erase(it);
         }
+
+        // Sparse arenas can unbind individual pages. Standard Vulkan buffers
+        // cannot: once a region is entirely clean, idle and no longer used by
+        // GPU work, retire its *whole* dense BO instead. The 8 GiB Adreno 640
+        // previously only reclaimed superseded BOs, so 20-40 live arenas could
+        // permanently consume several GiB despite texture-cache evictions.
+        static const u64 dense_limit = [] {
+            const char* env = std::getenv("GOW3_ARENA_LIMIT_MB");
+            const u64 mib = env && env[0] ? std::strtoull(env, nullptr, 10) : 768;
+            return std::max<u64>(mib, 128) << 20;
+        }();
+        static const u16 dense_age = [] {
+            const char* env = std::getenv("GOW3_ARENA_RECLAIM_AGE_S");
+            const int seconds = env && env[0] ? std::atoi(env) : 20;
+            return static_cast<u16>(std::clamp(seconds, 8, 60) / 2);
+        }();
+        const auto now = std::chrono::steady_clock::now();
+        if (now < next_reclaim_epoch) return;
+        next_reclaim_epoch = now + std::chrono::seconds(2);
+        reclaim_epoch = static_cast<u16>(reclaim_epoch + 1);
+        if (!reclaim_epoch) reclaim_epoch = 1;
+        epoch_start_tick[reclaim_epoch % ReclaimEpochRing] = scheduler.CurrentTick();
+        if (Gow3Stats::arena_memory_bytes.load(std::memory_order_relaxed) <= dense_limit) {
+            return;
+        }
+        u64 reclaimed = 0;
+        u32 evicted = 0;
+        for (Buffer& arena : arenas) {
+            if (Gow3Stats::arena_memory_bytes.load(std::memory_order_relaxed) <=
+                    dense_limit - dense_limit / 8 ||
+                evicted >= 4) break;
+            if (!arena.Handle()) continue;
+            const VAddr begin = arena.CpuAddr();
+            const u64 bytes = arena.SizeBytes();
+            const u64 first_page = begin >> arena_page_bits;
+            const u64 end_page = (begin + bytes) >> arena_page_bits;
+            if (end_page > num_arena_pages || first_page >= end_page ||
+                address_space[first_page] != &arena) continue;
+            bool active = true;
+            for (u64 page = first_page; page < end_page; ++page) {
+                if (address_space[page] != &arena) { active = false; break; }
+            }
+            if (!active) continue;
+            // Evict only arenas whose ENTIRE range has been unused for >=12 s,
+            // with all last-use GPU submissions completed.
+            const u64 first_window = begin >> ReclaimWindowBits;
+            const u64 end_window = (begin + bytes - 1) >> ReclaimWindowBits;
+            bool idle = true;
+            for (u64 window = first_window; window <= end_window; ++window) {
+                const u16 epoch = window_epoch[window].load(std::memory_order_relaxed);
+                const u16 age = static_cast<u16>(reclaim_epoch - epoch);
+                if (epoch && (age < dense_age ||
+                    (age < ReclaimEpochRing - 2 &&
+                    !scheduler.IsFree(epoch_start_tick[(static_cast<u16>(epoch + 1)) %
+                                                       ReclaimEpochRing])))) {
+                    idle = false;
+                    break;
+                }
+            }
+            if (!idle) continue;
+            bool dirty;
+            {
+                std::shared_lock lock{gpu_ranges_mutex};
+                dirty = gpu_modified_ranges.Intersects(begin, bytes);
+            }
+            if (dirty || memory_tracker->IsRegionGpuModified(begin, bytes) ||
+                PendingReadbackTick(begin, bytes, false)) continue;
+            if (const auto it = lazy_pages.lower_bound(begin);
+                it != lazy_pages.end() && it->first < begin + bytes) continue;
+            const u64 first_block = begin >> block_shift;
+            const u64 end_block = (begin + bytes) >> block_shift;
+            u64 removed = 0;
+            resident_ranges.ForEachInRange(first_block, end_block, [&](const Backing& b) {
+                removed += std::min<u64>(b.end, end_block) -
+                           std::max<u64>(b.start, first_block);
+            });
+            resident_ranges.Remove(first_block, end_block,
+                [this](const Backing& b, u64 start, u64 end) {
+                    Backing piece = b;
+                    piece.start = start;
+                    piece.end = end;
+                    piece.offset = b.offset + ((start - b.start) << block_shift);
+                    return piece;
+                });
+            ASSERT_MSG(resident_in_use_blocks >= removed,
+                       "Dense idle arena resident accounting underflow");
+            resident_in_use_blocks -= removed;
+            Gow3Stats::arena_in_use_bytes = resident_in_use_blocks << block_shift;
+            Gow3Stats::arena_released_bytes += removed << block_shift;
+            resident_hit_cache.Invalidate();
+            // Promoted static buffers otherwise skip re-uploading clean ranges
+            // after the old arena was removed. They must upload on next use.
+            for (auto& range : static_ranges) range.uploaded = false;
+            memory_tracker->MarkRegionAsCpuModified(begin, bytes);
+            runtime.FillBuffer(bda_pagetable_buffer.get(),
+                               first_block * sizeof(vk::DeviceAddress),
+                               (end_block - first_block) * sizeof(vk::DeviceAddress), 0);
+            for (u64 page = first_page; page < end_page; ++page) {
+                address_space[page] = nullptr;
+            }
+            retired_dense_arenas.push_back({&arena, scheduler.CurrentTick() + 2});
+            reclaimed += bytes;
+            ++evicted;
+        }
+        if (evicted) {
+            std::printf("GPU: dense arena idle eviction: %u BOs / %llu MiB "
+                        "(fully clean, timeline-safe; active BDA preserved)\n",
+                        evicted, static_cast<unsigned long long>(reclaimed >> 20));
+            std::fflush(stdout);
+        }
         return;
     }
     // gow3 20 Oct 2026 (GitHub #95): the arenas only grew. Every range the GPU ever used stayed

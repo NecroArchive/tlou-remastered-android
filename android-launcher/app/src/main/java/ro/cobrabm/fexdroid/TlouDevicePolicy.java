@@ -101,11 +101,14 @@ final class TlouDevicePolicy {
         final String gpu=eglRenderer==null?"":eglRenderer.toLowerCase(Locale.ROOT);
         final boolean a6xx=gpu.matches(".*adreno[^0-9]*6[0-9]{2}([^0-9]|$).*");
         if(a6xx) {
-            env.put("GOW3_STREAM_MB","256");
-            env.put("GOW3_STAGING_KEEP_MB","64");
+            env.put("GOW3_STREAM_MB","128");
+            env.put("GOW3_STAGING_KEEP_MB","32");
             env.put("GOW3_STAGING_KEEP_VRAM_MB","0");
             env.put("GOW3_STAGING_LARGE_MB","0");
-            env.put("GOW3_STAGING_PREWARM_BLOCKS","2");
+            env.put("GOW3_STAGING_PREWARM_BLOCKS","1");
+            // Leave real room for buffers when image GC sees a shrinking
+            // shared Turnip heap, rather than collecting only at OOM.
+            env.put("GOW3_GC_HEADROOM_MB","256");
             // Turnip/KGSL reserves virtual BOs using GPUOBJ_ALLOC. The 1 GiB page
             // setting still merged into 2 GiB BOs and failed during world-core startup
             // (runtime 2026-11-19 02:28, vkCreateBuffer ErrorOutOfDeviceMemory).

@@ -371,6 +371,7 @@ private:
         return &pending_binds.emplace_back(arena);
     }
 
+    const Buffer* GetDenseArena(u64 first_block, u64 last_block);
     const Buffer* GetArena(u64 first_block, u64 last_block);
 
     void EnsureResident(const Buffer* arena, u64 first_block, u64 last_block);

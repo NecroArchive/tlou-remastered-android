@@ -108,7 +108,11 @@ final class TlouDevicePolicy {
             env.put("GOW3_STAGING_PREWARM_BLOCKS","1");
             // Leave real room for buffers when image GC sees a shrinking
             // shared Turnip heap, rather than collecting only at OOM.
-            env.put("GOW3_GC_HEADROOM_MB","256");
+            env.put("GOW3_GC_HEADROOM_MB","384");
+            // Drain idle Vulkan staging objects after a few seconds instead
+            // of holding them for up to 3000 frames on an 8 GiB Adreno.
+            env.put("GOW3_STAGING_IDLE_FRAMES","90");
+            env.put("GOW3_STAGING_IDLE_LIMIT_MB","32");
             // Turnip/KGSL reserves virtual BOs using GPUOBJ_ALLOC. The 1 GiB page
             // setting still merged into 2 GiB BOs and failed during world-core startup
             // (runtime 2026-11-19 02:28, vkCreateBuffer ErrorOutOfDeviceMemory).

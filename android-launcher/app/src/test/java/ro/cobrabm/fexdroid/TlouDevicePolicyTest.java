@@ -78,11 +78,12 @@ public final class TlouDevicePolicyTest {
         e=env();
         ok("8gb-a6xx-low-memory".equals(TlouDevicePolicy.configureMemory(
             e,7500L<<20,"Adreno (TM) 640")), "K20 Pro profile must activate");
-        ok("256".equals(e.get("GOW3_STREAM_MB")), "A640 stream memory cap");
-        ok("64".equals(e.get("GOW3_STAGING_KEEP_MB")), "A640 staging retention");
+        ok("128".equals(e.get("GOW3_STREAM_MB")), "A640 stream memory cap");
+        ok("32".equals(e.get("GOW3_STAGING_KEEP_MB")), "A640 staging retention");
         ok("0".equals(e.get("GOW3_STAGING_KEEP_VRAM_MB")), "A640 idle VRAM");
         ok("0".equals(e.get("GOW3_STAGING_LARGE_MB")), "no A640 pinned scratch");
-        ok("2".equals(e.get("GOW3_STAGING_PREWARM_BLOCKS")), "two 16 MiB prewarm blocks");
+        ok("1".equals(e.get("GOW3_STAGING_PREWARM_BLOCKS")), "one 16 MiB prewarm block");
+        ok("256".equals(e.get("GOW3_GC_HEADROOM_MB")), "early image GC margin for A640");
         ok("512".equals(e.get("GOW3_ARENA_PAGE_MB")),
             "A640 sparse arena pages must cap merged KGSL virtual buffers at 1 GiB");
         ok("768".equals(e.get("GOW3_ARENA_LIMIT_MB")),

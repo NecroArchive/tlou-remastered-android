@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-20 A640 OOM fix: rebuild original-signed APK from release 36bd822a (64MiB multi-page dense arenas; timeline-reclaimed staging; lower memory overhead).
+# Trigger 2026-11-20 A640 OOM fix2: package release 453c906f (correct captured block_shift in dense arena migration).
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

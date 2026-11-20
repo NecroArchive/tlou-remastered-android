@@ -521,7 +521,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
                    !sparse_features.sparseResidencyBuffer || !has_sparse_queue;
     if (dense_arenas) {
         std::printf("GPU: no supported sparse-residency queue; using host-mapped, dense "
-                    "64 MiB buffer arena pages (no vkQueueBindSparse)\n");
+                    "128 MiB buffer arena pages (no vkQueueBindSparse)\n");
         std::fflush(stdout);
     }
     // Android A6xx Turnip can return VK_ERROR_OUT_OF_DEVICE_MEMORY directly from
@@ -540,9 +540,11 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         }
     }
     if (dense_arenas) {
-        // Each dense allocation commits its *entire* BO on KGSL. Use smaller
-        // pages to cap waste while maintaining the full 40-bit guest address space.
-        requested_arena_page_size = std::min<u64>(requested_arena_page_size, u64{64} << 20);
+        // Keep the proven 128 MiB page size: smaller pages can cause a guest
+        // buffer access to span >2 pages (the GetArena contract). The OOM
+        // correction is reclaiming *retired* dense BOs after GPU completion,
+        // rather than making the renderer lose legal large guest ranges.
+        requested_arena_page_size = std::min<u64>(requested_arena_page_size, u64{128} << 20);
     }
     while (arena_page_bits > MIN_ARENA_PAGE_BITS &&
            ((u64{2} << arena_page_bits) > instance.GetMaxBufferSize() ||

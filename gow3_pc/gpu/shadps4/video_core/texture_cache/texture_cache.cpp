@@ -1866,9 +1866,23 @@ void TextureCache::GarbageCollectImages() {
     const auto configure = [&](bool allow_aggressive) {
         pressured = total_used_memory >= pressure_gc_memory;
         aggresive = allow_aggressive && total_used_memory >= critical_gc_memory;
-        ticks_to_destroy = aggresive ? 160 : pressured ? 80 : 16;
+        // The generic cache protects 160 frames even at CRITICAL pressure,
+        // which is backwards on an 8 GiB A6xx shared Vulkan heap: logs showed
+        // 3.2 GiB used against only 2.6 GiB pressure and 0 images evicted.
+        // Keep the generic policy on other GPUs; the A6xx opt-in selects more
+        // recent *unused* images when a critical budget is exceeded. Image
+        // destruction still uses the GPU-safe deferred path in DeleteImage.
+        static const bool a6xx_early_gc = [] {
+            const char* env = std::getenv("GOW3_GC_A6XX_EARLY");
+            return env && env[0] == '1';
+        }();
+        ticks_to_destroy = a6xx_early_gc
+            ? (aggresive ? 4 : pressured ? 12 : 16)
+            : (aggresive ? 160 : pressured ? 80 : 16);
         ticks_to_destroy = std::min(ticks_to_destroy, gc_tick);
-        num_deletions = aggresive ? 40 : pressured ? 20 : 10;
+        num_deletions = a6xx_early_gc
+            ? (aggresive ? 96 : pressured ? 32 : 10)
+            : (aggresive ? 40 : pressured ? 20 : 10);
     };
     const auto clean_up = [&](ImageId image_id) {
         if (num_deletions == 0) {

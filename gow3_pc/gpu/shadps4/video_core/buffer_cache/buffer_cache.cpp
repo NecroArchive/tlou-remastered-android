@@ -6199,7 +6199,7 @@ const Buffer* BufferCache::GetDenseArena(u64 first_block, u64 last_block) {
             runtime.CopyBuffer(src.buffer, result, src.copies);
         }
         resident_ranges.Remove(lo, hi,
-            [](const Backing& backing, u64 start, u64 end) {
+            [this](const Backing& backing, u64 start, u64 end) {
                 Backing part = backing;
                 part.start = start;
                 part.end = end;

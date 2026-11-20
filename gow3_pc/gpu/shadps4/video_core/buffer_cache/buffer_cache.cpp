@@ -521,7 +521,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
                    !sparse_features.sparseResidencyBuffer || !has_sparse_queue;
     if (dense_arenas) {
         std::printf("GPU: no supported sparse-residency queue; using host-mapped, dense "
-                    "128 MiB buffer arenas (no vkQueueBindSparse)\n");
+                    "64 MiB buffer arena pages (no vkQueueBindSparse)\n");
         std::fflush(stdout);
     }
     // Android A6xx Turnip can return VK_ERROR_OUT_OF_DEVICE_MEMORY directly from
@@ -540,7 +540,9 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         }
     }
     if (dense_arenas) {
-        requested_arena_page_size = std::min<u64>(requested_arena_page_size, u64{128} << 20);
+        // Each dense allocation commits its *entire* BO on KGSL. Use smaller
+        // pages to cap waste while maintaining the full 40-bit guest address space.
+        requested_arena_page_size = std::min<u64>(requested_arena_page_size, u64{64} << 20);
     }
     while (arena_page_bits > MIN_ARENA_PAGE_BITS &&
            ((u64{2} << arena_page_bits) > instance.GetMaxBufferSize() ||
@@ -6191,8 +6193,23 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
         for (const auto& [start, end] : moved_ranges) {
             EnsureResident(new_arena, start, end - 1);
         }
-        // Keep the old BO objects alive while in-flight commands/readbacks can
-        // still reference them. Reclaiming those BOs requires GPU-tick retirement.
+        // The GPU copy and every already-recorded user of these buffers will
+        // be complete by a future graphics timeline tick. Keep stable arena
+        // object addresses but retire their allocations after that signal.
+        // +2 also covers the not-yet-submitted command buffer recording
+        // the migration; freeing at CurrentTick() would be use-after-free.
+        const u64 release_tick = scheduler.CurrentTick() + 2;
+        const auto retire = [&](const Buffer* previous) {
+            if (!previous) return;
+            // If another page still points to it, it remains live.
+            if (std::ranges::find(address_space, previous) != address_space.end()) return;
+            for (const auto& item : retired_dense_arenas) {
+                if (item.buffer == previous) return;
+            }
+            retired_dense_arenas.push_back({const_cast<Buffer*>(previous), release_tick});
+        };
+        retire(first_arena);
+        if (last_arena != first_arena) retire(last_arena);
         return new_arena;
     }
     auto* new_arena = &arenas.emplace_back(instance, first_addr, total_size, MemoryType::Sparse);
@@ -6490,9 +6507,27 @@ u64 BufferCache::ReleaseArenaBlocks(u64 first_block, u64 end_block) {
 }
 
 void BufferCache::ReclaimArenaMemory() {
-    // Dense arenas are ordinary VkBuffers; their backing cannot be sparsely
-    // unbound. The sparse-only physical block recycler must not touch them.
-    if (dense_arenas) return;
+    // Dense arenas cannot be unbound like sparse allocations. However the
+    // previous dense VkBuffer objects MUST be released after a migration:
+    // leaving them in 'arenas' permanently leaked each prior full VMA BO,
+    // eventually exhausting the Adreno 640's 8 GiB shared memory.
+    if (dense_arenas) {
+        for (auto it = retired_dense_arenas.begin(); it != retired_dense_arenas.end();) {
+            if (!scheduler.IsFree(it->release_tick)) {
+                ++it;
+                continue;
+            }
+            Buffer* old = it->buffer;
+            ASSERT_MSG(std::ranges::find(address_space, old) == address_space.end(),
+                       "Trying to free a dense arena still mapped by the guest");
+            const u64 size = old->SizeBytes();
+            old->buffer.Destroy();
+            old->mapped_data = {};
+            Gow3Stats::arena_memory_bytes -= size;
+            it = retired_dense_arenas.erase(it);
+        }
+        return;
+    }
     // gow3 20 Oct 2026 (GitHub #95): the arenas only grew. Every range the GPU ever used stayed
     // bound to video memory: a laptop, 16 min, one level change: 320 ->
     // 1,920 MiB, never less, while images were collected (1,401 -> 502 MiB). Through a long

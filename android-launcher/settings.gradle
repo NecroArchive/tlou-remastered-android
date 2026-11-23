@@ -1,9 +1,21 @@
+// Google Cloud's Maven Central mirror avoids intermittent 429 responses from
+// shared GitHub Actions Maven Central egress. Keep Google's Android repository
+// FIRST so AGP / AndroidX remain sourced from the official Android repository.
+// Google publishes this Maven Central mirror at:
+// https://docs.cloud.google.com/docs/buildpacks/java
 pluginManagement {
-    repositories { google(); mavenCentral(); gradlePluginPortal() }
+    repositories {
+        google()
+        maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+        gradlePluginPortal()
+    }
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { google(); mavenCentral() }
+    repositories {
+        google()
+        maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+    }
 }
 rootProject.name = 'TLOURemasteredAndroid'
 include ':app'

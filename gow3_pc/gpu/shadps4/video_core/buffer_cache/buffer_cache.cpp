@@ -520,8 +520,8 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     dense_arenas = !sparse_features.sparseBinding ||
                    !sparse_features.sparseResidencyBuffer || !has_sparse_queue;
     if (dense_arenas) {
-        std::printf("GPU: no supported sparse-residency queue; using host-mapped, dense "
-                    "64 MiB arena pages with multi-page merging (no vkQueueBindSparse)\n");
+        std::printf("GPU: no sparse-residency queue; using VMA-backed dense "
+                    "buffer arenas with full-span page merging (no vkQueueBindSparse)\n");
         std::fflush(stdout);
     }
     // Android A6xx Turnip can return VK_ERROR_OUT_OF_DEVICE_MEMORY directly from
@@ -540,10 +540,21 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         }
     }
     if (dense_arenas) {
-        // The dense-specific GetDenseArena handles requests spanning any
-        // number of 64 MiB pages, migrating resident data as a single BO.
-        // Sparse Vulkan drivers keep their original page layout unchanged.
-        requested_arena_page_size = std::min<u64>(requested_arena_page_size, u64{64} << 20);
+        // Ordinary VkBuffers commit their entire virtual range on KGSL.
+        // 64 MiB pages wasted substantial RAM on A640 (last log: 107 arena
+        // objects, 3.2+ GiB Vulkan usage). The opt-in A6xx profile uses
+        // 16 MiB while GetDenseArena merges ANY number of adjacent pages
+        // for legal contiguous accesses and keeps all BDA entries coherent.
+        // Other devices remain at the previously working 64 MiB default.
+        u64 dense_page_mib = 64;
+        if (const char* env = std::getenv("GOW3_DENSE_ARENA_PAGE_MB")) {
+            const std::string_view page{env};
+            if (page == "16") dense_page_mib = 16;
+            else if (page == "32") dense_page_mib = 32;
+            else if (page == "64") dense_page_mib = 64;
+        }
+        requested_arena_page_size =
+            std::min<u64>(requested_arena_page_size, dense_page_mib << 20);
     }
     while (arena_page_bits > MIN_ARENA_PAGE_BITS &&
            ((u64{2} << arena_page_bits) > instance.GetMaxBufferSize() ||
@@ -552,10 +563,16 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     }
     arena_page_size = u64{1} << arena_page_bits;
     if (requested_arena_page_size != (u64{1} << MAX_ARENA_PAGE_BITS)) {
-        std::printf("GPU: sparse buffer arena page=%llu MiB, merged maximum=%llu MiB "
-                    "(GOW3_ARENA_PAGE_MB; guest direct memory unchanged)\n",
-                    static_cast<unsigned long long>(arena_page_size >> 20),
-                    static_cast<unsigned long long>((arena_page_size * 2) >> 20));
+        if (dense_arenas) {
+            std::printf("GPU: dense arena page=%llu MiB, max merged object limited "
+                        "by Vulkan maxBufferSize (guest direct memory unchanged)\n",
+                        static_cast<unsigned long long>(arena_page_size >> 20));
+        } else {
+            std::printf("GPU: sparse buffer arena page=%llu MiB, merged maximum=%llu MiB "
+                        "(GOW3_ARENA_PAGE_MB; guest direct memory unchanged)\n",
+                        static_cast<unsigned long long>(arena_page_size >> 20),
+                        static_cast<unsigned long long>((arena_page_size * 2) >> 20));
+        }
         std::fflush(stdout);
     }
     num_arena_pages = u64{1} << (ADDRESS_SPACE_BITS - arena_page_bits);

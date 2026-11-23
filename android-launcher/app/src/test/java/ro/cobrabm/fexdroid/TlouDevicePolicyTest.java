@@ -90,6 +90,8 @@ public final class TlouDevicePolicyTest {
         ok("32".equals(e.get("GOW3_STAGING_IDLE_LIMIT_MB")), "A640 idle staging cache limit");
         ok("512".equals(e.get("GOW3_ARENA_PAGE_MB")),
             "A640 sparse arena pages must cap merged KGSL virtual buffers at 1 GiB");
+        ok("16".equals(e.get("GOW3_DENSE_ARENA_PAGE_MB")),
+            "A640 must commit only 16 MiB per fresh dense GPU arena");
         ok("768".equals(e.get("GOW3_ARENA_LIMIT_MB")),
             "A640 physical arena retention budget");
         ok(!e.containsKey("GOW3_DMEM_MB") && !e.containsKey("GOW3_DMEM_REPORT_MB"),
@@ -99,10 +101,14 @@ public final class TlouDevicePolicyTest {
             ok("8gb-balanced".equals(TlouDevicePolicy.configureMemory(
                 e,8L<<30,gpu)), "non-A6xx must preserve its profile: "+gpu);
             ok("384".equals(e.get("GOW3_STREAM_MB")), gpu+" streaming unchanged");
+            ok(!e.containsKey("GOW3_DENSE_ARENA_PAGE_MB"),
+                gpu+" must not use A640-only dense arena page sizing");
         }
         e=env();
         ok("normal".equals(TlouDevicePolicy.configureMemory(
             e,12L<<30,"Adreno (TM) 640")), "12 GB A6xx keeps normal profile");
+        ok(!e.containsKey("GOW3_DENSE_ARENA_PAGE_MB"),
+            "12 GB A6xx must not select 16 MiB low-memory profile");
         e=env();
         ok("normal".equals(TlouDevicePolicy.configureMemory(e,0)),
             "unavailable RAM information must fail open");

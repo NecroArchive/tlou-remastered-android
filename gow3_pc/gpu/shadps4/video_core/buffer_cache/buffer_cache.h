@@ -117,7 +117,9 @@ class BufferCache {
     // Allow 512 MiB sparse pages on memory-constrained Adreno/KGSL devices.
     // MAX_ARENA_PAGES also sizes the address_space lookup for the smaller granularity.
     // 128 MiB dense pages when Vulkan sparse buffers are unsupported (e.g. KGSL A640).
-    static constexpr u64 MIN_ARENA_PAGE_BITS = 26;
+    // Dense Vulkan without sparse queues can use 16 MiB pages on 8 GiB A6xx.
+    // GetDenseArena merges all pages spanned by an access before exporting BDA.
+    static constexpr u64 MIN_ARENA_PAGE_BITS = 24;
     static constexpr u64 MAX_ARENA_PAGES = u64{1} << (ADDRESS_SPACE_BITS - MIN_ARENA_PAGE_BITS);
     static constexpr u64 MIN_BLOCK_SIZE = 16_KB;
 

@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-20: A6xx critical-GC correction and fully-clean dense GPU arena retirement, release source 86f3049e.
+# Trigger 2026-11-23: package Adreno A640 8GiB 16 MiB dense Vulkan arena memory fix from release commit 8e477633 (original AOTNative v2 signer).
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

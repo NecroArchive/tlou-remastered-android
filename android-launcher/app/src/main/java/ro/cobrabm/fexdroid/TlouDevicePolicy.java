@@ -123,6 +123,11 @@ final class TlouDevicePolicy {
             // 512 MiB pages bound the largest adjacent-page merge to 1 GiB.
             // This changes GPU virtual buffers, NEVER the PS4 direct-memory pool.
             env.put("GOW3_ARENA_PAGE_MB","512");
+            // Turnip A640 cannot sparse-bind; its normal VMA-backed 64 MiB
+            // pages commit RAM immediately. GetDenseArena can merge arbitrary
+            // page spans, so 16 MiB lowers the idle footprint without changing
+            // the guest address range or behavior of GPUs with sparse queues.
+            env.put("GOW3_DENSE_ARENA_PAGE_MB","16");
             // Reclaim inactive physical arena memory on the existing safe GPU-fence path.
             env.put("GOW3_ARENA_LIMIT_MB","768");
             return "8gb-a6xx-low-memory";

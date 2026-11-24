@@ -83,6 +83,44 @@ class TestTLOUBionic(unittest.TestCase):
                 digest.return_value.hexdigest.return_value=next(iter(m.VERIFIED_SELF_111))
                 self.assertEqual(m.require_game(game)["PORT_PROFILE"],"TLOU-VERIFIED-SELF-SHA256")
 
+    def test_cusa00557_111_verified_update_over_unrecognized_base(self):
+        # The uploaded regional 1.11 SELF is already SHA-verified. A different
+        # regional 1.00 base executable must NOT block that update overlay.
+        # In every other case keep the historical fail-closed behavior.
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            base=make_game(root/"base",title="CUSA00557",ver="01.00")
+            update=make_game(root/"update",title="CUSA00557",ver="01.11",include_libc=False)
+            (update/"eboot.bin").write_bytes(b"verified regional 111 eboot")
+            real_sha=m.hashlib.sha256
+            verified=(
+                "31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7"
+            )
+            self.assertIn(verified,m.VERIFIED_SELF_111)
+            def fake_sha(payload):
+                if payload==b"verified regional 111 eboot":
+                    return SimpleNamespace(hexdigest=lambda: verified)
+                return real_sha(payload)
+            with patch.object(m.hashlib,"sha256",side_effect=fake_sha):
+                with self.assertRaisesRegex(m.PortError,"Wrong PS4 title"):
+                    m.require_game(base)
+                result=m.require_game(base,verified_update=update)
+                self.assertEqual(result["TITLE_ID"],"CUSA00557")
+                self.assertEqual(result["PORT_PROFILE"],"TLOU-VERIFIED-REGIONAL-111-OVERLAY")
+                self.assertEqual(m.require_game(update,is_update=True)["TITLE_ID"],"CUSA00557")
+                # Region mismatch cannot turn the verified update into a pass.
+                make_sfo(update/"sce_sys/param.sfo","CUSA00556","01.11")
+                with self.assertRaisesRegex(m.PortError,"Wrong PS4 title"):
+                    m.require_game(base,verified_update=update)
+                make_sfo(update/"sce_sys/param.sfo","CUSA00557","01.00")
+                with self.assertRaisesRegex(m.PortError,"Wrong PS4 title"):
+                    m.require_game(base,verified_update=update)
+                make_sfo(update/"sce_sys/param.sfo","CUSA00557","01.11")
+                (update/"eboot.bin").unlink()
+                with self.assertRaisesRegex(m.PortError,"Wrong PS4 title"):
+                    m.require_game(base,verified_update=update)
+
     def test_verified_011_regions_and_early_content_integrity(self):
         with tempfile.TemporaryDirectory() as tmp:
             for title in sorted(m.REGIONAL_TITLES - {m.TITLE_ID}):

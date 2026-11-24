@@ -61,3 +61,11 @@ dependencies {
     testImplementation 'org.robolectric:robolectric:4.14.1'
 }
 android.testOptions.unitTests.includeAndroidResources = true
+// Robolectric resolves instrumented Android SDK artifacts at TEST RUNTIME,
+// outside Gradle's dependencyResolutionManagement repositories. Use the same
+// Maven Central mirror used for the ordinary dependencies to avoid intermittent
+// HTTP 429s from repo.maven.apache.org during GitHub Actions.
+android.testOptions.unitTests.all {
+    systemProperty 'robolectric.dependency.repo.url',
+                   'https://maven-central.storage-download.googleapis.com/maven2/'
+}

@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-24: ship RAM policy for all 8 GiB, A6xx crash compatibility at any RAM, and SHA-verified CUSA00557 1.11 preparation from release commit 604e4d29.
+# Trigger 2026-11-24 final: 8GiB all GPUs, A6xx crash compatibility all RAM, verified CUSA00557 v1.11 overlay/physical update, Robolectric mirror. Release 01ef605a.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

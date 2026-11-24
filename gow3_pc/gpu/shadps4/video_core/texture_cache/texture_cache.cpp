@@ -1873,7 +1873,10 @@ void TextureCache::GarbageCollectImages() {
         // recent *unused* images when a critical budget is exceeded. Image
         // destruction still uses the GPU-safe deferred path in DeleteImage.
         static const bool a6xx_early_gc = [] {
-            const char* env = std::getenv("GOW3_GC_A6XX_EARLY");
+            // Memory pressure is a RAM-class policy, not an Adreno-specific
+            // behavior. Preserve the legacy name for upgraded installations.
+            const char* env = std::getenv("GOW3_GC_LOW_RAM_EARLY");
+            if (!env) env = std::getenv("GOW3_GC_A6XX_EARLY");
             return env && env[0] == '1';
         }();
         ticks_to_destroy = a6xx_early_gc

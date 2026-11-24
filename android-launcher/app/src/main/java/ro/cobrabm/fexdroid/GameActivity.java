@@ -386,15 +386,18 @@ public final class GameActivity extends Activity {
             } catch(RuntimeException e) {
                 RunLog.write(this,"RAM class unavailable: keeping the normal GPU budgets");
             }
+            // Resolve the GPU independently of RAM, so Adreno 6xx correctness
+            // fixes also apply to 12/16 GiB A6xx devices. No A6xx overrides
+            // are allowed for A7xx/A8xx with >=12 GiB.
             String memoryRenderer="";
-            if(TlouDevicePolicy.isEightGiBClass(totalRam)) {
-                try {memoryRenderer=BuiltinDrivers.renderer();}
-                catch(Throwable detectionFailure) {
-                    RunLog.write(this,"GPU memory-profile renderer detection failed: "+detectionFailure);
-                }
+            try {memoryRenderer=BuiltinDrivers.renderer();}
+            catch(Throwable detectionFailure) {
+                RunLog.write(this,"GPU renderer detection failed: "+detectionFailure);
             }
             String memoryProfile=TlouDevicePolicy.configureMemory(env,totalRam,memoryRenderer);
+            String compatibilityProfile=TlouDevicePolicy.configureA6xxCompatibility(env,memoryRenderer);
             RunLog.write(this,"GPU memory policy="+memoryProfile+
+                " • A6xx crash compatibility="+compatibilityProfile+
                 " • physical="+(totalRam/(1024L*1024L))+" MiB"+
                 " • stream="+env.getOrDefault("GOW3_STREAM_MB","512")+" MiB"+
                 " • staging-retain="+env.getOrDefault("GOW3_STAGING_KEEP_MB","512")+" MiB");
@@ -442,9 +445,9 @@ public final class GameActivity extends Activity {
             }
             String ubwcMode=PortSettings.prefs(this)
                 .getString("turnip_ubwc_hint_mode","auto");
-            String eglRenderer="";
-            try { eglRenderer=BuiltinDrivers.renderer(); }
-            catch(Throwable error) { RunLog.write(this,"GPU renderer detection failed: "+error); }
+            // Keep the same detected GPU identity for the memory policy and
+            // UBWC compatibility; do not silently disagree between probes.
+            String eglRenderer=memoryRenderer;
             String displayBefore=env.get("GOW3_SCREEN_W")+"x"+env.get("GOW3_SCREEN_H");
             String compactStatus=TlouDevicePolicy.configureCompactPresent(env);
             RunLog.write(this,"Android 720p Vulkan presentation="+compactStatus+

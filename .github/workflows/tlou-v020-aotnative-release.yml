@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-23 v2: Maven Central 429 repaired with Google's official mirror; resume-safe native cache; release 8ead5c9b.
+# Trigger 2026-11-24: ship RAM policy for all 8 GiB, A6xx crash compatibility at any RAM, and SHA-verified CUSA00557 1.11 preparation from release commit 604e4d29.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -107,7 +107,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: out/android-bionic
-          key: tlou-native-aotnative-v020-v1-${{ hashFiles('gow3_pc/**', 'android/bionic/**', 'android/aot/**') }}
+          key: tlou-native-aotnative-v020-v2-${{ hashFiles('gow3_pc/**', 'android/bionic/**', 'android/aot/**', 'android/tlou_bionic.py', 'android/tlou_patches.py', 'android/device_prepare.py', 'tools/probe_tlou.py') }}
       - name: Build current Bionic dependency libraries
         if: steps.native_payload.outputs.cache-hit != 'true'
         shell: bash -el {0}
@@ -176,7 +176,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: out/android-bionic
-          key: tlou-native-aotnative-v020-v1-${{ hashFiles('gow3_pc/**', 'android/bionic/**', 'android/aot/**') }}
+          key: tlou-native-aotnative-v020-v2-${{ hashFiles('gow3_pc/**', 'android/bionic/**', 'android/aot/**', 'android/tlou_bionic.py', 'android/tlou_patches.py', 'android/device_prepare.py', 'tools/probe_tlou.py') }}
       - name: Verify full native binary and application source identity
         shell: bash -el {0}
         run: |

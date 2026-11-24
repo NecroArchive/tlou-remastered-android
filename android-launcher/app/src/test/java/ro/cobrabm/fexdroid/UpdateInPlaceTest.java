@@ -19,8 +19,8 @@ public final class UpdateInPlaceTest {
         byte[][] keys=new byte[2][], data=new byte[2][];
         int keyBytes=0,valueBytes=0;
         for(int i=0;i<2;i++){
-            keys[i]=(names[i]+"\\0").getBytes(StandardCharsets.UTF_8);
-            data[i]=(values[i]+"\\0").getBytes(StandardCharsets.UTF_8);
+            keys[i]=(names[i]+String.valueOf((char)0)).getBytes(StandardCharsets.UTF_8);
+            data[i]=(values[i]+String.valueOf((char)0)).getBytes(StandardCharsets.UTF_8);
             keyBytes+=keys[i].length;
             valueBytes+=data[i].length;
         }

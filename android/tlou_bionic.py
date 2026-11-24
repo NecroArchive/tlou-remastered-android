@@ -66,7 +66,24 @@ def read_sfo(path: Path) -> dict[str, str]:
     return result
 
 
-def require_game(folder: Path, *, is_update: bool = False) -> dict[str, str]:
+def _verified_regional_111_update(base_title: str, update: Path | None) -> bool:
+    """A regional 1.00 base can provide resources while its genuine 1.11
+    same-CUSA update supplies the VERIFIED playable executable.
+    Never trust metadata-only or resource-only updates for this exception.
+    """
+    if base_title != "CUSA00557" or update is None:
+        return False
+    sfo_path, executable = update / "sce_sys/param.sfo", update / "eboot.bin"
+    if not sfo_path.is_file() or not executable.is_file():
+        return False
+    metadata = read_sfo(sfo_path)
+    if metadata.get("TITLE_ID") != base_title or metadata.get("APP_VER") not in {"01.11", "1.11"}:
+        return False
+    return hashlib.sha256(executable.read_bytes()).hexdigest() in VERIFIED_SELF_111
+
+
+def require_game(folder: Path, *, is_update: bool = False,
+                 verified_update: Path | None = None) -> dict[str, str]:
     for relative in _BOOT_FILES:
         # Updates can inherit the base libc and, if resource-only, the eboot.
         if is_update and (relative.startswith("sce_module/") or relative == "eboot.bin"):
@@ -79,12 +96,22 @@ def require_game(folder: Path, *, is_update: bool = False) -> dict[str, str]:
         if title not in REGIONAL_TITLES:
             raise PortError(f"Wrong PS4 update title: {title!r}")
     elif title != TITLE_ID:
-        # Regional TITLE_ID alone does not prove compatible execution.
-        if (title not in REGIONAL_TITLES or
-            hashlib.sha256((folder / "eboot.bin").read_bytes()).hexdigest() not in VERIFIED_TLOU_SELFS):
+        # Regional metadata alone is insufficient; the *effective executable*
+        # must be byte-verified before accepting a different region.
+        if title not in REGIONAL_TITLES:
             raise PortError(f"Wrong PS4 title: {title!r}; expected verified TLOU region")
-        metadata["PORT_PROFILE"] = "TLOU-VERIFIED-SELF-SHA256"
-        print(f"Recognized TLOU regional SFO {title!r} via verified SELF.", flush=True)
+        digest = hashlib.sha256((folder / "eboot.bin").read_bytes()).hexdigest()
+        if digest in VERIFIED_TLOU_SELFS:
+            metadata["PORT_PROFILE"] = "TLOU-VERIFIED-SELF-SHA256"
+        elif _verified_regional_111_update(title, verified_update):
+            # Some genuine CUSA00557 v1.00 bases differ from the known 1.11
+            # executable. The 1.11 overlay supplies an independently guarded
+            # eboot; never patch or execute the unverified base.
+            metadata["PORT_PROFILE"] = "TLOU-VERIFIED-REGIONAL-111-OVERLAY"
+        else:
+            raise PortError(f"Wrong PS4 title: {title!r}; expected verified TLOU region")
+        print(f"Recognized TLOU regional SFO {title!r} via "
+              f"{metadata['PORT_PROFILE']}.", flush=True)
     return metadata
 
 
@@ -211,7 +238,7 @@ def prepare(source: Path, game: Path, update: Path | None, out: Path,
     # Never create or delete files inside the player's game dump.
     if out == game or out.is_relative_to(game) or (update and (out == update or out.is_relative_to(update))):
         raise PortError("--out must be outside the game and update folders")
-    base = require_game(game)
+    base = require_game(game, verified_update=update)
     validate_game_assets(game)
     new = require_game(update, is_update=True) if update else None
     if new and new["TITLE_ID"] != base["TITLE_ID"]:

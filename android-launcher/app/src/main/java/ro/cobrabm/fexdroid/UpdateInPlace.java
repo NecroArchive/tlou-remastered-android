@@ -108,6 +108,15 @@ final class UpdateInPlace {
             throw new IOException("Jogo ou atualização sem sce_sys/param.sfo");
         if(!Files.isRegularFile(update.resolve("eboot.bin")))
             throw new IOException("Update não contém o eboot.bin; instalação física recusada");
+        // Never overwrite a CUSA00557 base with a different region's 1.11
+        // executable or resources. The Python overlay has the same guard.
+        String gameCusa=Ps4SfoVersion.titleId(game.toFile());
+        String updateCusa=Ps4SfoVersion.titleId(update.toFile());
+        if(!gameCusa.equals(updateCusa))
+            throw new IOException("CUSA da atualização ("+updateCusa+
+                                  ") difere do jogo instalado ("+gameCusa+")");
+        if(!"1.11".equals(Ps4SfoVersion.fromFolder(update.toFile())))
+            throw new IOException("A atualização selecionada não é a versão 1.11");
         recover(game.toFile());
         Path transaction=game.resolve(TXN);
         List<Plan> plan=new ArrayList<>();

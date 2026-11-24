@@ -77,7 +77,7 @@ final class TlouDevicePolicy {
     static boolean isEightGiBClass(long totalMemBytes) {
         // Physical 8 GiB phones usually expose 7.2-8.0 GiB to Android.
         // Excludes 12/16 GiB devices of every GPU generation.
-        return totalMemBytes > 4L * GIB && totalMemBytes <= 9L * GIB;
+        return totalMemBytes >= 7L * GIB && totalMemBytes <= 9L * GIB;
     }
 
     static boolean isAdreno6xx(String renderer) {

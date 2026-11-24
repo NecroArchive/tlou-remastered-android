@@ -20,6 +20,26 @@ public class TsoProfileUpdateVersionTest {
         TsoProfile.requireSupported111(marker);
     }
 
+    @Test public void shaSelected111OverridesStaleSfo100() throws Exception {
+        JSONObject marker=new JSONObject().put("version","01.00")
+            .put("update_version",JSONObject.NULL).put("effective_version","01.11")
+            .put("effective_self_sha256","31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7");
+        assertEquals("111",TsoProfile.gameCode(marker));
+        TsoProfile.requireSupported111(marker);
+    }
+
+    @Test public void known100CannotBePromotedByMetadata111() throws Exception {
+        JSONObject marker=new JSONObject().put("version","01.11")
+            .put("effective_version","01.00");
+        assertEquals("100",TsoProfile.gameCode(marker));
+        try {
+            TsoProfile.requireSupported111(marker);
+            fail("Known 1.00 SELF must remain blocked");
+        } catch(java.io.IOException expected) {
+            assertTrue(expected.getMessage().contains("Atualize o jogo para 1.11"));
+        }
+    }
+
     @Test public void physical111Remains111() throws Exception {
         JSONObject marker=new JSONObject()
             .put("version","01.11").put("update_version",JSONObject.NULL);

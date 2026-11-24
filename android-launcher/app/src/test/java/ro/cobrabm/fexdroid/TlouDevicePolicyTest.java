@@ -60,55 +60,59 @@ public final class TlouDevicePolicyTest {
             "never stomp existing Freedreno flags");
         ok("another_feature=1".equals(e.get("FD_DEV_FEATURES")),"existing env retained");
 
-        e=env();
-        ok("normal".equals(TlouDevicePolicy.configureMemory(e,12L<<30)),
-            "12 GB devices must not be altered");
-        ok(e.isEmpty(),"no changes on 12 GB");
-        e=env();
-        ok("8gb-balanced".equals(TlouDevicePolicy.configureMemory(e,8L<<30)),
-            "8 GB memory preset must activate");
-        ok("384".equals(e.get("GOW3_STREAM_MB")), "stream ring");
-        ok("128".equals(e.get("GOW3_STAGING_KEEP_MB")), "host staging cache");
-        ok("64".equals(e.get("GOW3_STAGING_LARGE_MB")), "large scratch buffer");
-        ok("0".equals(e.get("GOW3_RESIDENCY_CHUNKS")), "speculative arena allocations");
-        ok(!e.containsKey("GOW3_DMEM_MB") && !e.containsKey("GOW3_DMEM_REPORT_MB"),
-            "must preserve PS4 virtual memory contract");
-        ok(!e.containsKey("GOW3_STAGING_PREWARM_BLOCKS"),
-            "normal 8 GB profile keeps its original staging prewarm");
-        e=env();
-        ok("8gb-a6xx-low-memory".equals(TlouDevicePolicy.configureMemory(
-            e,7500L<<20,"Adreno (TM) 640")), "K20 Pro profile must activate");
-        ok("128".equals(e.get("GOW3_STREAM_MB")), "A640 stream memory cap");
-        ok("32".equals(e.get("GOW3_STAGING_KEEP_MB")), "A640 staging retention");
-        ok("0".equals(e.get("GOW3_STAGING_KEEP_VRAM_MB")), "A640 idle VRAM");
-        ok("0".equals(e.get("GOW3_STAGING_LARGE_MB")), "no A640 pinned scratch");
-        ok("1".equals(e.get("GOW3_STAGING_PREWARM_BLOCKS")), "one 16 MiB prewarm block");
-        ok("384".equals(e.get("GOW3_GC_HEADROOM_MB")), "early image GC margin for A640");
-        ok("1".equals(e.get("GOW3_GC_A6XX_EARLY")), "critical memory must evict older A640 textures");
-        ok("12".equals(e.get("GOW3_ARENA_RECLAIM_AGE_S")), "idle dense GPU arenas retire after 12 seconds");
-        ok("90".equals(e.get("GOW3_STAGING_IDLE_FRAMES")), "A640 staging trim interval");
-        ok("32".equals(e.get("GOW3_STAGING_IDLE_LIMIT_MB")), "A640 idle staging cache limit");
-        ok("512".equals(e.get("GOW3_ARENA_PAGE_MB")),
-            "A640 sparse arena pages must cap merged KGSL virtual buffers at 1 GiB");
-        ok("16".equals(e.get("GOW3_DENSE_ARENA_PAGE_MB")),
-            "A640 must commit only 16 MiB per fresh dense GPU arena");
-        ok("768".equals(e.get("GOW3_ARENA_LIMIT_MB")),
-            "A640 physical arena retention budget");
-        ok(!e.containsKey("GOW3_DMEM_MB") && !e.containsKey("GOW3_DMEM_REPORT_MB"),
-            "A640 must keep guest PS4 virtual memory unchanged");
-        for(String gpu:new String[]{"Adreno (TM) 750","Adreno (TM) 830","Mali-G720"}) {
+        // Every 8 GiB class gets exactly the same RAM-saving allocation
+        // policy, regardless of Qualcomm/Mali generation.
+        for(String gpu:new String[]{"Adreno (TM) 630","Adreno (TM) 640",
+                "Adreno (TM) 650","Adreno (TM) 750","Adreno (TM) 830","Mali-G720",""}) {
             e=env();
-            ok("8gb-balanced".equals(TlouDevicePolicy.configureMemory(
-                e,8L<<30,gpu)), "non-A6xx must preserve its profile: "+gpu);
-            ok("384".equals(e.get("GOW3_STREAM_MB")), gpu+" streaming unchanged");
-            ok(!e.containsKey("GOW3_DENSE_ARENA_PAGE_MB"),
-                gpu+" must not use A640-only dense arena page sizing");
+            ok("8gb-low-memory".equals(TlouDevicePolicy.configureMemory(e,8L<<30,gpu)),
+                "8 GiB memory profile missing on "+gpu);
+            ok("128".equals(e.get("GOW3_STREAM_MB")), "stream budget for "+gpu);
+            ok("32".equals(e.get("GOW3_STAGING_KEEP_MB")), "host staging for "+gpu);
+            ok("0".equals(e.get("GOW3_STAGING_KEEP_VRAM_MB")), "GPU staging for "+gpu);
+            ok("0".equals(e.get("GOW3_STAGING_LARGE_MB")), "large staging for "+gpu);
+            ok("1".equals(e.get("GOW3_STAGING_PREWARM_BLOCKS")), "prewarm for "+gpu);
+            ok("0".equals(e.get("GOW3_RESIDENCY_CHUNKS")), "speculative pools for "+gpu);
+            ok("384".equals(e.get("GOW3_GC_HEADROOM_MB")), "image GC for "+gpu);
+            ok("1".equals(e.get("GOW3_GC_LOW_RAM_EARLY")), "early GC for "+gpu);
+            ok("12".equals(e.get("GOW3_ARENA_RECLAIM_AGE_S")), "arena idle for "+gpu);
+            ok("90".equals(e.get("GOW3_STAGING_IDLE_FRAMES")), "staging idle for "+gpu);
+            ok("32".equals(e.get("GOW3_STAGING_IDLE_LIMIT_MB")), "staging cap for "+gpu);
+            ok("16".equals(e.get("GOW3_DENSE_ARENA_PAGE_MB")), "dense pages for "+gpu);
+            ok("768".equals(e.get("GOW3_ARENA_LIMIT_MB")), "resident arena cap for "+gpu);
+            ok(!e.containsKey("GOW3_ARENA_PAGE_MB"), "A6xx-only sparse cap in RAM profile "+gpu);
+            ok(!e.containsKey("GOW3_DMEM_MB") && !e.containsKey("GOW3_DMEM_REPORT_MB"),
+                "never modify PS4 guest memory for "+gpu);
         }
-        e=env();
-        ok("normal".equals(TlouDevicePolicy.configureMemory(
-            e,12L<<30,"Adreno (TM) 640")), "12 GB A6xx keeps normal profile");
-        ok(!e.containsKey("GOW3_DENSE_ARENA_PAGE_MB"),
-            "12 GB A6xx must not select 16 MiB low-memory profile");
+        // The 7xx/8xx must keep every RAM/GPU override absent at 12+ GiB.
+        for(long ram:new long[]{12L<<30,16L<<30}) {
+            for(String gpu:new String[]{"Adreno (TM) 730","Adreno (TM) 750",
+                    "Adreno (TM) 830","Adreno (TM) 840","Mali-G720"}) {
+                e=env();
+                ok("normal".equals(TlouDevicePolicy.configureMemory(e,ram,gpu)),
+                    "12/16 GiB memory policy must be off: "+gpu);
+                ok("unchanged".equals(TlouDevicePolicy.configureA6xxCompatibility(e,gpu)),
+                    "A6xx crash flags must not leak to "+gpu);
+                ok(e.isEmpty(), "12/16 GiB A7xx/A8xx must have NO RAM/crash overrides: "+gpu);
+            }
+        }
+        // A6xx crash/compatibility workarounds are independent of RAM size.
+        for(long ram:new long[]{8L<<30,12L<<30,16L<<30}) {
+            for(String gpu:new String[]{"Adreno (TM) 630","Adreno (TM) 640",
+                    "Adreno (TM) 650","Adreno (TM) 660"}) {
+                e=env();
+                TlouDevicePolicy.configureMemory(e,ram,gpu);
+                ok("a6xx-crash-compat".equals(
+                    TlouDevicePolicy.configureA6xxCompatibility(e,gpu)), "all A6xx: "+gpu);
+                ok("512".equals(e.get("GOW3_ARENA_PAGE_MB")), "A6xx sparse limit "+gpu);
+                ok("0".equals(e.get("GOW3_RESIDENCY_CHUNKS")), "A6xx pre-allocation off "+gpu);
+                if(ram>=12L<<30) {
+                    ok(!e.containsKey("GOW3_DENSE_ARENA_PAGE_MB"), "A6xx 12+ RAM limit leaked");
+                    ok(!e.containsKey("GOW3_GC_LOW_RAM_EARLY"), "A6xx 12+ GC limit leaked");
+                    ok(!e.containsKey("GOW3_STAGING_IDLE_FRAMES"), "A6xx 12+ staging limit leaked");
+                }
+            }
+        }
         e=env();
         ok("normal".equals(TlouDevicePolicy.configureMemory(e,0)),
             "unavailable RAM information must fail open");

@@ -6,14 +6,18 @@ import json
 from pathlib import Path
 import shutil
 import tempfile
-from tlou_bionic import prepare, require_game
+from tlou_bionic import prepare, require_game, PortError
 from tlou_patches import write_selected
 
-REVISION = 3
+REVISION = 4  # Regional 1.11 effective-SELF verification and overlay rules
 
 
 def fingerprint(game, update=None):
-    require_game(game)
+    base = require_game(game, verified_update=update)
+    if update is not None:
+        patch = require_game(update, is_update=True)
+        if patch.get("TITLE_ID") != base.get("TITLE_ID"):
+            raise PortError("Update CUSA does not match base CUSA")
     digest = hashlib.sha256()
     digest.update(f"{REVISION}:{game.resolve()}".encode())
     for label, directory in (("game", game), ("update", update)):
@@ -74,7 +78,7 @@ def ensure(source, game, out, options=None, update=None):
         prepare(source, game, update, stage)
         if options is not None:
             write_selected(source, stage, options)
-        metadata = require_game(game)
+        metadata = require_game(game, verified_update=update)
         updated = require_game(update, is_update=True) if update else None
         (stage / "device-ready.json").write_text(json.dumps({"fingerprint": key, "game": str(game),
             "title_id": metadata.get("TITLE_ID"), "version": metadata.get("APP_VER"),

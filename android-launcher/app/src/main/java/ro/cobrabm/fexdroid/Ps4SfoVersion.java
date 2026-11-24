@@ -16,7 +16,22 @@ final class Ps4SfoVersion {
         return fromBytes(Files.readAllBytes(new File(game,"sce_sys/param.sfo").toPath()));
     }
 
+    static String titleId(File game) throws IOException {
+        String value=fieldFromBytes(
+            Files.readAllBytes(new File(game,"sce_sys/param.sfo").toPath()),"TITLE_ID");
+        if(!value.matches("CUSA[0-9]{5}"))
+            throw new IOException("TITLE_ID inválido em param.sfo: "+value);
+        return value;
+    }
+
     static String fromBytes(byte[] raw) throws IOException {
+        String version=fieldFromBytes(raw,"APP_VER");
+        if("01.00".equals(version) || "1.00".equals(version))return "1.00";
+        if("01.11".equals(version) || "1.11".equals(version))return "1.11";
+        throw new IOException("Versão do jogo não suportada: "+version);
+    }
+
+    private static String fieldFromBytes(byte[] raw,String wanted) throws IOException {
         if(raw.length<20 || raw.length>1024*1024 ||
            raw[0]!=0 || raw[1]!='P' || raw[2]!='S' || raw[3]!='F')
             throw new IOException("param.sfo inválido ou ausente");
@@ -40,14 +55,11 @@ final class Ps4SfoVersion {
             while(pos<values && raw[pos]!=0)pos++;
             if(pos>=values)throw new IOException("Chave não terminada em param.sfo");
             String name=new String(raw,(int)keyAt,pos-(int)keyAt,StandardCharsets.UTF_8);
-            if(!"APP_VER".equals(name))continue;
+            if(!wanted.equals(name))continue;
             int stop=(int)valueAt, limit=stop+length;
             while(stop<limit && raw[stop]!=0)stop++;
-            String version=new String(raw,(int)valueAt,stop-(int)valueAt,StandardCharsets.UTF_8).trim();
-            if("01.00".equals(version) || "1.00".equals(version))return "1.00";
-            if("01.11".equals(version) || "1.11".equals(version))return "1.11";
-            throw new IOException("Versão do jogo não suportada: "+version);
+            return new String(raw,(int)valueAt,stop-(int)valueAt,StandardCharsets.UTF_8).trim();
         }
-        throw new IOException("APP_VER ausente em param.sfo");
+        throw new IOException(wanted+" ausente em param.sfo");
     }
 }

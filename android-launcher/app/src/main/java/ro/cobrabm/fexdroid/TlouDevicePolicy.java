@@ -75,63 +75,52 @@ final class TlouDevicePolicy {
     }
 
     static boolean isEightGiBClass(long totalMemBytes) {
-        // 8 GB Android devices typically report 7.2-8.0 GiB physical RAM.
-        // Fail open on missing information; never alter 12/16 GiB devices.
+        // Physical 8 GiB phones usually expose 7.2-8.0 GiB to Android.
+        // Excludes 12/16 GiB devices of every GPU generation.
         return totalMemBytes > 4L * GIB && totalMemBytes <= 9L * GIB;
     }
 
-    /** Reserve less *actual* GPU memory while leaving the virtual PS4 pool unchanged. */
-    static String configureMemory(Map<String,String> env, long totalMemBytes) {
+    static boolean isAdreno6xx(String renderer) {
+        String gpu=renderer==null?"":renderer.toLowerCase(Locale.ROOT);
+        return gpu.matches(".*adreno[^0-9]*6[0-9]{2}([^0-9]|$).*");
+    }
+
+    /**
+     * Crash compatibility is GPU-specific, not dependent on available RAM:
+     * Turnip A6xx needs smaller sparse virtual reservations, and must never
+     * submit bindings on a graphics queue lacking VK_QUEUE_SPARSE_BINDING_BIT.
+     * The renderer itself detects that unsupported Vulkan capability.
+     */
+    static String configureA6xxCompatibility(Map<String,String> env, String renderer) {
+        if(!isAdreno6xx(renderer))return "unchanged";
+        env.put("GOW3_ARENA_PAGE_MB","512");
+        env.put("GOW3_RESIDENCY_CHUNKS","0");
+        return "a6xx-crash-compat";
+    }
+
+    /** Tighten real GPU allocation/retention exclusively on ALL 8 GiB phones. */
+    static String configureMemory(Map<String,String> env,long totalMemBytes) {
         return configureMemory(env,totalMemBytes,"");
     }
-    static String configureMemory(Map<String,String> env, long totalMemBytes,
-                                  String eglRenderer) {
-        if (!isEightGiBClass(totalMemBytes)) return "normal";
-        // Standard 8 GB profile: no guest memory contract changes.
-        env.put("GOW3_STREAM_MB", "384");
-        env.put("GOW3_STAGING_KEEP_MB", "128");
-        env.put("GOW3_STAGING_KEEP_VRAM_MB", "16");
-        env.put("GOW3_STAGING_LARGE_MB", "64");
-        env.put("GOW3_RESIDENCY_CHUNKS", "0");
-        // K20 Pro/Adreno 640: log 2026-11-18 03:16 reports
-        // VK_ERROR_OUT_OF_DEVICE_MEMORY during world-core bootstrap.
-        // The Turnip heap is shared with system RAM (5625 MiB reported).
-        // Shrink speculative/pinned GPU allocations, NOT guest PS4 memory,
-        // readbacks, Vulkan synchronization or patch compilation.
-        final String gpu=eglRenderer==null?"":eglRenderer.toLowerCase(Locale.ROOT);
-        final boolean a6xx=gpu.matches(".*adreno[^0-9]*6[0-9]{2}([^0-9]|$).*");
-        if(a6xx) {
-            env.put("GOW3_STREAM_MB","128");
-            env.put("GOW3_STAGING_KEEP_MB","32");
-            env.put("GOW3_STAGING_KEEP_VRAM_MB","0");
-            env.put("GOW3_STAGING_LARGE_MB","0");
-            env.put("GOW3_STAGING_PREWARM_BLOCKS","1");
-            // Leave real room for buffers when image GC sees a shrinking
-            // shared Turnip heap, rather than collecting only at OOM.
-            env.put("GOW3_GC_HEADROOM_MB","384");
-            // On A640 the critical LRU age of 160 frames blocked texture
-            // eviction while GPU usage exceeded the live heap budget.
-            env.put("GOW3_GC_A6XX_EARLY","1");
-            env.put("GOW3_ARENA_RECLAIM_AGE_S","12");
-            // Drain idle Vulkan staging objects after a few seconds instead
-            // of holding them for up to 3000 frames on an 8 GiB Adreno.
-            env.put("GOW3_STAGING_IDLE_FRAMES","90");
-            env.put("GOW3_STAGING_IDLE_LIMIT_MB","32");
-            // Turnip/KGSL reserves virtual BOs using GPUOBJ_ALLOC. The 1 GiB page
-            // setting still merged into 2 GiB BOs and failed during world-core startup
-            // (runtime 2026-11-19 02:28, vkCreateBuffer ErrorOutOfDeviceMemory).
-            // 512 MiB pages bound the largest adjacent-page merge to 1 GiB.
-            // This changes GPU virtual buffers, NEVER the PS4 direct-memory pool.
-            env.put("GOW3_ARENA_PAGE_MB","512");
-            // Turnip A640 cannot sparse-bind; its normal VMA-backed 64 MiB
-            // pages commit RAM immediately. GetDenseArena can merge arbitrary
-            // page spans, so 16 MiB lowers the idle footprint without changing
-            // the guest address range or behavior of GPUs with sparse queues.
-            env.put("GOW3_DENSE_ARENA_PAGE_MB","16");
-            // Reclaim inactive physical arena memory on the existing safe GPU-fence path.
-            env.put("GOW3_ARENA_LIMIT_MB","768");
-            return "8gb-a6xx-low-memory";
-        }
-        return "8gb-balanced";
+    static String configureMemory(Map<String,String> env,long totalMemBytes,String renderer) {
+        if(!isEightGiBClass(totalMemBytes))return "normal";
+        // Apply equally to A6xx, A7xx, A8xx and other GPUs at 8 GiB.
+        // No reduction of the guest PS4 direct-memory pool.
+        env.put("GOW3_STREAM_MB","128");
+        env.put("GOW3_STAGING_KEEP_MB","32");
+        env.put("GOW3_STAGING_KEEP_VRAM_MB","0");
+        env.put("GOW3_STAGING_LARGE_MB","0");
+        env.put("GOW3_STAGING_PREWARM_BLOCKS","1");
+        env.put("GOW3_RESIDENCY_CHUNKS","0");
+        env.put("GOW3_GC_HEADROOM_MB","384");
+        env.put("GOW3_GC_LOW_RAM_EARLY","1");
+        env.put("GOW3_ARENA_RECLAIM_AGE_S","12");
+        env.put("GOW3_STAGING_IDLE_FRAMES","90");
+        env.put("GOW3_STAGING_IDLE_LIMIT_MB","32");
+        // Used only if the physical driver cannot use sparse Vulkan binding.
+        // The dense buffer manager safely merges arbitrary pages.
+        env.put("GOW3_DENSE_ARENA_PAGE_MB","16");
+        env.put("GOW3_ARENA_LIMIT_MB","768");
+        return "8gb-low-memory";
     }
 }

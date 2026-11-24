@@ -16,6 +16,35 @@ final class Ps4SfoVersion {
         return fromBytes(Files.readAllBytes(new File(game,"sce_sys/param.sfo").toPath()));
     }
 
+    // Only a verified executable may override stale installation metadata.
+    // Keep fromFolder() as the raw SFO reader for update transactions.
+    static String fromInstalledFolder(File game) throws Exception {
+        String declared=fromFolder(game);
+        if(!"1.00".equals(declared) || !"CUSA00557".equals(titleId(game)))
+            return declared;
+        File boot=new File(game,"eboot.bin");
+        if(!boot.isFile())return declared;
+        java.security.MessageDigest sha=java.security.MessageDigest.getInstance("SHA-256");
+        try(java.io.InputStream stream=new java.io.BufferedInputStream(
+                new java.io.FileInputStream(boot))) {
+            byte[] buffer=new byte[1024*1024];
+            int count;
+            while((count=stream.read(buffer))!=-1)sha.update(buffer,0,count);
+        }
+        StringBuilder digest=new StringBuilder(64);
+        for(byte value:sha.digest())
+            digest.append(String.format(java.util.Locale.ROOT,"%02x",value&255));
+        return installedVersion(declared,"CUSA00557",digest.toString());
+    }
+
+    static String installedVersion(String declared,String title,String digest) {
+        if("1.00".equals(declared) && "CUSA00557".equals(title) &&
+           ("31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7".equals(digest) ||
+            "3cfa475f88ca68485b6b9230e62b84e195cdbe19e6f7295c110b8dcf8f20884e".equals(digest)))
+            return "1.11";
+        return declared;
+    }
+
     static String titleId(File game) throws IOException {
         String value=fieldFromBytes(
             Files.readAllBytes(new File(game,"sce_sys/param.sfo").toPath()),"TITLE_ID");

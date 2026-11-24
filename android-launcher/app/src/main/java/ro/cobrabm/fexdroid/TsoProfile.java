@@ -40,6 +40,10 @@ final class TsoProfile {
         String update=marker.optString("update_version","");
         String gameVersion=update.isEmpty() || "null".equalsIgnoreCase(update)
             ? marker.optString("version","") : update;
+        // Newly prepared images record the SHA-selected executable version.
+        // Legacy markers still resolve via the previous metadata policy.
+        String effective=marker.optString("effective_version","");
+        if(!effective.isEmpty() && !"null".equalsIgnoreCase(effective))gameVersion=effective;
         if("01.00".equals(gameVersion)||"1.00".equals(gameVersion))
             return "100";
         if("01.11".equals(gameVersion)||"1.11".equals(gameVersion))

@@ -18,6 +18,37 @@ class DevicePreparation(unittest.TestCase):
         (out / "tlou-view").mkdir()
         (out / "tlou-view/eboot.bin").symlink_to(game / "eboot.bin")
 
+    def test_verified_cusa00557_111_with_stale_sfo(self):
+        import hashlib
+        import json
+        from tlou_bionic import VERIFIED_SELF_111
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            game=make_game(root/"game", title="CUSA00557", ver="01.00")
+            out=root/"prepared"
+            payload=b"verified regional 111 fixture"
+            (game/"eboot.bin").write_bytes(payload)
+            verified="31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7"
+            self.assertIn(verified, VERIFIED_SELF_111)
+            real_sha=hashlib.sha256
+            from types import SimpleNamespace
+            def fake_sha(data=b""):
+                if data==payload:
+                    return SimpleNamespace(hexdigest=lambda: verified)
+                return real_sha(data)
+            with patch.object(hashlib,"sha256",side_effect=fake_sha), \
+                 patch.object(device,"prepare",side_effect=self.fake_prepare) as prepare:
+                device.ensure(root,game,out)
+                marker=json.loads((out/"device-ready.json").read_text())
+                self.assertEqual(marker["title_id"],"CUSA00557")
+                self.assertEqual(marker["version"],"01.00")
+                self.assertEqual(marker["effective_version"],"01.11")
+                self.assertEqual(marker["effective_self_sha256"],verified)
+                device.ensure(root,game,out)
+                self.assertEqual(prepare.call_count,1)
+            from tlou_bionic import read_sfo
+            self.assertEqual(read_sfo(game/"sce_sys/param.sfo")["APP_VER"],"01.00")
+
     def test_prepared_game_without_dvdroot_still_launches(self):
         """Regression: user log (10) showed a working prepared 01.00 game
         blocked before guest launch by new required dvdroot_ps4 preflight."""

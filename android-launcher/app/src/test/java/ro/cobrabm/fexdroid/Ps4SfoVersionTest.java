@@ -32,6 +32,13 @@ public final class Ps4SfoVersionTest {
         return data.array();
     }
 
+    @Test public void verifiedRegional111OverridesStale100Metadata() {
+        String hash="31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7";
+        assertEquals("1.11",Ps4SfoVersion.installedVersion("1.00","CUSA00557",hash));
+        assertEquals("1.00",Ps4SfoVersion.installedVersion("1.00","CUSA00557","unknown"));
+        assertEquals("1.00",Ps4SfoVersion.installedVersion("1.00","CUSA99999",hash));
+    }
+
     @Test public void readsReal100Base() throws Exception {
         assertEquals("1.00",Ps4SfoVersion.fromBytes(version("01.00")));
     }

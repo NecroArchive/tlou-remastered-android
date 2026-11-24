@@ -493,7 +493,7 @@ public final class MainActivity extends Activity {
      * boot-linked.bin SHA-256 before committing the physical update.
      */
     private File prepareForNativeAot(File game) throws Exception {
-        String physicalVersion=Ps4SfoVersion.fromFolder(game);
+        String physicalVersion=Ps4SfoVersion.fromInstalledFolder(game);
         if("1.11".equals(physicalVersion)) {
             // Ignore a legacy update_path or stale .previous marker.
             // Physical 1.11 is already current and its compiled AOT stays put.
@@ -610,7 +610,7 @@ public final class MainActivity extends Activity {
             // store a separate update_path.
             File base=GameInstallState.base(selected());
             File prepared=launch?prepareForNativeAot(base):
-                tools.prepare(base,updateForGame(base),this::update);
+                tools.prepare(base,"1.11".equals(Ps4SfoVersion.fromInstalledFolder(base)) ? null : updateForGame(base),this::update);
             SharedPreferences.Editor saved=prefs.edit()
                 .putString("game_path",base.getAbsolutePath())
                 .putString("prepared_path",prepared.getAbsolutePath());

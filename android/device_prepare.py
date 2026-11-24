@@ -7,9 +7,9 @@ from pathlib import Path
 import shutil
 import tempfile
 from tlou_bionic import prepare, require_game, PortError
-from tlou_patches import write_selected
+from tlou_patches import write_selected, known_profile
 
-REVISION = 4  # Regional 1.11 effective-SELF verification and overlay rules
+REVISION = 5  # Resolve runtime profile from the effective SELF, not stale SFO
 
 
 def fingerprint(game, update=None):
@@ -80,7 +80,17 @@ def ensure(source, game, out, options=None, update=None):
             write_selected(source, stage, options)
         metadata = require_game(game, verified_update=update)
         updated = require_game(update, is_update=True) if update else None
+        # The merged view is the executable actually used to build boot-linked.bin.
+        # A known SELF is authoritative for runtime version; SFO fields remain
+        # untouched for physical update transactions and regional identification.
+        self_hash = hashlib.sha256((stage / "tlou-view/eboot.bin").read_bytes()).hexdigest()
+        declared_version = (updated or metadata).get("APP_VER")
+        profile = known_profile(self_hash)
+        effective_version = profile or declared_version
+        if profile and declared_version not in {profile, profile.lstrip("0")}:
+            print(f"APP_VER {declared_version} diverge do SELF validado {profile}; usando perfil {profile}.", flush=True)
         (stage / "device-ready.json").write_text(json.dumps({"fingerprint": key, "game": str(game),
+            "effective_version": effective_version, "effective_self_sha256": self_hash,
             "title_id": metadata.get("TITLE_ID"), "version": metadata.get("APP_VER"),
             "update": str(update) if update else None,
             "update_version": updated.get("APP_VER") if updated else None}))

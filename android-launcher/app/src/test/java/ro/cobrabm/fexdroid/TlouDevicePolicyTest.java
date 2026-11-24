@@ -84,6 +84,11 @@ public final class TlouDevicePolicyTest {
             ok(!e.containsKey("GOW3_DMEM_MB") && !e.containsKey("GOW3_DMEM_REPORT_MB"),
                 "never modify PS4 guest memory for "+gpu);
         }
+        // Genuine 6 GiB phones must not be misclassified as 8 GiB.
+        e=env();
+        ok("normal".equals(TlouDevicePolicy.configureMemory(e,6L<<30,"Adreno (TM) 740")),
+            "6 GiB is not the 8 GiB low-memory profile");
+        ok(e.isEmpty(),"6 GiB should retain its previous policy");
         // The 7xx/8xx must keep every RAM/GPU override absent at 12+ GiB.
         for(long ram:new long[]{12L<<30,16L<<30}) {
             for(String gpu:new String[]{"Adreno (TM) 730","Adreno (TM) 750",

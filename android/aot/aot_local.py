@@ -54,6 +54,9 @@ KNOWN_EBOOTS = {
 # which was reached on-device after fixing the worker's FS/GS TLS.
 # Never apply these offsets to an unverified game executable.
 TLOU_111_SWITCH_SHA256 = "3cfa475f88ca68485b6b9230e62b84e195cdbe19e6f7295c110b8dcf8f20884e"
+TLOU_111_CUSA00557_SHA256 = "31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7"
+TLOU_111_SWITCH_SHA256S = frozenset((TLOU_111_SWITCH_SHA256, TLOU_111_CUSA00557_SHA256))
+TLOU_111_ENTRY_POLICY = "tlou-111-verified-switch-worker-v2"
 TLOU_111_SWITCH_PC = 0xB59FF7
 TLOU_111_SWITCH_TABLE = 0x117D550
 TLOU_111_SWITCH_SLOTS = 11
@@ -191,7 +194,7 @@ def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
     that table and invalidates the whole existing --resume cache. Preseeding
     all cases now avoids a separate full rebuild for every unvisited case.
     """
-    if eboot_sha != TLOU_111_SWITCH_SHA256:
+    if eboot_sha not in TLOU_111_SWITCH_SHA256S:
         return []
     info = check_boot(boot)
     image_start = boot.stat().st_size - info["size"]
@@ -228,6 +231,18 @@ def known_switch_entries(boot: Path, eboot_sha: str) -> list[int]:
                                 for delta in struct.unpack("<4i", second)))
     if second_targets != [0x9C7667, 0x9C769E, 0x9C76D2, 0x9C7708]:
         raise ValueError("Unexpected 1.11 second switch targets")
+    # The CUSA00557 executable is independently SHA-selected. Accept shared
+    # offsets only after both dispatch signatures and table shapes match.
+    if eboot_sha == TLOU_111_CUSA00557_SHA256:
+        try:
+            from .patch_variants import boot_layout
+        except ImportError:
+            from patch_variants import boot_layout
+        _, _, segments = boot_layout(boot)
+        for target in targets + second_targets + list(TLOU_111_WORKER_JUMP_TARGETS):
+            if not any(start <= target < end and executable
+                       for start, end, executable in segments):
+                raise ValueError("CUSA00557 AOT entry outside executable code")
     return sorted(set(targets + second_targets))
 
 
@@ -271,7 +286,7 @@ def granular_risk_entries(eboot_sha: str, misses: Path | None,
         for first, last in TLOU_100_CALL_HOTSPOTS:
             risk.update(range(first, min(last, image_size),
                               TLOU_100_CALL_HOTSPOT_STEP))
-    if eboot_sha == TLOU_111_SWITCH_SHA256:
+    if eboot_sha in TLOU_111_SWITCH_SHA256S:
         risk.update(TLOU_111_WORKER_JUMP_TARGETS)
         risk.update(TLOU_111_KNOWN_INDIRECT_CALLERS)
         # --granular-funcs resolves each hint to its enclosing function.
@@ -319,7 +334,7 @@ def prepare_extra_entries(boot: Path, eboot_sha: str, misses: Path | None,
     known = known_switch_entries(boot, eboot_sha)
     image_size = check_boot(boot)["size"]
     observed = (list(TLOU_111_WORKER_JUMP_TARGETS)
-                if eboot_sha == TLOU_111_SWITCH_SHA256 else [])
+                if eboot_sha in TLOU_111_SWITCH_SHA256S else [])
     # Always include the reproducible 01.00 native mid-function CALL,
     # including on clean installs with no exported aot-misses.log.
     observed += verified_100_midcall_entries(boot, eboot_sha)
@@ -881,6 +896,8 @@ def main(argv=None):
                   "input_boot": check_boot(boot), "translation_command": command,
                   "runtime_integrated": False, "status": "staged",
                   "verified_switch_targets": [f"+0x{x:x}" for x in seed_targets],
+                  "verified_111_entry_policy": (TLOU_111_ENTRY_POLICY
+                      if digest in TLOU_111_SWITCH_SHA256S else ""),
                   "extra_entry_count": len(added_entries),
                   "resume_enabled": "--resume" in command,
                   "full_rebuild_100": full_rebuild_100,

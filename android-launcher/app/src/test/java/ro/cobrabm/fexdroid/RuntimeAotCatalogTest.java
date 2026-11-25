@@ -109,6 +109,27 @@ public class RuntimeAotCatalogTest {
         assertFalse(RuntimeAot.hasVerified100MidCall(report));
     }
 
+    @Test public void regional111RequiresCompletedSwitchAndWorkerProof() throws Exception {
+        String regional="31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7";
+        JSONObject marker=new JSONObject().put("effective_self_sha256",regional);
+        JSONObject report=catalog("1.11").put("eboot_sha256",regional);
+        assertFalse(RuntimeAot.hasRequiredRegional111Entries(marker,report));
+        JSONArray targets=new JSONArray();
+        String[] switches={"b5a041","b5a0bd","b5a127","b5a1e8","b5a252","b5a280",
+            "b5a2b6","b5a012","b5a2e4","b5a33f","9c7667","9c769e","9c76d2","9c7708"};
+        for(String target:switches)targets.put("+0x"+target);
+        String checks=String.join(",",switches)+",1bf55b,1c28ad,553c14,553c82,a2125e,c9fc61";
+        report.put("verified_111_entry_policy","tlou-111-verified-switch-worker-v2")
+            .put("entry_check_completed",true).put("granular_risk_hint_count",114688)
+            .put("verified_switch_targets",targets).put("translation_command",new JSONArray()
+                .put("--extra-entries").put("entries.txt").put("--granular-funcs").put("risk.txt")
+                .put("--check-entries").put(checks));
+        assertTrue(RuntimeAot.hasRequiredRegional111Entries(marker,report));
+        report.put("entry_check_completed",false);
+        assertFalse(RuntimeAot.hasRequiredRegional111Entries(marker,report));
+        assertTrue(RuntimeAot.hasRequiredRegional111Entries(new JSONObject(),catalog("1.11")));
+    }
+
     @Test public void keepsAll111VariantContract() throws Exception {
         assertTrue(RuntimeAot.hasCompleteVariantCatalog(catalog("1.11")));
         JSONObject wrong=catalog("1.11");

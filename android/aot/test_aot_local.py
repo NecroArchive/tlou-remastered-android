@@ -328,6 +328,36 @@ class TestBridge(unittest.TestCase):
                     out.read_text().splitlines(),
                     [f"+0x{x:x}" for x in extra])
 
+    def test_cusa00557_clean_install_seeds_both_switches_and_workers(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            boot = root / "bb-boot"
+            signature = synthetic_switch_boot(boot)
+            # Make the synthetic linked image executable over the test targets.
+            with boot.open("r+b") as stream:
+                image_start = boot.stat().st_size - mod.check_boot(boot)["size"]
+                stream.seek(image_start - 24)
+                stream.write(struct.pack("<3Q", 0, mod.check_boot(boot)["size"], 5))
+            digest = mod.TLOU_111_CUSA00557_SHA256
+            with patch.object(mod, "TLOU_111_SWITCH_SIGNATURE_SHA256",
+                              hashlib.sha256(signature).hexdigest()), patch.object(
+                    mod, "TLOU_111_SECOND_SWITCH_SIGNATURE_SHA256",
+                    hashlib.sha256(bytes(reversed(range(mod.TLOU_111_SECOND_SWITCH_SIGNATURE_LEN)))).hexdigest()):
+                known, extra = mod.prepare_extra_entries(boot, digest, None, root / "entries")
+                self.assertEqual(len(known), 14)
+                self.assertIn(0xB5A041, known)
+                self.assertIn(0x9C7667, known)
+                self.assertEqual(set(extra), set(known) | set(mod.TLOU_111_WORKER_JUMP_TARGETS))
+                self.assertEqual(mod.granular_risk_entries(digest, None, 0x2000000),
+                                 mod.granular_risk_entries(mod.TLOU_111_SWITCH_SHA256, None, 0x2000000))
+                with boot.open("r+b") as stream:
+                    stream.seek(image_start + mod.TLOU_111_SECOND_SWITCH_PC)
+                    stream.write(b"\xff")
+                with self.assertRaisesRegex(ValueError, "second verified switch signature"):
+                    mod.known_switch_entries(boot, digest)
+            with self.assertRaisesRegex(ValueError, "verified switch dispatch"):
+                mod.known_switch_entries(boot, digest)
+
     def test_memory_aware_aot_workers_on_8gb_devices(self):
         gib = 1024 ** 3
         self.assertEqual(mod.select_compile_workers(3, 0), 3)

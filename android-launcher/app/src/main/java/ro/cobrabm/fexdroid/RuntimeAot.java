@@ -183,6 +183,46 @@ final class RuntimeAot {
     /** Lightweight status for the launcher label only. The full hash and
      * prepared-game checks in prepare() remain mandatory before launch.
      * A stale .so or an interrupted compiler is never shown as completed. */
+    // Existing CUSA00552 libraries retain their proven contract. Only the
+    // newly supported regional executable requires the new coverage proof.
+    static boolean hasRequiredRegional111Entries(JSONObject marker, JSONObject report) {
+        final String regional = "31f3b0d120803878d10a7184d139c545de334394dd7dd6ca6058a7c995e484a7";
+        String selected = marker.optString("effective_self_sha256","");
+        String compiled = report.optString("eboot_sha256","");
+        if (selected.length()==64 && compiled.length()==64 &&
+            !selected.equalsIgnoreCase(compiled)) return false;
+        if (!regional.equalsIgnoreCase(selected) && !regional.equalsIgnoreCase(compiled))
+            return true;
+        if (!regional.equalsIgnoreCase(compiled) ||
+            !"tlou-111-verified-switch-worker-v2".equals(report.optString("verified_111_entry_policy")) ||
+            !report.optBoolean("entry_check_completed",false) ||
+            report.optInt("granular_risk_hint_count",0)<114688) return false;
+        JSONArray switches=report.optJSONArray("verified_switch_targets");
+        JSONArray command=report.optJSONArray("translation_command");
+        if(switches==null || switches.length()!=14 || command==null) return false;
+        java.util.Set<String> checked=new java.util.HashSet<>();
+        boolean extra=false,granular=false;
+        for(int i=0;i<command.length();i++) {
+            String flag=command.optString(i);
+            if("--extra-entries".equals(flag))extra=true;
+            if("--granular-funcs".equals(flag))granular=true;
+            if("--check-entries".equals(flag) && i+1<command.length())
+                java.util.Collections.addAll(checked,command.optString(i+1).split(","));
+        }
+        if(!extra || !granular || checked.size()<20) return false;
+        java.util.Set<String> verified=new java.util.HashSet<>();
+        for(int i=0;i<switches.length();i++) {
+            String target=switches.optString(i);
+            if(!target.startsWith("+0x") || !checked.contains(target.substring(3)))
+                return false;
+            verified.add(target);
+        }
+        return verified.size()==14 && verified.contains("+0xb5a041") &&
+            verified.contains("+0x9c7667") &&
+            checked.containsAll(java.util.Arrays.asList("1bf55b","1c28ad","553c14",
+                "553c82","a2125e","c9fc61"));
+    }
+
     static boolean hasCompletedVariantBuild(Context context) {
         File work;
         try {
@@ -198,8 +238,9 @@ final class RuntimeAot {
             JSONObject report=new JSONObject(new String(Files.readAllBytes(
                 reportFile.toPath()),StandardCharsets.UTF_8));
             String profile=report.optString("version");
-            String selectedGame=TsoProfile.gameCode(GameInstallState.marker(
-                new File(context.getFilesDir(),"tlou-prepared")));
+            JSONObject marker=GameInstallState.marker(new File(context.getFilesDir(),"tlou-prepared"));
+            String selectedGame=TsoProfile.gameCode(marker);
+            if(!hasRequiredRegional111Entries(marker,report))return false;
             if(!("100".equals(selectedGame)&&"1.00".equals(profile) ||
                  "111".equals(selectedGame)&&"1.11".equals(profile)))return false;
             File catalog=new File(work,"1.00".equals(profile)?
@@ -254,7 +295,10 @@ final class RuntimeAot {
         }
         JSONObject meta=new JSONObject(new String(Files.readAllBytes(json.toPath()),StandardCharsets.UTF_8));
         JSONObject source=new JSONObject(new String(Files.readAllBytes(report.toPath()),StandardCharsets.UTF_8));
-        String selectedGame=TsoProfile.gameCode(GameInstallState.marker(prepared));
+        JSONObject marker=GameInstallState.marker(prepared);
+        String selectedGame=TsoProfile.gameCode(marker);
+        if(!hasRequiredRegional111Entries(marker,source))
+            throw new java.io.IOException("Cobertura AOT da versão regional 1.11 incompleta. Recompile a CPU ARM64.");
         String compiledVersion=source.optString("version","");
         if(!("100".equals(selectedGame)&&"1.00".equals(compiledVersion) ||
              "111".equals(selectedGame)&&"1.11".equals(compiledVersion)))

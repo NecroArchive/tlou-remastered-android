@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-24: verified CUSA00557 effective SELF version overrides stale APP_VER; release 62ea7591d184f6b8d63a87983446d49bf72f0b92.
+# Trigger 2026-11-24: CUSA00557 verified 1.11 switch/worker coverage and regional AOT readiness; release 8b12de9b00af07bb5708d6df8fbf7c7a939c696a.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

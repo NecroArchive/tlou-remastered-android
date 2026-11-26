@@ -115,4 +115,50 @@ inline bool Strip(std::span<const Word> src,std::vector<Word>& dst) {
     dst=std::move(out);
     return true;
 }
+// Two captured vertex modules declare unused narrow aliases of live
+// 32-bit storage bindings. The complete executable stream has no reference
+// to their variables or types. Authorize only the exact captured byte layout;
+// reject any remaining reference, and retain descriptor layout on the host.
+inline bool StripCapturedStorageAliases(std::span<const Word> src,std::vector<Word>& dst) {
+    dst.clear();
+    if(src.size()<5||src[0]!=0x07230203u)return false;
+    std::uint64_t hash=14695981039346656037ull;
+    for(Word w:src)for(unsigned shift=0;shift<32;shift+=8)
+        hash=(hash^((w>>shift)&255u))*1099511628211ull;
+    constexpr Word first[]{65,66,67,68,69,70,71,72,73,74,77,78,81,82,85,86,89,90};
+    constexpr Word second[]{62,63,64,65,66,67,68,69,70,71,74,75};
+    std::span<const Word> ids;
+    if(src.size()==4102&&src[3]==587&&hash==0x61a2e976e7234fa1ull)ids=first;
+    else if(src.size()==2440&&src[3]==350&&hash==0xa4154aff75f158a6ull)ids=second;
+    else return false;
+    const auto dead=[&](Word w){for(Word id:ids)if(id==w)return true;return false;};
+    std::vector<Word> out(src.begin(),src.begin()+5);
+    unsigned removed=0;
+    for(std::size_t i=5;i<src.size();) {
+        const Word n=src[i]>>16,op=src[i]&65535u;
+        if(!n||n>src.size()-i)return false;
+        const auto a=src.subspan(i+1,n-1);
+        bool skip=false;
+        if((op==5||op==6||op==71||op==72||op==29||op==30||op==32)&&!a.empty()&&dead(a[0]))
+            skip=true;
+        if(op==59&&a.size()==3&&dead(a[1])&&dead(a[0])&&a[2]==12)skip=true;
+        if(skip){++removed;i+=n;continue;}
+        if(op==15) {
+            // Both exact captures have entry-point name "main" in two words.
+            if(a.size()<4||a[2]!=0x6e69616du||a[3]!=0)return false;
+            const auto start=out.size();
+            out.push_back(0);
+            out.insert(out.end(),a.begin(),a.begin()+4);
+            for(std::size_t j=4;j<a.size();++j)if(!dead(a[j]))out.push_back(a[j]);
+            out[start]=(Word(out.size()-start)<<16)|op;
+        } else {
+            for(std::size_t j=0;j<a.size();++j)
+                if(dead(a[j])&&!LiteralOperand(op,a,j))return false;
+            out.insert(out.end(),src.begin()+i,src.begin()+i+n);
+        }
+        i+=n;
+    }
+    if(!removed)return false;
+    return Strip(out,dst);
+}
 } // namespace QualcommDeadIntDecls

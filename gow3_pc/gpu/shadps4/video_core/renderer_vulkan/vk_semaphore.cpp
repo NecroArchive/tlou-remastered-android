@@ -65,6 +65,15 @@ Semaphore::Semaphore(const Instance& instance_) : instance{instance_} {
 
 Semaphore::~Semaphore() = default;
 
+void Semaphore::NoteAvoidedRefresh() noexcept {
+#ifdef __ANDROID__
+    if (TimelineProfile()) {
+        ++timeline_stats.avoided;
+        timeline_stats.Report();
+    }
+#endif
+}
+
 void Semaphore::Refresh() {
 #ifdef __ANDROID__
     const bool profile = TimelineProfile();
@@ -116,8 +125,10 @@ bool Semaphore::WaitFor(u64 tick, u64 timeout_ns) {
     if (result != vk::Result::eSuccess) {
         return false; // timeout (a lost device shows in the next plain Wait)
     }
-    // Identical wait/completion policy for Qualcomm and Turnip.
-    Refresh();
+    // A successful timeline wait itself proves completion of the requested
+    // value. Publish only that lower bound; never speculate beyond it.
+    PublishCompleted(gpu_tick, tick);
+    NoteAvoidedRefresh();
     return true;
 }
 
@@ -168,8 +179,10 @@ void Semaphore::Wait(u64 tick) {
                          (unsigned long long)CurrentTick());
         }
     }
-    // Identical wait/completion policy for Qualcomm and Turnip.
-    Refresh();
+    // A successful timeline wait itself proves completion of the requested
+    // value. Publish only that lower bound; never speculate beyond it.
+    PublishCompleted(gpu_tick, tick);
+    NoteAvoidedRefresh();
 }
 
 } // namespace Vulkan

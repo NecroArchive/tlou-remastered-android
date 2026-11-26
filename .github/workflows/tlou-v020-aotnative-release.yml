@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Build signed recorder wait attribution revision 559da2e9828fc3fa79b2ffbbf7467346d5fa03f1.
+# Build signed recorder publication and small scalar-copy optimization 3ef2cc418a8b1867b6899d06ce04bba206b8262d.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -26,16 +26,18 @@ jobs:
       - name: Checkout the EXACT v0.2.0 RELEASE branch, not experimental application code
         uses: actions/checkout@v4
         with:
-          ref: perf/tlou-recorder-copy-sites-20261126
+          ref: perf/tlou-recorder-copy-fast-20261126
           submodules: recursive
       - name: Record source revision and reject a misrouted release
         run: |
           set -euo pipefail
           echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "559da2e9828fc3fa79b2ffbbf7467346d5fa03f1"
+          test "$(git rev-parse HEAD)" = "3ef2cc418a8b1867b6899d06ce04bba206b8262d"
           grep -Fq 'TLOU readback wake:' gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp
           grep -Fq 'env.put("GOW3_READBACK_WAKE","1")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
           grep -Fq 'TLOU recorder wait site (5 s):' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+          grep -Fq 'The producer already owns the recycler lock' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+          grep -Fq 'small_vector<u32, 64> values' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_shader_hle.cpp
           bash -n android/bionic/package_aotnative_v020.sh
           grep -Fq 'TLOU Qualcomm: verified selected ICD mapped' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
           grep -Fq 'readback.tick >= watch_tick' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
@@ -45,7 +47,7 @@ jobs:
           grep -Fq 'TLOU draw queue (5 s)' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
           grep -Fq 'TLOU_DRIVER_WAIT_PROFILE' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
           grep -Fq 'applyScreenOrientation' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
-          test "$(git branch --show-current)" = "perf/tlou-recorder-copy-sites-20261126"
+          test "$(git branch --show-current)" = "perf/tlou-recorder-copy-fast-20261126"
           grep -Fq "versionName '0.2.0'" android-launcher/app/build.gradle
           grep -Fq "applicationIdSuffix '.aotnative2'" android-launcher/app/build.gradle
           test -s android/bionic/package_aotnative_v020.sh

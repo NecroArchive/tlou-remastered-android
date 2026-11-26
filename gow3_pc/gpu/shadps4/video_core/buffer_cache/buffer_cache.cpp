@@ -4920,6 +4920,16 @@ void BufferCache::CompleteReadbacks(bool wait, u64 wait_until) {
     auto* semaphore = scheduler.GetWorkSemaphore();
     while (!pending_readbacks.empty()) {
         PendingReadback& readback = pending_readbacks.front();
+#ifdef __ANDROID__
+        // The scheduler cannot signal its CURRENT recording tick until it
+        // submits it. PollReadbacks runs on every draw/dispatch; repeatedly
+        // querying the Qualcomm timeline here only enters the driver for a
+        // result that cannot yet be ready. Forced waits still submit/land.
+        if (!wait && readback.tick >= watch_tick &&
+            instance.GetDriverID() == vk::DriverId::eQualcommProprietary) {
+            return;
+        }
+#endif
         if (!wait && lag.count() && std::chrono::steady_clock::now() - readback.queued < lag) {
             return;
         }
@@ -5026,13 +5036,13 @@ bool BufferCache::DeferUntilLastReadback(std::function<void()> fn, VAddr label, 
         static std::unordered_map<VAddr, u32> seen;
         static std::atomic<bool> labels_complete{false};
         if (!labels_complete.load(std::memory_order_relaxed)) {
-        std::scoped_lock lock{labels_mutex};
-        if (seen.size() < 12 && seen[label]++ == 0) {
-            std::printf("Deferred fence: label %#llx (tick %llu)\n", static_cast<unsigned long long>(label),
-                        static_cast<unsigned long long>(pending_readbacks.back().tick));
-            std::fflush(stdout);
-        }
-        if(seen.size()>=12)labels_complete.store(true,std::memory_order_relaxed);
+            std::scoped_lock lock{labels_mutex};
+            if (seen.size() < 12 && seen[label]++ == 0) {
+                std::printf("Deferred fence: label %#llx (tick %llu)\n", static_cast<unsigned long long>(label),
+                            static_cast<unsigned long long>(pending_readbacks.back().tick));
+                std::fflush(stdout);
+            }
+            if (seen.size() >= 12) labels_complete.store(true, std::memory_order_relaxed);
         }
     }
     // (A wrapper is a heap allocation per fence: only with the fault statistics.)

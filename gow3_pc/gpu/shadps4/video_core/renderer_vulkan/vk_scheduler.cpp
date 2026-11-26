@@ -56,6 +56,7 @@ Scheduler::Scheduler(const Instance& instance, bool threaded_recording)
 #if TRACY_GPU_ENABLED
     profiler_scope = reinterpret_cast<tracy::VkCtxScope*>(std::malloc(sizeof(tracy::VkCtxScope)));
 #endif
+    InitDriverProbe();
     AllocateWorkerCommandBuffers();
     priority_pending_ops_thread =
         std::jthread(std::bind_front(&Scheduler::PriorityPendingOpsThread, this));
@@ -661,6 +662,10 @@ void Scheduler::PopPendingOperations() {
         return;
     }
     if (!work_semaphore.IsFree(pending_ops.front().gpu_tick)) {
+#ifdef __ANDROID__
+        if(instance.GetDriverID()==vk::DriverId::eQualcommProprietary &&
+           pending_ops.front().gpu_tick>=CurrentTick())return;
+#endif
         if ((++pending_polls & 31) != 0 && !Gow3Toggle::Disabled(Gow3Toggle::PendingPollLimit)) {
             return;
         }
@@ -673,6 +678,97 @@ void Scheduler::PopPendingOperations() {
     }
 }
 
+void Scheduler::InitDriverProbe() {
+#ifdef __ANDROID__
+    const char* env=std::getenv("TLOU_DRIVER_WAIT_PROFILE");
+    driver_probe_enabled=count_lock_waits && env && env[0]=='1';
+    if(!driver_probe_enabled)return;
+    const auto physical=instance.GetPhysicalDevice();
+    const auto features=physical.getFeatures2<vk::PhysicalDeviceFeatures2,vk::PhysicalDeviceVulkan12Features>();
+    const auto families=physical.getQueueFamilyProperties();
+    const auto family=instance.GetGraphicsQueueFamilyIndex();
+    const auto valid=family<families.size()?families[family].timestampValidBits:0;
+    driver_probe_period=physical.getProperties().limits.timestampPeriod;
+    if(!valid || !features.get<vk::PhysicalDeviceVulkan12Features>().hostQueryReset ||
+       driver_probe_period<=0.0) {
+        std::printf("TLOU queue timestamps unavailable; reporting CPU submit costs only\n");
+        return;
+    }
+    driver_probe_mask=valid>=64?~u64{0}:((u64{1}<<valid)-1);
+    auto [result,pool]=instance.GetDevice().createQueryPoolUnique({
+        .queryType=vk::QueryType::eTimestamp,.queryCount=DriverProbeSlots*2});
+    if(result!=vk::Result::eSuccess)return;
+    driver_probe_pool=std::move(pool);
+    instance.GetDevice().resetQueryPool(*driver_probe_pool,0,DriverProbeSlots*2);
+    std::printf("TLOU draw queue timestamps: 4/64 submissions, no query waits, period=%.3fns\n",driver_probe_period);
+#endif
+}
+
+void Scheduler::BeginDriverProbe() {
+    driver_probe_active=false;
+    if(!driver_probe_pool || (CurrentTick() & 63u)>=4)return;
+    if(driver_probe_write-driver_probe_read>=DriverProbeSlots) {
+        ++driver_probe_drops;
+        return;
+    }
+    const u32 query=u32(driver_probe_write%DriverProbeSlots)*2;
+    current_cmdbuf.writeTimestamp2(vk::PipelineStageFlagBits2::eTopOfPipe,*driver_probe_pool,query);
+    driver_probe_active=true;
+}
+
+void Scheduler::EndDriverProbe(u64 tick) {
+    if(!driver_probe_active)return;
+    const u32 slot=u32(driver_probe_write%DriverProbeSlots);
+    current_cmdbuf.writeTimestamp2(vk::PipelineStageFlagBits2::eBottomOfPipe,*driver_probe_pool,slot*2+1);
+    driver_probe_ticks[slot]=tick;
+    ++driver_probe_write;
+    driver_probe_active=false;
+}
+
+void Scheduler::CollectDriverProbe(u64 tick,u64 submit_ns) {
+    if(!driver_probe_enabled)return;
+    ++driver_probe_submits;
+    driver_probe_submit_ns+=submit_ns;
+    if(work_semaphore.KnownGpuTick()>=tick)++driver_probe_empty;
+    if((tick&7u)!=0)return;
+    while(driver_probe_pool && driver_probe_read<driver_probe_write) {
+        const u32 slot=u32(driver_probe_read%DriverProbeSlots);
+        const u64 sample_tick=driver_probe_ticks[slot];
+        if(!work_semaphore.IsFree(sample_tick))break;
+        std::array<u64,2> stamp{};
+        const auto result=instance.GetDevice().getQueryPoolResults(
+            *driver_probe_pool,slot*2,2,sizeof(stamp),stamp.data(),sizeof(u64),
+            vk::QueryResultFlagBits::e64);
+        if(result!=vk::Result::eSuccess)break;
+        driver_probe_gpu_ns+=double((stamp[1]-stamp[0])&driver_probe_mask)*driver_probe_period;
+        ++driver_probe_samples;
+        if(driver_probe_prev_tick && driver_probe_prev_tick+1==sample_tick) {
+            const u64 gap=(stamp[0]-driver_probe_prev_end)&driver_probe_mask;
+            if(gap<=driver_probe_mask/2)driver_probe_gap_ns+=double(gap)*driver_probe_period;
+            else driver_probe_overlap_ns+=double((driver_probe_prev_end-stamp[0])&driver_probe_mask)*driver_probe_period;
+            ++driver_probe_gap_count;
+        }
+        driver_probe_prev_tick=sample_tick;
+        driver_probe_prev_end=stamp[1];
+        instance.GetDevice().resetQueryPool(*driver_probe_pool,slot*2,2);
+        ++driver_probe_read;
+    }
+    const auto now=std::chrono::steady_clock::now();
+    if(now-driver_probe_report<std::chrono::seconds(5))return;
+    std::printf("TLOU draw queue (5 s): submits=%llu vkQueueSubmit-ms=%.2f completed-at-return=%llu "
+                "timestamp-samples=%llu sampled-span-ms=%.3f adjacent-pairs=%llu "
+                "adjacent-gap-ms=%.3f overlap-ms=%.3f dropped=%llu (not hardware busy)\n",
+                (unsigned long long)driver_probe_submits,driver_probe_submit_ns/1e6,
+                (unsigned long long)driver_probe_empty,(unsigned long long)driver_probe_samples,
+                driver_probe_gpu_ns/1e6,(unsigned long long)driver_probe_gap_count,
+                driver_probe_gap_ns/1e6,driver_probe_overlap_ns/1e6,(unsigned long long)driver_probe_drops);
+    driver_probe_submits=driver_probe_submit_ns=driver_probe_empty=driver_probe_samples=0;
+    driver_probe_gap_count=driver_probe_drops=0;
+    driver_probe_gpu_ns=driver_probe_gap_ns=driver_probe_overlap_ns=0;
+    driver_probe_report=now;
+    WaitDiagnostics::Report();
+}
+
 void Scheduler::AllocateWorkerCommandBuffers() {
     const vk::CommandBufferBeginInfo begin_info = {
         .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
@@ -680,6 +776,7 @@ void Scheduler::AllocateWorkerCommandBuffers() {
 
     current_cmdbuf = command_pool.Commit();
     Check(current_cmdbuf.begin(begin_info));
+    BeginDriverProbe();
     ++record_serial; // gow3: a new command buffer binds nothing (RecordSerial)
 
     // Invalidate dynamic state so it gets applied to the new command buffer.
@@ -755,6 +852,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
                                        vk::PipelineStageFlagBits::eHost, {}, to_host, {}, {});
 #pragma pop_macro("MemoryBarrier")
     }
+    EndDriverProbe(signal_value);
     Check(current_cmdbuf.end());
 
     const vk::Semaphore timeline = work_semaphore.Handle();
@@ -803,10 +901,9 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     // NVIDIA driver, kernel calls), with the images registered since the previous slow one.
     const auto submit_start = std::chrono::steady_clock::now();
     auto submit_result = instance.GetGraphicsQueue().submit(submit_info, info.fence);
-    if (const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                                   submit_start)
-                              .count();
-        ms > 8.0) {
+    const auto submit_end=std::chrono::steady_clock::now();
+    const u64 driver_submit_ns=std::chrono::duration_cast<std::chrono::nanoseconds>(submit_end-submit_start).count();
+    if (const double ms=driver_submit_ns/1e6; ms > 8.0) {
         static u64 last_images = 0;
         const u64 images = Gow3Stats::images_registered.load(std::memory_order_relaxed);
         std::printf("Slow submit: %.1f ms in the driver (%u wait semaphores, %u signal); %llu images "
@@ -819,6 +916,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 
     work_semaphore.Refresh();
+    CollectDriverProbe(signal_value,driver_submit_ns);
     AllocateWorkerCommandBuffers();
 
     // Apply pending operations

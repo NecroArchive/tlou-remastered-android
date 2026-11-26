@@ -42,6 +42,33 @@ final class RunLog {
         return "INICIALIZAÇÃO\n"+tail(launch(c),10000)+"\n\nRUNTIME\n"+tail(runtime(c),10000)+
             "\n\nINSTALAÇÃO / PREPARAÇÃO\n"+tail(new File(c.getFilesDir(),"installation.log"),5000);
     }
+    private static final String PREVIOUS_SHADER_DIR="previous-shader-captures";
+    private static List<String> shaderCaptureNames() {
+        List<String> paths=new ArrayList<>();
+        paths.add("qualcomm-compute-failed.txt");
+        for(int i=0;i<8;i++)paths.add("qualcomm-compute-failed-"+i+".spv");
+        // Match native GraphicsPipeline's bounded capture budget (12).
+        for(int i=0;i<12;i++) {
+            paths.add("qualcomm-graphics-"+i+".txt");
+            for(int stage=0;stage<6;stage++)paths.add("qualcomm-graphics-"+i+"-"+stage+".spv");
+        }
+        return paths;
+    }
+    static void rotateShaderCaptures(Context c) {
+        File current=new File(c.getFilesDir(),"tlou");
+        File previous=new File(current,PREVIOUS_SHADER_DIR);
+        if(!previous.isDirectory()&&!previous.mkdirs()) {
+            write(c,"Não foi possível criar a pasta das capturas anteriores.");
+            return;
+        }
+        for(String name:shaderCaptureNames()) {
+            File old=new File(previous,name),now=new File(current,name);
+            try {
+                java.nio.file.Files.deleteIfExists(old.toPath());
+                if(now.isFile())java.nio.file.Files.move(now.toPath(),old.toPath());
+            }catch(IOException e){failure(c,"Rotação da captura "+name,e);}
+        }
+    }
     static void export(Context c,OutputStream output) throws IOException {
         try(ZipOutputStream zip=new ZipOutputStream(output)) {
             List<String> paths=new ArrayList<>(Arrays.asList(
@@ -60,18 +87,19 @@ final class RunLog {
             // A Qualcomm VK_ERROR_UNKNOWN can occur after the Vulkan instance
             // starts but before gameplay. Include only the bounded failing
             // shader binaries, not the private shader cache or whole game.
-            paths.add("tlou/qualcomm-compute-failed.txt");
-            for(int i=0;i<8;i++)
-                paths.add("tlou/qualcomm-compute-failed-"+i+".spv");
-            for(int i=0;i<4;i++) {
-                paths.add("tlou/qualcomm-graphics-"+i+".txt");
-                for(int stage=0;stage<6;stage++)paths.add("tlou/qualcomm-graphics-"+i+"-"+stage+".spv");
+            for(String name:shaderCaptureNames()) {
+                paths.add("tlou/"+name);
+                paths.add("tlou/"+PREVIOUS_SHADER_DIR+"/"+name);
             }
             for(String path:paths) {
                 File file=new File(c.getFilesDir(),path);if(!file.isFile())continue;
                 zip.putNextEntry(new ZipEntry(path));
                 try(RandomAccessFile in=new RandomAccessFile(file,"r")) {
-                    in.seek(Math.max(0,in.length()-4L*1024*1024));byte[] bytes=new byte[65536];int n;while((n=in.read(bytes))!=-1)zip.write(bytes,0,n);
+                    // Long gameplay reports keep four times the former
+                    // runtime log tail. Binary captures must remain intact.
+                    long limit=path.startsWith("tlou/runtime")?16L*1024*1024:4L*1024*1024;
+                    if(!path.endsWith(".spv"))in.seek(Math.max(0,in.length()-limit));
+                    byte[] bytes=new byte[65536];int n;while((n=in.read(bytes))!=-1)zip.write(bytes,0,n);
                 }
                 zip.closeEntry();
             }

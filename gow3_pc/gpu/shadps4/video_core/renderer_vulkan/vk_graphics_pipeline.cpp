@@ -42,13 +42,23 @@ using Clock = std::chrono::steady_clock;
 bool LowerCapturedQualcommGraphics(std::span<const u32> src, std::vector<u32>& dst,
                                    bool vertex) {
     dst.clear();
-    if (src.size() != (vertex ? 9320u : 1710u) || src[0] != 0x07230203 ||
-        src[3] != (vertex ? 1549u : 244u)) return false;
+    if (src.size()<5 || src[0]!=0x07230203) return false;
     u64 hash = 14695981039346656037ull;
     for (u32 word : src)
         for (unsigned shift = 0; shift < 32; shift += 8)
             hash = (hash ^ ((word >> shift) & 255u)) * 1099511628211ull;
-    if (hash != (vertex ? 0xc40a1aaec9bc5787ull : 0x0515614fcf5f28e0ull)) return false;
+    const bool wide_vertex=vertex && src.size()==9320 && src[3]==1549 &&
+        hash==0xc40a1aaec9bc5787ull;
+    const bool old_fragment=!vertex && src.size()==1710 && src[3]==244 &&
+        hash==0x0515614fcf5f28e0ull;
+    // Captured on 26 Nov 14:56. The three exact modules have no wide/narrow
+    // arithmetic or memory accesses; only dead type/constant declarations.
+    const bool simple_vertex=vertex && src.size()==1271 && src[3]==160 &&
+        hash==0x427ddcccf807bc1full;
+    const bool simple_fragment=!vertex &&
+        ((src.size()==794 && src[3]==86 && hash==0x6b90c09f2970206eull) ||
+         (src.size()==987 && src[3]==116 && hash==0x7cfa7c6780a57826ull));
+    if(!(wide_vertex||old_fragment||simple_vertex||simple_fragment))return false;
     std::vector<u32> out(src.begin(), src.begin() + 5);
     u32 next = src[3];
     const u32 mask = next++, shift = next++;
@@ -89,23 +99,23 @@ bool LowerCapturedQualcommGraphics(std::span<const u32> src, std::vector<u32>& d
             skip=(a[1]>=26 && a[1]<=28)||a[1]==32||a[1]==33;
         }
         if(skip){i+=n;continue;}
-        if(vertex && op==54) {
+        if(wide_vertex && op==54) {
             emit(43,{10,mask,65535}); emit(43,{10,shift,16});
         }
-        if(vertex && (op==113||op==132||op==128) && a.size()>=3 &&
+        if(wide_vertex && (op==113||op==132||op==128) && a.size()>=3 &&
             a[0]==11 && a[1]>=447 && a[1]<=450) {
             ++wide;i+=n;continue;
         }
-        if(vertex && op==124 && a.size()==3 && a[0]==14 && a[1]==451 && a[2]==450) {
+        if(wide_vertex && op==124 && a.size()==3 && a[0]==14 && a[1]==451 && a[2]==450) {
             product(441,446,14,451);++converted;i+=n;continue;
         }
-        if(vertex && op==151 && a.size()==4 && a[0]==42) {
+        if(wide_vertex && op==151 && a.size()==4 && a[0]==42) {
             product(a[2],a[3],a[0],a[1]);++extended;i+=n;continue;
         }
         out.insert(out.end(),src.begin()+i,src.begin()+i+n);i+=n;
     }
-    if(vertex && (extended!=6 || wide!=4 || converted!=1))return false;
-    out[3]=vertex?next:src[3];
+    if(wide_vertex && (extended!=6 || wide!=4 || converted!=1))return false;
+    out[3]=wide_vertex?next:src[3];
     dst=std::move(out);
     return true;
 }
@@ -602,8 +612,8 @@ GraphicsPipeline::GraphicsPipeline(
         if(rr!=vk::Result::eSuccess) {
             constexpr auto vs=u32(Shader::SwStage::Vertex);
             constexpr auto fs=u32(Shader::SwStage::Fragment);
-            if(infos[vs] && infos[fs] && infos[vs]->pgm_hash==0xc8987d69ull &&
-               infos[fs]->pgm_hash==0xb7ecfe4aull) {
+            // Exact byte identities, not guest hashes, authorize the lowering.
+            if(infos[vs] && infos[fs]) {
                 std::vector<u32> vs_src,fs_src,vs_lower,fs_lower;
                 const auto get=[&](u32 stage,std::vector<u32>& words) {
                     return CopyShaderModuleSource(device,modules[stage],words) ||
@@ -637,7 +647,7 @@ GraphicsPipeline::GraphicsPipeline(
                             // pipeline_info points to this stable array. The
                             // same exact variants must be used by square pass.
                             std::ranges::copy(stages_compat,shader_stages.begin());
-                            std::printf("Qualcomm graphics recovered: exact 32-bit VS/PS key=%016llx\n",
+                            std::printf("Qualcomm graphics recovered: exact declaration/ALU lowering VS/PS key=%016llx\n",
                                 static_cast<unsigned long long>(key_hash));
                         }
                     }
@@ -656,7 +666,7 @@ GraphicsPipeline::GraphicsPipeline(
             static std::mutex capture_mutex;
             static unsigned captures=0;
             std::scoped_lock lock{capture_mutex};
-            if(captures<4) if(const char* root=std::getenv("GOW3_GPU_USER_DIR");root&&*root) {
+            if(captures<12) if(const char* root=std::getenv("GOW3_GPU_USER_DIR");root&&*root) {
                 const unsigned slot=captures++;
                 const std::filesystem::path dir(root);
                 std::ofstream report(dir/("qualcomm-graphics-"+std::to_string(slot)+".txt"));

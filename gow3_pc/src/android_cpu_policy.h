@@ -96,7 +96,12 @@ static inline int tlou_aot_split_prime_mask(const char *role,
     // Exclusive masks make CPU6 a serial bottleneck even when CPU7 is free.
     // Both critical threads may use both PRIME cores; kernel schedules each
     // runnable thread. Never include cores outside the original launch mask.
-    if (strcmp(role,"GPU command") && strcmp(role,"draw recording")) return 0;
+    // The VkRecorder is a different thread from optional DrawPipe Stage B.
+    // On the six-allowed-core Cortex capture Stage B was absent, but Vulkan
+    // recorder consumed ~37% of one core and host-copy waits reached 715 ms/5 s.
+    // Keep the older Oryon role set unchanged.
+    if (strcmp(role,"GPU command") && strcmp(role,"draw recording") &&
+        !(tlou_aot_cortex_render_enabled() && !strcmp(role,"Vulkan recorder"))) return 0;
     *out = *fast;
     return 1;
 }

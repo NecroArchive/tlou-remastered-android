@@ -2764,7 +2764,8 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             (opcode == PM4ItOpcode::IndirectBuffer && SkipIbDrain()) ||
             targeted_compute_wait;
         const bool would_drain =
-            rasterizer && opcode != PM4ItOpcode::Nop && opcode != PM4ItOpcode::SetShReg &&
+            rasterizer && rasterizer->HasDrawPipe() &&
+            opcode != PM4ItOpcode::Nop && opcode != PM4ItOpcode::SetShReg &&
             opcode != PM4ItOpcode::SetQueueReg && opcode != PM4ItOpcode::DispatchDirect &&
             opcode != PM4ItOpcode::DispatchIndirect && opcode != PM4ItOpcode::ReleaseMem &&
             !pipelined_wait;

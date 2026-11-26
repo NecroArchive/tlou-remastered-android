@@ -40,6 +40,7 @@ int main(void) {
     assert(CPU_COUNT(&for_gpu)==2 && CPU_ISSET(7,&for_gpu) && CPU_ISSET(6,&for_gpu));
     assert(CPU_COUNT(&for_draw)==2 && CPU_ISSET(7,&for_draw) && CPU_ISSET(6,&for_draw));
     assert(!tlou_aot_split_prime_mask("guest main",&primes,&for_gpu));
+    assert(!tlou_aot_split_prime_mask("Vulkan recorder",&primes,&for_gpu));
     assert(!tlou_aot_split_prime_mask("NdJobWorkerThread",&primes,&for_gpu));
     assert(!tlou_aot_split_prime_mask(NULL,&primes,&for_gpu));
     cpu_set_t only_one;CPU_ZERO(&only_one);CPU_SET(6,&only_one);
@@ -56,6 +57,8 @@ int main(void) {
     assert(tlou_aot_split_prime_enabled());
     assert(tlou_aot_split_prime_mask("GPU command",&cortex,&for_gpu));
     assert(CPU_COUNT(&for_gpu)==4);
+    assert(tlou_aot_split_prime_mask("Vulkan recorder",&cortex,&for_draw));
+    assert(CPU_COUNT(&for_draw)==4);
     assert(!tlou_aot_split_prime_mask("NdJobWorkerThread",&cortex,&for_gpu));
     assert(!tlou_aot_split_prime_mask("GPU command",&only_one,&for_gpu));
     assert(!unsetenv("TLOU_AOT_CORTEX_RENDER"));

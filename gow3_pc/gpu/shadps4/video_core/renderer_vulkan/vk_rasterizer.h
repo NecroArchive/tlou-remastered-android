@@ -179,6 +179,9 @@ public:
     }
     /// Runs `signal` after the guest memory copies issued so far, without waiting here.
     /// gow3: draws go through the two-stage draw pipeline (multithreaded rendering).
+    // A disabled toggle can still leave an allocated pipe to drain; test the
+    // actual pipe existence, not the toggle, before eliding a no-op drain.
+    [[nodiscard]] bool HasDrawPipe() const { return bool(draw_pipe); }
     bool DrawPipeActive() const {
         return UseDrawPipe();
     }

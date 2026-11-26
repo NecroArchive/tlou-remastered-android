@@ -663,8 +663,8 @@ void Scheduler::PopPendingOperations() {
     }
     if (!work_semaphore.IsFree(pending_ops.front().gpu_tick)) {
 #ifdef __ANDROID__
-        if(instance.GetDriverID()==vk::DriverId::eQualcommProprietary &&
-           pending_ops.front().gpu_tick>=CurrentTick())return;
+        // Neither Android ICD can complete the current unsubmitted tick.
+        if(pending_ops.front().gpu_tick>=CurrentTick())return;
 #endif
         if ((++pending_polls & 31) != 0 && !Gow3Toggle::Disabled(Gow3Toggle::PendingPollLimit)) {
             return;

@@ -690,7 +690,10 @@ void PipelineCache::PublishGraphics(bool wait) {
         }
         if (!build->pipeline->Failed())
             RegisterPipelineData(key, std::hash<GraphicsPipelineKey>{}(key), build->data);
-        graphics_pipelines.emplace(key, std::move(build->pipeline));
+        // A warm-up publication can already own this key. try_emplace does not
+        // consume a duplicate's unique_ptr: a queued draw can still own build
+        // via pending_keepalive until the recording thread drains.
+        graphics_pipelines.try_emplace(key, std::move(build->pipeline));
         ++num_new_pipelines;
         it = pending_graphics.erase(it);
     }
@@ -1376,7 +1379,11 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     // draw the recording thread runs: built in the background, the draw carries the build. In
     // a new area the GPU thread compiled ~1,400 pipelines one after another (~77 ms each on a
     // laptop, up to 191 in one 8.7 s frame); now they build on the compiler threads at once.
-    if (pending_allowed && ParallelPipelines() && compiler && !sel.regs->stage_enable.hs_en &&
+    // Qualcomm's lossless path must not publish a raw pending graphics pipeline
+    // to the recording thread while warm-up can publish the same key. Wait on
+    // the command thread instead; already-compiled hits retain the fast path.
+    if (pending_allowed && instance.GetDriverID()!=vk::DriverId::eQualcommProprietary &&
+        ParallelPipelines() && compiler && !sel.regs->stage_enable.hs_en &&
         !EmulatorSettings.IsShaderCollect() && !graphics_pipelines.contains(sel.graphics_key)) {
         const auto pend = [&](std::shared_ptr<AsyncGraphicsCompilation> build) {
             pending_keepalive.push_back(build);
@@ -1896,8 +1903,9 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
         }
         break;
     case AmdGpu::ShaderStageEnable::VgtStages::Vs:
-        bind_stage(HwStage::Vertex, SwStage::Vertex);
-        if (sel.compilation_pending) {
+        // DrawRecord requires a real vertex Info even when the proprietary driver
+        // accepts a pipeline without a vertex stage. Never publish an incomplete key.
+        if (!bind_stage(HwStage::Vertex, SwStage::Vertex) || sel.compilation_pending) {
             return false;
         }
         break;

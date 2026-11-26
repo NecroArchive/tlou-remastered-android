@@ -453,6 +453,7 @@ public final class GameActivity extends Activity {
                 if(!custom.isFile()) throw new IllegalStateException("Driver selecionado ausente; selecione outro driver no menu");
                 DriverArchive.validateLibrary(custom);
                 env.put("GOW3_VULKAN_DRIVER",custom.getAbsolutePath());
+                env.put("TLOU_ADRENOTOOLS_HOOK_DIR",getApplicationInfo().nativeLibraryDir);
                 // Raw .so imports retain the original basename in driver_name.
                 String importedName=PortSettings.prefs(this).getString("driver_name","").toLowerCase(java.util.Locale.ROOT);
                 if(custom.getName().startsWith("driver-") &&

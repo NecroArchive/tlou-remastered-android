@@ -10,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <boost/container/small_vector.hpp>
 #include "core/memory.h"
 #include "shader_recompiler/info.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
@@ -494,7 +495,9 @@ static bool ExecuteScalarCopyHLE(const Shader::Info& info, const AmdGpu::Compute
     }
     // Uploads recorded before this dispatch read guest memory on the copy threads.
     rasterizer.GetRuntime().GetScheduler().WaitHostCopies();
-    std::vector<u32> values(count, 0u);
+    // Constant-block copies are frequent. Keep small copies off the heap;
+    // WriteThrough consumes the bytes synchronously and larger copies spill.
+    boost::container::small_vector<u32, 64> values(count, 0u);
     if (readable) {
         auto* memory = Core::Memory::Instance();
         if (!memory->TryReadBacking(src_addr, values.data(), readable * 4)) {

@@ -440,6 +440,13 @@ void Scheduler::KickRecording(bool force) {
         }
         if (!record_chunk->Empty()) {
             recorder_queue.push_back(std::move(record_chunk));
+            // The producer already owns the recycler lock. Take an available
+            // chunk here instead of racing the recorder for the lock again
+            // after every small publication.
+            if (!free_chunks.empty()) {
+                record_chunk = std::move(free_chunks.back());
+                free_chunks.pop_back();
+            }
         }
         wake = recorder_sleeping;
         queued_chunks.store(recorder_queue.size(), std::memory_order_release);

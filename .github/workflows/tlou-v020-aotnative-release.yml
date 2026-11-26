@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: approved TLOU olive HUD with extracted glyphs, independent focus L3 and flashlight R3, directional item selector; release de295d3c47e972119c21778cb37f0d753b33ac53.
+# Trigger 2026-11-26: FPS HUD physical top edge and exact Qualcomm u32 partial-product shader; release 24a8bccfd67bc42c488146bfd14445cf433a1512.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

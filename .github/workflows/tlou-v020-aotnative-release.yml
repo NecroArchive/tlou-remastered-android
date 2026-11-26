@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: preserve classic flashlight shake contract alongside action controls, cheats, Qualcomm fixes; release 74885db38dd1b6434a27f928784dd7836132858f.
+# Trigger 2026-11-26: port actual Uncharted glyph overlay, fix 2D Qualcomm shader and A750 V39 startup; release 1039e1788aae6374a5f0fe65a5ebc7c37e6bd0c0.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

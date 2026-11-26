@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-25: Cortex VkRecorder affinity, skip nonexistent draw-pipe drains, bounded startup warm-up; release 8f82ec240c66f7a4299f9e5fd834d8befc9b55b2.
+# Trigger 2026-11-25: bounded warmup, active Cortex render affinity and helper restore, PM4 no-op drains; release 6d02a015e9dd09ea03231e05a973de3c3b072f9f.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

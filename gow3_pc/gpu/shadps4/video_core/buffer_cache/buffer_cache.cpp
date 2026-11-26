@@ -511,6 +511,12 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     // VK_QUEUE_SPARSE_BINDING_BIT. Turnip on Android KGSL can create a sparse
     // VkBuffer but cannot bind it (vkQueueBindSparse -> DEVICE_LOST).
     // Use fully backed, small standard buffers instead of calling an unsupported queue.
+#ifdef __ANDROID__
+    if (instance.GetDriverID() == vk::DriverId::eQualcommProprietary) {
+        gpu_write_window_shift = 16;
+        std::printf("TLOU Qualcomm producer history: 64 KiB large-write windows (previously 1 MiB)\n");
+    }
+#endif
     const auto sparse_features = instance.GetPhysicalDevice().getFeatures();
     const auto sparse_families = instance.GetPhysicalDevice().getQueueFamilyProperties();
     const bool has_sparse_queue = std::ranges::any_of(sparse_families, [](const auto& family) {
@@ -1873,7 +1879,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
             bits |= GpuBytesInFlight(page) ? 16 : 0;
             {
                 std::shared_lock lock{gpu_ranges_mutex};
-                const auto it = gpu_write_window_tick.find(page >> 20);
+                const auto it = gpu_write_window_tick.find(page >> gpu_write_window_shift);
                 const auto small = gpu_write_page_tick.find(page >> 12);
                 const u64 tick = std::max(it != gpu_write_window_tick.end() ? it->second : 0,
                                           small != gpu_write_page_tick.end() ? small->second : 0);
@@ -1973,7 +1979,7 @@ u64 BufferCache::CopyMappedReadbackPieces(std::span<const DownloadPiece> pending
                     return {it->mapped + it->offset + (address - base), end - address};
                 }, [this](u64 page) {
                     u64 tick = 0;
-                    if (const auto w = gpu_write_window_tick.find(page >> 8); w != gpu_write_window_tick.end())
+                    if (const auto w = gpu_write_window_tick.find(page >> (gpu_write_window_shift - 12)); w != gpu_write_window_tick.end())
                         tick = w->second;
                     if (const auto p = gpu_write_page_tick.find(page); p != gpu_write_page_tick.end())
                         tick = std::max(tick, p->second);
@@ -2235,7 +2241,7 @@ void BufferCache::DownloadRanges(std::span<const std::pair<VAddr, u64>> ranges, 
                 u64 tick = 0;
                 if (const auto it = gpu_write_page_tick.find(page); it != gpu_write_page_tick.end())
                     tick = it->second;
-                if (const auto it = gpu_write_window_tick.find(page >> 8);
+                if (const auto it = gpu_write_window_tick.find(page >> (gpu_write_window_shift - 12));
                     it != gpu_write_window_tick.end())
                     tick = std::max(tick, it->second);
                 if (!tick) return 0;  // never prefetch an untracked producer
@@ -4851,6 +4857,16 @@ void BufferCache::SweepTracking() {
     semaphore->Refresh();
     {
         std::unique_lock lock{gpu_ranges_mutex};
+        // Fine history must not retain inactive windows indefinitely.
+        // Only erase completed producers with no dirty GPU bytes anywhere
+        // in their entire window; missing history still uses current tick.
+        if (gpu_write_window_shift == 16) {
+            std::erase_if(gpu_write_window_tick, [&](const auto& entry) {
+                return semaphore->IsFree(entry.second) &&
+                       !gpu_modified_ranges.Intersects(entry.first << gpu_write_window_shift,
+                                                       u64{1} << gpu_write_window_shift);
+            });
+        }
         std::erase_if(gpu_write_page_tick, [&](const auto& entry) {
             return semaphore->IsFree(entry.second) &&
                    !gpu_modified_ranges.Intersects(entry.first << 12, 4096);
@@ -5223,7 +5239,8 @@ u64 BufferCache::RangeTick() const {
 void BufferCache::NoteGpuWriteWindows(VAddr address, u64 size) {
     const u64 tick = scheduler.CurrentTick();
     if (size > 64_KB) {
-        for (u64 window = address >> 20; window <= (address + size - 1) >> 20; ++window) {
+        for (u64 window = address >> gpu_write_window_shift;
+             window <= (address + size - 1) >> gpu_write_window_shift; ++window) {
             gpu_write_window_tick[window] = tick;
         }
         return;
@@ -5246,7 +5263,7 @@ u64 BufferCache::FetchableWindowTick(VAddr page, bool count_refusals) {
     u64 tick = 0;
     {
         std::shared_lock lock{gpu_ranges_mutex};
-        const auto window = gpu_write_window_tick.find(page >> 20);
+        const auto window = gpu_write_window_tick.find(page >> gpu_write_window_shift);
         const auto small = gpu_write_page_tick.find(page >> 12);
         if (window != gpu_write_window_tick.end()) {
             tick = window->second;
@@ -5494,7 +5511,7 @@ bool BufferCache::FetchOldGpuBytes(VAddr page) {
     {
         // A large GPU write into the window still running could cover any byte.
         std::shared_lock lock{gpu_ranges_mutex};
-        const auto window = gpu_write_window_tick.find(page >> 20);
+        const auto window = gpu_write_window_tick.find(page >> gpu_write_window_shift);
         if (window != gpu_write_window_tick.end() && !semaphore->IsFree(window->second)) {
             return false;
         }

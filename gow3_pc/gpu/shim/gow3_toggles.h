@@ -119,8 +119,10 @@ struct Timer {
                         std::memory_order_relaxed);
     }
 };
-/// Wall time the GPU command thread waited for guest submissions (ns).
+/// Wall time before the GPU command thread has work (including readback service).
 inline std::atomic<std::uint64_t> gpu_idle_ns{0};
+/// Portion of that time spent servicing or waiting for deferred readbacks.
+inline std::atomic<std::uint64_t> gpu_idle_readback_ns{0};
 /// Draws recorded into the reduced scene targets, and draws after the scene started.
 inline std::atomic<std::uint64_t> reduced_draws{0}, scene_draws{0};
 /// Wall time spent blocked in the scheduler (ns): waiting for the recording thread to drain,

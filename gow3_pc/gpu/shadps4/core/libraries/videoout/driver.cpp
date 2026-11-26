@@ -428,12 +428,13 @@ void VideoOutDriver::Flip(const Request& req) {
         // These counters are already collected by the runtime. Read cumulative
         // deltas, so full profiling remains off and no extra per-draw timers run.
         const auto read_transfer_stats = [] {
-            return std::array<u64,11>{Gow3Stats::buffer_upload_bytes.load(),
+            return std::array<u64,12>{Gow3Stats::buffer_upload_bytes.load(),
                 Gow3Stats::buffer_upload_batches.load(),Gow3Stats::gpu_idle_ns.load(),
                 Gow3Stats::tick_wait_ns.load(),Gow3Stats::sync_recording_ns.load(),
                 Gow3Stats::host_copies_wait_ns.load(),Gow3Stats::copy_threads_wait_ns.load(),
                 Gow3Stats::frame_wait_ns.load(),Gow3Stats::submit_lock_ns.load(),
-                Gow3Stats::acquire_ns.load(),Gow3Stats::present_ns.load()};
+                Gow3Stats::acquire_ns.load(),Gow3Stats::present_ns.load(),
+                Gow3Stats::gpu_idle_readback_ns.load()};
         };
         static auto transfer_previous = read_transfer_stats();
         const auto now = Clock::now();
@@ -458,7 +459,7 @@ void VideoOutDriver::Flip(const Request& req) {
                         Vulkan::g_gow3_compile_wait_ns.exchange(0)/1e6,
                         Vulkan::g_gow3_pending_draws.exchange(0));
             const auto transfer_now=read_transfer_stats();
-            std::array<double,11> delta{};
+            std::array<double,12> delta{};
             for (unsigned i=0;i<delta.size();++i)
                 if (transfer_now[i]>=transfer_previous[i])
                     delta[i]=double(transfer_now[i]-transfer_previous[i]);
@@ -466,10 +467,11 @@ void VideoOutDriver::Flip(const Request& req) {
             std::printf("TLOU transfers: uploads=%.1fMiB batches=%.0f; waits over %.2fs: "
                         "no-submissions=%.1fms gpu-ticks=%.1fms recording=%.1fms "
                         "host-copies=%.1fms copy-workers=%.1fms free-frame=%.1fms "
-                        "submit-lock=%.1fms acquire=%.1fms present-ipc=%.1fms "
+                        "submit-lock=%.1fms acquire=%.1fms present-ipc=%.1fms idle-readbacks=%.1fms "
                         "(instrumented overlapping wall times, not GPU busy time)\n",
                         delta[0]/1048576.0,delta[1],window,delta[2]/1e6,delta[3]/1e6,
-                        delta[4]/1e6,delta[5]/1e6,delta[6]/1e6,delta[7]/1e6,delta[8]/1e6,delta[9]/1e6,delta[10]/1e6);
+                        delta[4]/1e6,delta[5]/1e6,delta[6]/1e6,delta[7]/1e6,delta[8]/1e6,
+                        delta[9]/1e6,delta[10]/1e6,delta[11]/1e6);
             frames=0;worst=0;start=now;
         }
     }

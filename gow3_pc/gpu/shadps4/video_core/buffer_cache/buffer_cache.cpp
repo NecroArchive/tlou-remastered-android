@@ -5139,7 +5139,13 @@ void BufferCache::PollReadbacksNow() {
     if (pending_readbacks.empty()) {
         return;
     }
-    scheduler.GetWorkSemaphore()->Refresh();
+    auto* semaphore = scheduler.GetWorkSemaphore();
+    // Query only if the queue can contain a submitted readback with unknown
+    // completion. A current-buffer readback cannot land before submission.
+    if (pending_readbacks.front().tick < scheduler.CurrentTick() &&
+        !semaphore->IsFree(pending_readbacks.back().tick)) {
+        semaphore->Refresh();
+    }
     readback_polls = 0;
     CompleteReadbacks(false);
 }

@@ -407,10 +407,12 @@ void Liverpool::ProcessLoop(std::stop_token stoken) {
         {
             const auto idle_start = std::chrono::steady_clock::now();
             std::unique_lock lk{submit_mutex};
+            bool serviced_readbacks = false;
             // gow3: fences waiting for ray-cast readbacks are written when those land: poll for
             // them while there is nothing else to do (the guest may wait on such a fence first).
             while (rasterizer && rasterizer->GetBufferCache().HasDeferredSignals() &&
                    !(num_commands || num_submits || submit_done) && !stoken.stop_requested()) {
+                serviced_readbacks = true;
                 lk.unlock();
                 // Multithreaded rendering: the draw recording thread finishes first (it owns the
                 // readbacks while it runs; nothing new reaches it while this thread is idle).
@@ -447,6 +449,12 @@ void Liverpool::ProcessLoop(std::stop_token stoken) {
                         submit_cv.wait_for(lk, std::chrono::milliseconds{1});
                     }
                 }
+            }
+            if (serviced_readbacks) {
+                Gow3Stats::gpu_idle_readback_ns.fetch_add(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - idle_start).count(),
+                    std::memory_order_relaxed);
             }
             Common::CondvarWait(submit_cv, lk, stoken,
                                 [this] { return num_commands || num_submits || submit_done; });

@@ -50,6 +50,37 @@ u64 RoundAllocationSize(u64 size) {
     return Common::AlignUp(size, step);
 }
 
+// All candidates in one scan share the same timeline. Sample the driver at
+// most once, when we first see an eligible submitted buffer whose completion
+// is unknown. A buffer that completes later can be considered on the next scan.
+class StagingCompletion {
+public:
+    explicit StagingCompletion(Scheduler& scheduler)
+        : semaphore{*scheduler.GetWorkSemaphore()}, current{scheduler.CurrentTick()},
+          completed{semaphore.KnownGpuTick()} {}
+
+    bool IsFree(u64 tick) {
+        if (tick <= completed) {
+            return true;
+        }
+        if (tick >= current) {
+            return false;
+        }
+        if (!refreshed) {
+            semaphore.Refresh();
+            completed = semaphore.KnownGpuTick();
+            refreshed = true;
+        }
+        return tick <= completed;
+    }
+
+private:
+    Semaphore& semaphore;
+    const u64 current;
+    u64 completed;
+    bool refreshed = false;
+};
+
 /// gow3 21 Oct 2026 (GPU worker): time of a staging allocation (Gow3Stats::t_staging, the Stall
 /// lines' "staging"); allocations over 2 ms are logged (the first 64).
 struct NewAllocationTimer {
@@ -178,15 +209,19 @@ StagingBufferRef StagingBufferPool::RequestLarge(u64 size, MemoryType type, bool
     auto& cache = large_caches[u32(type)];
     const u64 max_size = std::max(size + size / 4, RoundAllocationSize(size));
 
+    StagingCompletion completion{scheduler};
     LargeBuffer* best{};
+    u64 best_size = max_size;
     for (LargeBuffer& entry : cache) {
         const u64 entry_size = entry.buffer->SizeBytes();
-        if (entry.held || entry_size < size || entry_size > max_size ||
-            !scheduler.IsFree(entry.tick)) {
+        if (entry.held || entry_size < size || entry_size > best_size ||
+            (best && entry_size == best_size) || !completion.IsFree(entry.tick)) {
             continue;
         }
-        if (!best || entry_size < best->buffer->SizeBytes()) {
-            best = &entry;
+        best = &entry;
+        best_size = entry_size;
+        if (best_size == size) {
+            break;
         }
     }
 
@@ -286,18 +321,19 @@ void StagingBufferPool::TrimRing(Ring& ring, u64 keep, u64 idle_frames) {
 void StagingBufferPool::TrimLarge(std::vector<LargeBuffer>& cache) {
     u64 total = 0;
     for (const auto& entry : cache) total += entry.buffer->SizeBytes();
-    std::erase_if(cache, [this, &total](const LargeBuffer& entry) {
-        if (entry.pinned || entry.held || !scheduler.IsFree(entry.tick)) return false;
-        const u64 bytes = entry.buffer->SizeBytes();
+    StagingCompletion completion{scheduler};
+    std::erase_if(cache, [this, &total, &completion](const LargeBuffer& entry) {
+        if (entry.pinned || entry.held) return false;
         // Bound cached staging occupancy on Adreno 640 even during continuous
         // streaming: idle buffers beyond 32 MiB retire after at least 16 frames.
         // Live GPU reads/writes, pinned allocations and deferred readbacks remain.
         const bool over_budget = total > low_memory_idle_limit;
         const u64 age = frame - entry.last_used_frame;
-        if (age < (over_budget ? 16 : std::min<u64>(LARGE_IDLE_FRAMES, low_memory_idle_frames))) {
+        if (age < (over_budget ? 16 : std::min<u64>(LARGE_IDLE_FRAMES, low_memory_idle_frames)) ||
+            !completion.IsFree(entry.tick)) {
             return false;
         }
-        total -= bytes;
+        total -= entry.buffer->SizeBytes();
         return true;
     });
 }

@@ -23,13 +23,15 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
+#include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Vulkan {
 
 namespace {
 // A precompile job owns the exact emitted module before publishing its cache
 // metadata. Never look for an older permutation when the original is in hand.
-bool LoadRecoverySpirv(u64 hash,u64 key,std::vector<u32>& out,std::span<const u32> fresh) {
+bool LoadRecoverySpirv(vk::Device device,vk::ShaderModule module,u64 hash,u64 key,std::vector<u32>& out,std::span<const u32> fresh) {
+    if(CopyShaderModuleSource(device,module,out))return true;
     if(!fresh.empty()) {
         if(fresh.size()<5||fresh.size()>1024*1024||fresh[0]!=0x07230203)return false;
         out.assign(fresh.begin(),fresh.end());return true;
@@ -95,7 +97,7 @@ bool TryQualcommFloatControlVariant(vk::Device device, const vk::ComputePipeline
                                    u64 shader_hash, u64 pipeline_key, vk::UniquePipeline& pipeline,
                                    std::span<const u32> fresh_spirv) {
     std::vector<u32> spirv;
-    if (!LoadRecoverySpirv(shader_hash, pipeline_key, spirv,fresh_spirv)) {
+    if (!LoadRecoverySpirv(device,original.stage.module,shader_hash,pipeline_key,spirv,fresh_spirv)) {
         std::fprintf(stderr,"Qualcomm compute: exact SPIR-V unavailable for shader=%016llx key=%016llx\n",
                      static_cast<unsigned long long>(shader_hash), static_cast<unsigned long long>(pipeline_key));
         return false;
@@ -155,7 +157,7 @@ bool TryQualcommNarrowImage1DVariant(vk::Device device,
     constexpr u64 kVerifiedTLOUShaderHash = 0x4a705408ull;
     if (shader_hash != kVerifiedTLOUShaderHash) return false;
     std::vector<u32> spirv;
-    if (!LoadRecoverySpirv(shader_hash, pipeline_key, spirv,fresh_spirv)) {
+    if (!LoadRecoverySpirv(device,original.stage.module,shader_hash,pipeline_key,spirv,fresh_spirv)) {
         std::fprintf(stderr,"Qualcomm compute: exact SPIR-V unavailable for shader=%016llx key=%016llx\n",
                      static_cast<unsigned long long>(shader_hash), static_cast<unsigned long long>(pipeline_key));
         return false;
@@ -424,7 +426,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled &&
         info_.pgm_hash == 0x4a705408ull) {
         std::vector<u32> original, smaller, no_read;
-        if (LoadRecoverySpirv(info_.pgm_hash, compute_key.value, original,fresh_spirv) &&
+        if (LoadRecoverySpirv(device,module,info_.pgm_hash,compute_key.value,original,fresh_spirv) &&
             QualcommTLOUWorkgroup::Reduce(original, smaller)) {
             // Keep 2D coordinates. Remove only the demonstrably unused read capability.
             if (QualcommImage1DCompat::DropUnusedImageReadCapability(smaller,no_read))
@@ -445,7 +447,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled &&
         info_.pgm_hash == 0x4a705408ull) {
         std::vector<u32> original, lowered;
-        if (LoadRecoverySpirv(info_.pgm_hash, compute_key.value, original,fresh_spirv)) {
+        if (LoadRecoverySpirv(device,module,info_.pgm_hash,compute_key.value,original,fresh_spirv)) {
             for (bool small : {false,true}) {
                 if (!QualcommTLOUU32::Lower(original,lowered,small)) continue;
                 const vk::ShaderModuleCreateInfo mi{
@@ -471,7 +473,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled &&
         info_.pgm_hash == 0x71859bbbull) {
         std::vector<u32> original, lowered;
-        if (LoadRecoverySpirv(info_.pgm_hash, compute_key.value, original,fresh_spirv) &&
+        if (LoadRecoverySpirv(device,module,info_.pgm_hash,compute_key.value,original,fresh_spirv) &&
             QualcommTLOULds32::Lower(original,lowered)) {
             const vk::ShaderModuleCreateInfo mi{
                 .codeSize=lowered.size()*sizeof(u32),.pCode=lowered.data()};
@@ -492,7 +494,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled) {
         std::vector<u32> original,lowered;
         QualcommTLOULegalize::Stats stats;
-        if (LoadRecoverySpirv(info_.pgm_hash,compute_key.value,original,fresh_spirv) &&
+        if (LoadRecoverySpirv(device,module,info_.pgm_hash,compute_key.value,original,fresh_spirv) &&
             QualcommTLOULegalize::Lower(original,lowered,stats)) {
             const vk::ShaderModuleCreateInfo mi{
                 .codeSize=lowered.size()*sizeof(u32),.pCode=lowered.data()};

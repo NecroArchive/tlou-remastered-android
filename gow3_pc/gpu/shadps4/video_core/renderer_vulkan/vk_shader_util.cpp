@@ -4,6 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <unordered_set>
+#include <unordered_map>
+#include <mutex>
+#include <atomic>
+#include <algorithm>
 #include <vector>
 #include "common/assert.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
@@ -11,6 +15,29 @@
 namespace Vulkan {
 
 namespace {
+std::atomic<VkDevice> retained_device{VK_NULL_HANDLE};
+struct RetainedShader { std::vector<u32> words; u64 used; };
+std::mutex source_mutex;
+std::unordered_map<VkShaderModule,RetainedShader> shader_sources;
+size_t source_bytes=0;
+u64 source_epoch=0;
+constexpr size_t SourceBudget=32*1024*1024;
+void RetainShaderSource(vk::Device device,vk::ShaderModule module,std::span<const u32> code) {
+    if(retained_device.load(std::memory_order_acquire)!=static_cast<VkDevice>(device))return;
+    std::scoped_lock lock{source_mutex};
+    const auto id=static_cast<VkShaderModule>(module);
+    if(auto it=shader_sources.find(id);it!=shader_sources.end()){
+        source_bytes-=it->second.words.size()*4;shader_sources.erase(it);
+    }
+    if(code.size_bytes()>4*1024*1024)return;
+    while(source_bytes+code.size_bytes()>SourceBudget&&!shader_sources.empty()){
+        auto old=std::min_element(shader_sources.begin(),shader_sources.end(),
+            [](const auto& a,const auto& b){return a.second.used<b.second.used;});
+        source_bytes-=old->second.words.size()*4;shader_sources.erase(old);
+    }
+    shader_sources.emplace(id,RetainedShader{std::vector<u32>(code.begin(),code.end()),++source_epoch});
+    source_bytes+=code.size_bytes();
+}
 
 // gow3 21 Oct 2026, diagnostics (GOW3_INVARIANT_POSITION=1, off by default): the games draw
 // depth first and then shade with depth test EQUAL, which needs every vertex shader to compute
@@ -87,6 +114,22 @@ std::vector<u32> WithInvariantPosition(std::span<const u32> code) {
 
 } // Anonymous namespace
 
+void EnableShaderSourceRetention(vk::Device device) {
+    std::scoped_lock lock{source_mutex};
+    if(retained_device.load()!=static_cast<VkDevice>(device)){
+        shader_sources.clear();source_bytes=0;source_epoch=0;
+        retained_device.store(static_cast<VkDevice>(device),std::memory_order_release);
+    }
+}
+bool CopyShaderModuleSource(vk::Device device,vk::ShaderModule module,std::vector<u32>& out){
+    out.clear();
+    if(!module||retained_device.load(std::memory_order_acquire)!=static_cast<VkDevice>(device))return false;
+    std::scoped_lock lock{source_mutex};
+    auto it=shader_sources.find(static_cast<VkShaderModule>(module));
+    if(it==shader_sources.end())return false;
+    it->second.used=++source_epoch;out=it->second.words;return true;
+}
+
 vk::ShaderModule CompileSPV(std::span<const u32> code, vk::Device device) {
     std::vector<u32> patched;
     if (InvariantPositionEnabled()) {
@@ -103,6 +146,7 @@ vk::ShaderModule CompileSPV(std::span<const u32> code, vk::Device device) {
     auto [module_result, module] = device.createShaderModule(shader_info);
     ASSERT_MSG(module_result == vk::Result::eSuccess, "Failed to compile SPIR-V shader: {}",
                vk::to_string(module_result));
+    RetainShaderSource(device,module,code);
     return module;
 }
 

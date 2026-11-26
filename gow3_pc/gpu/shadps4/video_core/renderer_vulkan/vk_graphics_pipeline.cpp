@@ -541,7 +541,8 @@ GraphicsPipeline::GraphicsPipeline(
                       <<" stencil="<<unsigned(key.stencil_format)<<"\n";
                 for(size_t i=0;i<MaxShaderStages;++i)if(infos[i]) {
                     std::vector<u32> spv;
-                    const bool ok=LoadExactComputeSpirv(infos[i]->pgm_hash,key.stage_hashes[i],spv);
+                    const bool ok=CopyShaderModuleSource(device,modules[i],spv)||
+                        LoadExactComputeSpirv(infos[i]->pgm_hash,key.stage_hashes[i],spv);
                     report<<"stage="<<i<<" guest_hash="<<std::hex<<infos[i]->pgm_hash
                           <<" permutation="<<key.stage_hashes[i]<<" bytes="<<std::dec<<(ok?spv.size()*4:0)<<"\n";
                     if(ok) {

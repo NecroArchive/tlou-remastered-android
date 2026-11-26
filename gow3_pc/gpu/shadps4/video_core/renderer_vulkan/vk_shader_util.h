@@ -4,6 +4,7 @@
 #pragma once
 
 #include <span>
+#include <vector>
 
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
@@ -16,5 +17,9 @@ namespace Vulkan {
  * @param device The vulkan device handle
  */
 vk::ShaderModule CompileSPV(std::span<const u32> code, vk::Device device);
+// Proprietary Qualcomm only: actual input of live VkShaderModules, bounded
+// by bytes, so recovery is not dependent on asynchronous disk cache writes.
+void EnableShaderSourceRetention(vk::Device device);
+bool CopyShaderModuleSource(vk::Device device,vk::ShaderModule module,std::vector<u32>& out);
 
 } // namespace Vulkan

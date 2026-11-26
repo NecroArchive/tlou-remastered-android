@@ -458,7 +458,9 @@ public final class GameActivity extends Activity {
                 if(custom.getName().startsWith("driver-") &&
                     (importedName.startsWith("vulkan.adr") || importedName.startsWith("vulkan.qcom")))
                     env.put("TLOU_EXTERNAL_QUALCOMM_DRIVER","1");
-                env.put("LD_LIBRARY_PATH",custom.getParent()+":"+cpuLibraryPath);
+                String searchPath=DriverArchive.librarySearchPath(new File(getFilesDir(),"drivers"),custom);
+                env.put("LD_LIBRARY_PATH",searchPath+":"+cpuLibraryPath);
+                RunLog.write(this,"Vulkan external dependency path: "+searchPath);
             }
             String ubwcMode=PortSettings.prefs(this)
                 .getString("turnip_ubwc_hint_mode","auto");

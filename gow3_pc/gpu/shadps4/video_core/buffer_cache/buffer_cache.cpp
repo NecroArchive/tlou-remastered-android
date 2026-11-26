@@ -3039,7 +3039,7 @@ void BufferCache::RecycleSnapshot(SnapshotBytes& bytes) {
     snapshot_pool.push_back(std::move(bytes));
 }
 
-void BufferCache::DownloadRangesAsync(std::span<const std::pair<VAddr, u64>> ranges, bool protect,
+bool BufferCache::DownloadRangesAsync(std::span<const std::pair<VAddr, u64>> ranges, bool protect,
                                       bool yield_to_cpu, bool never_protect) {
     last_readback_tick = scheduler.CurrentTick();
     PendingReadback readback;
@@ -3067,7 +3067,7 @@ void BufferCache::DownloadRangesAsync(std::span<const std::pair<VAddr, u64>> ran
         });
     }
     if (total_size_bytes == 0) {
-        return;
+        return false;
     }
 #ifdef __ANDROID__
     // Every piece here is a snapshot of the SAME EOP fence: collecting repeated
@@ -3301,6 +3301,7 @@ void BufferCache::DownloadRangesAsync(std::span<const std::pair<VAddr, u64>> ran
     pending_readbacks.push_back(std::move(readback));
     ++g_async_readbacks;
     SweepTracking();
+    return true;
 }
 
 void BufferCache::IndexReadbackWindows(const PendingReadback& readback, bool add) {
@@ -5023,11 +5024,15 @@ bool BufferCache::DeferUntilLastReadback(std::function<void()> fn, VAddr label, 
     {
         static std::mutex labels_mutex;
         static std::unordered_map<VAddr, u32> seen;
+        static std::atomic<bool> labels_complete{false};
+        if (!labels_complete.load(std::memory_order_relaxed)) {
         std::scoped_lock lock{labels_mutex};
         if (seen.size() < 12 && seen[label]++ == 0) {
             std::printf("Deferred fence: label %#llx (tick %llu)\n", static_cast<unsigned long long>(label),
                         static_cast<unsigned long long>(pending_readbacks.back().tick));
             std::fflush(stdout);
+        }
+        if(seen.size()>=12)labels_complete.store(true,std::memory_order_relaxed);
         }
     }
     // (A wrapper is a heap allocation per fence: only with the fault statistics.)

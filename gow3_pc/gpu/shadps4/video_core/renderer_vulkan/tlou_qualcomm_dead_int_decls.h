@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <array>
+#include <cstddef>
+#include <utility>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -34,7 +36,7 @@ inline bool LiteralOperand(Word op,std::span<const Word> a,std::size_t j) {
         }
         return false;
     }
-    case 16: return j>=1; // ExecutionMode (NOT ExecutionModeId)
+    case 16: return j==1 || (j>=2&&a.size()>=2 && (a[1]==7||a[1]==12||a[1]==4460||a[1]==4461));
     case 21: case 22: return j>=1; // Integer/float width and signedness
     case 23: case 24: return j==2; // Vector/matrix component count
     case 25: return j>=2; // TypeImage enum operands

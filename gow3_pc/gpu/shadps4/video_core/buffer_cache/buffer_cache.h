@@ -287,7 +287,7 @@ public:
     /// them (the guest refills the buffer; see Rasterizer::ReadBackEopResults).
     /// gow3: `never_protect`: the pages stay accessible whatever the readback mode (results
     /// the guest reads only after a fence written when they land).
-    void DownloadRangesAsync(std::span<const std::pair<VAddr, u64>> ranges, bool protect = false,
+    bool DownloadRangesAsync(std::span<const std::pair<VAddr, u64>> ranges, bool protect = false,
                              bool yield_to_cpu = false, bool never_protect = false);
 
     /// gow3 diagnostics (GOW3_CLOTH_PEEK=1): copies the GPU's data of [address, size) into a

@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstring>
 #include <mutex>
+#include <string>
 
 namespace {
 
@@ -213,46 +214,40 @@ Gow3VkGetInstanceProcAddr Load() {
     if (!driver || !*driver) {
         return LoadSystemVulkan();
     }
-    void* lib = dlopen(driver, RTLD_NOW | RTLD_LOCAL);
 #ifdef __ANDROID__
-    // Some proprietary imports need an older mapper SONAME supplied by the
-    // device rather than the archive. Try only the actual exact vendor
-    // library if the dynamic linker reports that dependency missing. This
-    // does not substitute a different mapper ABI or invent a shim.
-    if (!lib && IsExternalVendorVulkan(driver)) {
-        const char* first_error = dlerror();
-        const bool mapper_missing = first_error &&
-            std::strstr(first_error, "vendor.qti.hardware.display.mapper@2.0.so");
-        std::fprintf(stderr, "Vulkan: initial imported driver load: %s\n",
-                     first_error ? first_error : "unknown dynamic-linker error");
-        if (mapper_missing) {
-            static const char* const candidates[] = {
-                "/vendor/lib64/vendor.qti.hardware.display.mapper@2.0.so",
-                "/odm/lib64/vendor.qti.hardware.display.mapper@2.0.so",
-                "/vendor/lib64/hw/vendor.qti.hardware.display.mapper@2.0.so",
-            };
-            for (const char* candidate : candidates) {
-                void* mapper = dlopen(candidate, RTLD_NOW | RTLD_LOCAL);
-                if (!mapper) {
-                    const char* reason = dlerror();
-                    std::fprintf(stderr, "Vulkan: exact mapper %s unavailable: %s\n",
-                                 candidate, reason ? reason : "unknown");
-                    continue;
-                }
-                lib = dlopen(driver, RTLD_NOW | RTLD_LOCAL);
-                if (lib) {
-                    std::fprintf(stderr,"Vulkan: imported driver loaded with exact vendor mapper %s\n",candidate);
-                    break; // keep dependency resident for process lifetime
-                }
-                const char* reason=dlerror();
-                std::fprintf(stderr,"Vulkan: imported driver still unavailable: %s\n",
-                             reason ? reason : "unknown");
-                dlclose(mapper);
-            }
+    if (IsExternalVendorVulkan(driver)) {
+        // Use the stock Vulkan loader in an isolated namespace, with the
+        // imported ICD in a child of Android's actual vendor namespace.
+        // Do not attempt vendor mapper dlopen from this executable's default namespace.
+        const char* hooks=std::getenv("TLOU_ADRENOTOOLS_HOOK_DIR");
+        const char* slash=std::strrchr(driver,'/');
+        if (!hooks || !*hooks || !slash) {
+            std::fprintf(stderr,"Vulkan: external Qualcomm loader configuration missing\n");
+            return nullptr;
         }
-        if (!lib) lib = dlopen(driver, RTLD_NOW | RTLD_LOCAL);
+        const std::string hook_dir=std::string(hooks)+"/";
+        const std::string driver_dir(driver,size_t(slash-driver)+1);
+        const std::string tool=hook_dir+"libadrenotools.so";
+        void* adreno=dlopen(tool.c_str(),RTLD_NOW|RTLD_LOCAL);
+        using Open=void*(*)(int,int,const char*,const char*,const char*,const char*,const char*,void**);
+        const auto open=adreno?reinterpret_cast<Open>(dlsym(adreno,"adrenotools_open_libvulkan")):nullptr;
+        if (!open) {
+            std::fprintf(stderr,"Vulkan: cannot initialize imported Qualcomm loader: %s\n",dlerror());
+            return nullptr;
+        }
+        // ADRENOTOOLS_DRIVER_CUSTOM (upstream pinned API).
+        void* loader=open(RTLD_NOW|RTLD_LOCAL,1,nullptr,hook_dir.c_str(),driver_dir.c_str(),
+                          slash+1,nullptr,nullptr);
+        if(!loader) {
+            std::fprintf(stderr,"Vulkan: imported Qualcomm namespace initialization failed\n");
+            return nullptr;
+        }
+        auto gipa=reinterpret_cast<Gow3VkGetInstanceProcAddr>(dlsym(loader,"vkGetInstanceProcAddr"));
+        std::fprintf(stderr,"Vulkan: imported Qualcomm isolated loader for %s (%s)\n",driver,gipa?"ready":"no GIPA");
+        return gipa;
     }
 #endif
+    void* lib = dlopen(driver, RTLD_NOW | RTLD_LOCAL);
     if (!lib) {
         const char* error = dlerror();
         std::fprintf(stderr, "Vulkan: cannot load driver %s: %s\n", driver,

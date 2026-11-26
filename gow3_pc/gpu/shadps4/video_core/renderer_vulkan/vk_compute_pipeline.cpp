@@ -19,6 +19,7 @@
 #include "video_core/renderer_vulkan/vk_qualcomm_tlou_workgroup.h"
 #include "video_core/renderer_vulkan/vk_qualcomm_tlou_u32.h"
 #include "video_core/renderer_vulkan/vk_qualcomm_tlou_lds32.h"
+#include "video_core/renderer_vulkan/vk_qualcomm_tlou_legalize.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
@@ -472,6 +473,28 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                 }else std::fprintf(stderr,"Qualcomm unified LDS32 pipeline rejected: %s\n",vk::to_string(pr).c_str());
             }else std::fprintf(stderr,"Qualcomm unified LDS32 module rejected: %s\n",vk::to_string(mr).c_str());
         }else std::fprintf(stderr,"Qualcomm unified LDS32: capture mismatch, no modification\n");
+    }
+    // Preserve both proven exact recoveries above. The next failing shader
+    // 0xecb2dd combines the same two instruction classes. Handle the classes,
+    // not just the hash, after an actual Qualcomm compiler rejection.
+    if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled) {
+        std::vector<u32> original,lowered;
+        QualcommTLOULegalize::Stats stats;
+        if (LoadExactComputeSpirv(info_.pgm_hash,compute_key.value,original) &&
+            QualcommTLOULegalize::Lower(original,lowered,stats)) {
+            const vk::ShaderModuleCreateInfo mi{
+                .codeSize=lowered.size()*sizeof(u32),.pCode=lowered.data()};
+            auto [mr,sm]=device.createShaderModuleUnique(mi);
+            if(mr==vk::Result::eSuccess) {
+                auto ci=compute_pipeline_ci;ci.stage.module=*sm;
+                auto [pr,p]=device.createComputePipelineUnique(vk::PipelineCache{},ci);
+                if(pr==vk::Result::eSuccess){
+                    pipe=std::move(p);pipeline_result=pr;
+                    std::fprintf(stderr,"Qualcomm compute recovered: structural u32/LDS legalizer shader=%016llx mul=%u extended=%u load=%u store=%u barriers=%u atomics=%u\n",
+                        static_cast<unsigned long long>(info_.pgm_hash),stats.multiply,stats.extended,stats.lds_load,stats.lds_store,stats.barriers,stats.atomics);
+                }else std::fprintf(stderr,"Qualcomm structural u32/LDS legalizer rejected: %s\n",vk::to_string(pr).c_str());
+            }else std::fprintf(stderr,"Qualcomm structural u32/LDS module rejected: %s\n",vk::to_string(mr).c_str());
+        }else std::fprintf(stderr,"Qualcomm structural u32/LDS legalizer: unsupported instruction/layout, unchanged\n");
     }
     if (pipeline_result != vk::Result::eSuccess) {
         if (qualcomm) CaptureQualcommComputeFailure(info_.pgm_hash, compute_key.value);

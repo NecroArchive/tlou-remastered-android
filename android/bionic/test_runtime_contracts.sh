@@ -466,3 +466,7 @@ g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror gow3_pc/tests/test_tlou_qualco
 # Qualcomm aliased LDS 32-bit address preservation and capture guard.
 g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror gow3_pc/tests/test_tlou_qualcomm_lds32.cpp -o "$test_dir/qualcomm-lds32"
 "$test_dir/qualcomm-lds32"
+
+# Qualcomm structural fallback: combined multiply and shared-memory legalization.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror gow3_pc/tests/test_tlou_qualcomm_legalize.cpp -o "$test_dir/qualcomm-legalize"
+"$test_dir/qualcomm-legalize"

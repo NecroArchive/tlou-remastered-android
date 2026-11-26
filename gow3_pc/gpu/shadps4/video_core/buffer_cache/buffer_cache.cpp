@@ -4921,12 +4921,10 @@ void BufferCache::CompleteReadbacks(bool wait, u64 wait_until) {
     while (!pending_readbacks.empty()) {
         PendingReadback& readback = pending_readbacks.front();
 #ifdef __ANDROID__
-        // The scheduler cannot signal its CURRENT recording tick until it
-        // submits it. PollReadbacks runs on every draw/dispatch; repeatedly
-        // querying the Qualcomm timeline here only enters the driver for a
-        // result that cannot yet be ready. Forced waits still submit/land.
-        if (!wait && readback.tick >= watch_tick &&
-            instance.GetDriverID() == vk::DriverId::eQualcommProprietary) {
+        // A readback recorded in the current command buffer cannot complete
+        // before submission, for either Android ICD. Forced waits retain the
+        // same submit/land path.
+        if (!wait && readback.tick >= watch_tick) {
             return;
         }
 #endif
@@ -5284,76 +5282,11 @@ static bool UrgentCopiesEnabled() {
     return enabled;
 }
 
-bool BufferCache::SideQueueFetch(std::span<const std::pair<VAddr, u64>> pieces, u64 wait_tick,
-                                 bool final_pages) {
+bool BufferCache::SideQueueFetch(std::span<const std::pair<VAddr, u64>> pieces, u64 wait_tick) {
     const vk::Queue queue = instance.GetCopyQueue();
     if (!UrgentCopiesEnabled() || !queue || pieces.empty() || !wait_tick) {
         return false;
     }
-#ifdef __ANDROID__
-    // Qualcomm exposes auxiliary graphics queues even on a unified-memory
-    // GPU. The desktop-oriented batch path otherwise submits a second copy
-    // and blocks in vkWaitSemaphores for pages whose producer already ended.
-    // Keep the exact selected ranges; no direct read of in-flight or partial
-    // pages, no missing host visibility, no weakening of EOP synchronization.
-    const bool qualcomm = instance.GetDriverID() == vk::DriverId::eQualcommProprietary;
-    if (qualcomm && final_pages && arena_host_mapped && scheduler.host_read_barrier &&
-        (instance.GetMemoryProperties().memoryTypes[arena_memory_type_index].propertyFlags &
-         vk::MemoryPropertyFlagBits::eHostCoherent) &&
-        scheduler.GetWorkSemaphore()->IsFree(wait_tick)) {
-        struct MappedPiece { VAddr address; u64 size; const u8* source; };
-        boost::container::small_vector<MappedPiece, 64> mapped;
-        bool complete = true;
-        for (const auto& [address, size] : pieces) {
-            for (VAddr at = address; at < address + size;) {
-                const auto it = resident_ranges.Find(at >> block_shift);
-                if (it == resident_ranges.end() || !it->mapped) {
-                    complete = false;
-                    break;
-                }
-                const VAddr base = it->start << block_shift;
-                const VAddr end = it->end << block_shift;
-                if (at < base || end <= at) {
-                    complete = false;
-                    break;
-                }
-                const u64 len = std::min<VAddr>(address + size, end) - at;
-                mapped.push_back({at, len, it->mapped + it->offset + (at - base)});
-                at += len;
-            }
-            if (!complete) break;
-        }
-        if (complete && !mapped.empty()) {
-            // Validate the complete mapping before touching guest memory,
-            // then use the same backing-write semantics as ReadFinishedGpuPage.
-            std::array<u8, 4096> bytes;
-            u64 total = 0;
-            for (const auto& piece : mapped) {
-                for (u64 off = 0; off < piece.size;) {
-                    const u64 n = std::min<u64>(bytes.size(), piece.size - off);
-                    std::memcpy(bytes.data(), piece.source + off, n);
-                    auto* dst = std::bit_cast<u8*>(piece.address + off);
-                    if (!memory->TryWriteBacking(dst, bytes.data(), n))
-                        std::memcpy(dst, bytes.data(), n);
-                    off += n;
-                }
-                total += piece.size;
-            }
-            static thread_local u64 calls = 0, saved_bytes = 0;
-            static thread_local auto last = std::chrono::steady_clock::now();
-            ++calls;
-            saved_bytes += total;
-            if (std::chrono::steady_clock::now() - last >= std::chrono::seconds(5)) {
-                std::printf("TLOU Qualcomm completed-page batches (5 s): direct=%llu bytes=%llu side-submits-avoided=%llu\n",
-                            (unsigned long long)calls, (unsigned long long)saved_bytes,
-                            (unsigned long long)calls);
-                calls = saved_bytes = 0;
-                last = std::chrono::steady_clock::now();
-            }
-            return true;
-        }
-    }
-#endif
     const VAddr lo = pieces.front().first;
     const VAddr hi = pieces.back().first + pieces.back().second;
     const u32 first_block = lo >> block_shift;
@@ -5537,7 +5470,7 @@ bool BufferCache::CopyFinishedGpuPage(VAddr page, bool finished_only) {
                 pieces.emplace_back(lo, hi - lo);
             });
         }
-        if (!SideQueueFetch(pieces, wait, true)) {
+        if (!SideQueueFetch(pieces, wait)) {
             return false;
         }
         for (const VAddr fetched : list) {

@@ -4138,8 +4138,7 @@ bool Rasterizer::ReadBackEopResults(bool protected_only) {
     if (!protected_only && !eop_soft_readbacks.empty()) {
         std::erase_if(eop_soft_readbacks, [this](const auto& r) { return !IsMapped(r.first, r.second); });
         if (!eop_soft_readbacks.empty()) {
-            buffer_cache.DownloadRangesAsync(eop_soft_readbacks, false, true);
-            soft_pending = true;
+            soft_pending = buffer_cache.DownloadRangesAsync(eop_soft_readbacks, false, true);
         }
         eop_soft_readbacks.clear();
     }
@@ -4153,8 +4152,7 @@ bool Rasterizer::ReadBackEopResults(bool protected_only) {
             if (EopReadbackMode() == 2) {
                 buffer_cache.DownloadRanges(eop_open_readbacks);
             } else {
-                buffer_cache.DownloadRangesAsync(eop_open_readbacks, false, true, true);
-                open_pending = true;
+                open_pending |= buffer_cache.DownloadRangesAsync(eop_open_readbacks, false, true, true);
             }
         }
         eop_open_readbacks.clear();
@@ -4175,8 +4173,7 @@ bool Rasterizer::ReadBackEopResults(bool protected_only) {
     if (EopReadbackMode() == 2) {
         buffer_cache.DownloadRanges(eop_readbacks);
     } else {
-        buffer_cache.DownloadRangesAsync(eop_readbacks, true, true);
-        pending = true;
+        pending = buffer_cache.DownloadRangesAsync(eop_readbacks, true, true);
     }
     eop_readbacks.clear();
     static u32 readbacks = 0;
@@ -4196,7 +4193,7 @@ bool Rasterizer::ReadBackEopResults(bool protected_only) {
         readbacks = 0;
         last = now;
     }
-    return pending || open_pending;
+    return pending || open_pending || soft_pending;
 }
 
 bool Rasterizer::ReadBackDmaResults() {
@@ -4207,9 +4204,9 @@ bool Rasterizer::ReadBackDmaResults() {
     if (dma_results.empty()) {
         return false;
     }
-    buffer_cache.DownloadRangesAsync(dma_results, false, true, true);
+    const bool pending = buffer_cache.DownloadRangesAsync(dma_results, false, true, true);
     dma_results.clear();
-    return true;
+    return pending;
 }
 
 void Rasterizer::NoteLabelAfterDma(u32 kind) {

@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Build staging-completion and idle-readback performance revision db1c112e75054d8527afa895d563fdb386172613.
+# Build signed Android readback wake revision 7ca41aeb5f42284ffa8c9b1ecfb1d84e965cbf09.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -26,13 +26,15 @@ jobs:
       - name: Checkout the EXACT v0.2.0 RELEASE branch, not experimental application code
         uses: actions/checkout@v4
         with:
-          ref: perf/tlou-staging-completion-20261126
+          ref: perf/tlou-readback-wake-20261126
           submodules: recursive
       - name: Record source revision and reject a misrouted release
         run: |
           set -euo pipefail
           echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "db1c112e75054d8527afa895d563fdb386172613"
+          test "$(git rev-parse HEAD)" = "7ca41aeb5f42284ffa8c9b1ecfb1d84e965cbf09"
+          grep -Fq 'TLOU readback wake:' gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp
+          grep -Fq 'env.put("GOW3_READBACK_WAKE","1")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
           bash -n android/bionic/package_aotnative_v020.sh
           grep -Fq 'TLOU Qualcomm: verified selected ICD mapped' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
           grep -Fq 'readback.tick >= watch_tick' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
@@ -42,7 +44,7 @@ jobs:
           grep -Fq 'TLOU draw queue (5 s)' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
           grep -Fq 'TLOU_DRIVER_WAIT_PROFILE' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
           grep -Fq 'applyScreenOrientation' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
-          test "$(git branch --show-current)" = "perf/tlou-staging-completion-20261126"
+          test "$(git branch --show-current)" = "perf/tlou-readback-wake-20261126"
           grep -Fq "versionName '0.2.0'" android-launcher/app/build.gradle
           grep -Fq "applicationIdSuffix '.aotnative2'" android-launcher/app/build.gradle
           test -s android/bionic/package_aotnative_v020.sh

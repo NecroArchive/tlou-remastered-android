@@ -6790,6 +6790,20 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             LOG_WARNING(Render_Vulkan, "Unexpected metadata read by a shader (texture)");
         }
 
+        // Invalid resources still occupy the original shader layout's array
+        // slots. Collapsing them to a single slot shifts later sampler bindings.
+        const auto reject_image = [&] {
+            const u32 count=std::clamp(image_desc.NumBindings(stage),1u,16u);
+            for(u32 k=0;k<count;++k) {
+                auto& desc=image_desc_storage.emplace_back();
+                desc.type=image_desc.is_written?VideoCore::TextureCache::BindingType::Storage:
+                                                VideoCore::TextureCache::BindingType::Texture;
+                image_bindings.emplace_back(VideoCore::ImageId{}, &desc);
+                image_binding_entries.push_back(nullptr);
+                binding_proxy_ok.push_back(false);
+            }
+            image_descriptor_array_sizes.push_back(count);
+        };
         const auto data_fmt = tsharp.GetDataFmt();
         const auto num_fmt = tsharp.GetNumberFmt();
         // gow3 24 Oct 2026 diagnostics (GOW3_TRACE_NULL_WRITES=1): a written image bound as a
@@ -6817,10 +6831,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         };
         if (tsharp.Address() == 0 || data_fmt == AmdGpu::DataFormat::FormatInvalid) {
             trace_null_write(tsharp.Address() == 0 ? "address 0" : "invalid format");
-            image_bindings.emplace_back(VideoCore::ImageId{}, &image_desc_storage.emplace_back());
-            image_binding_entries.push_back(nullptr);
-            binding_proxy_ok.push_back(false);
-            image_descriptor_array_sizes.push_back(1);
+            reject_image();
             continue;
         }
 
@@ -6835,10 +6846,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 DescribeSharpSource(stage, image_desc.sharp_fetch.offsets[0], "texture");
             }
             trace_null_write("rejected T#");
-            image_bindings.emplace_back(VideoCore::ImageId{}, &image_desc_storage.emplace_back());
-            image_binding_entries.push_back(nullptr);
-            binding_proxy_ok.push_back(false);
-            image_descriptor_array_sizes.push_back(1);
+            reject_image();
             continue;
         }
 
@@ -6864,10 +6872,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                             stage.pgm_hash, tsharp.Address(), desc_entry.desc.info.guest_size,
                             tsharp.width + 1, tsharp.height + 1);
             }
-            image_bindings.emplace_back(VideoCore::ImageId{}, &image_desc_storage.emplace_back());
-            image_binding_entries.push_back(nullptr);
-            binding_proxy_ok.push_back(false);
-            image_descriptor_array_sizes.push_back(1);
+            reject_image();
             continue;
         }
         // GOW3_SCENE_DEBUG: proxied scene targets this binding reads at the native size, and why.
@@ -7062,10 +7067,10 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     }
 
     u32 image_info_idx = first_image_idx;
-    u32 image_binding_idx = 0;
+    u32 image_resource_idx=0;
     for (u32 array_size : image_descriptor_array_sizes) {
-        const auto& desc = *image_bindings[image_binding_idx].second;
-        const bool is_storage = desc.type == VideoCore::TextureCache::BindingType::Storage;
+        // The descriptor type is defined by the shader, even for null images.
+        const bool is_storage = stage.images[image_resource_idx++].is_written;
         auto& set_write = set_writes[write_index++];
         set_write.dstSet = VK_NULL_HANDLE;
         set_write.dstBinding = binding.unified;
@@ -7076,7 +7081,6 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         set_write.pImageInfo = &image_infos[image_info_idx];
 
         image_info_idx += array_size;
-        image_binding_idx += array_size;
         binding.unified += array_size;
     }
 

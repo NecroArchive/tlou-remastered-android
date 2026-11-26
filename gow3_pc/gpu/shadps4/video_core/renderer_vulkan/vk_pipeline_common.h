@@ -4,6 +4,7 @@
 #pragma once
 
 #include <span>
+#include <vector>
 
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/runtime_info.h"
@@ -80,6 +81,7 @@ protected:
     [[nodiscard]] std::string GetDebugString() const;
     void RefreshTextureHelperEligibility();
     void InitializeBufferDescriptorTemplate(u32 buffer_count);
+    void SelectDescriptorLayout(u32 binding_count, std::span<const vk::DescriptorSetLayoutBinding> bindings);
 
     const Instance& instance;
     Scheduler& scheduler;
@@ -92,6 +94,8 @@ protected:
     u32 buffer_descriptor_count = 0;
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};
     bool uses_push_descriptors{};
+    // Only populated by the narrowly scoped sampler-push workaround.
+    std::vector<vk::DescriptorSetLayoutBinding> descriptor_contract;
     bool texture_helper_compatible = false;
     bool is_compute;
 };

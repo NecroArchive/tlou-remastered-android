@@ -475,6 +475,10 @@ public final class GameActivity extends Activity {
                 selectedDriverName.contains("turnip") && selectedDriverName.contains("v39")) {
                 env.put("TLOU_NO_BACKGROUND_WARMUP","1");
                 RunLog.write(this,"A750/A840 V39: on-demand pipelines (avoid simultaneous driver warm-up and submit)");
+                if(eglRenderer.contains("840")) {
+                    env.put("TLOU_NO_SAMPLER_PUSH","1");
+                    RunLog.write(this,"A840 V39: pooled descriptor sets for sampler pipelines (driver fault 0x437104)");
+                }
             }
             String ubwcStatus=TlouDevicePolicy.configureUbwcHint(
                 env,ubwcMode,eglRenderer,env.get("GOW3_VULKAN_DRIVER"),

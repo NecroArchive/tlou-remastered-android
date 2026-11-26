@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstdlib>
+#include <algorithm>
+#include <atomic>
+#include <cstdio>
+#include "common/assert.h"
 #include <span>
 #include <vector>
 
@@ -26,6 +30,28 @@ Pipeline::Pipeline(const Instance& instance_, Scheduler& scheduler_, DescriptorH
       is_compute{is_compute_} {}
 
 Pipeline::~Pipeline() = default;
+
+void Pipeline::SelectDescriptorLayout(
+    u32 binding_count, std::span<const vk::DescriptorSetLayoutBinding> bindings) {
+    uses_push_descriptors = binding_count < instance.MaxPushDescriptors();
+    static const bool no_sampler_push = [] {
+        const char* flag=std::getenv("TLOU_NO_SAMPLER_PUSH");
+        return flag && flag[0]=='1';
+    }();
+    if (!no_sampler_push || !std::any_of(bindings.begin(),bindings.end(),[](const auto& b) {
+        return b.descriptorType==vk::DescriptorType::eSampler ||
+               b.descriptorType==vk::DescriptorType::eCombinedImageSampler;
+    })) return;
+    // The matched V39 binary crashed copying an immutable sampler through
+    // dstSetOverride in tu_update_descriptor_sets. All our samplers are dynamic.
+    // Use the existing ordinary descriptor-pool path, not a skipped sampler.
+    uses_push_descriptors=false;
+    descriptor_contract.assign(bindings.begin(),bindings.end());
+    static std::atomic<bool> reported{false};
+    if (!reported.exchange(true))
+        std::printf("TLOU V39 sampler compatibility: ordinary descriptor sets, exact layout contract\n");
+}
+
 
 void Pipeline::InitializeBufferDescriptorTemplate(u32 buffer_count) {
     if (!uses_push_descriptors || buffer_count < 4 ||
@@ -231,11 +257,61 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
     }
 
     // Descriptor set updates are device calls: they stay on this thread.
+    // A rejected dynamic-mip image can otherwise shift the next sampler into
+    // a sparse hole. Use the immutable ordered layout for the affected driver.
+    DescriptorWrites repaired;
+    std::vector<vk::DescriptorImageInfo> repair_images;
+    if (!descriptor_contract.empty()) {
+        ASSERT_MSG(descriptor_contract.size()==set_writes.size(),
+                   "TLOU descriptor contract: layout {} writes {}",descriptor_contract.size(),set_writes.size());
+        bool mismatch=false;
+        size_t reserve=0;
+        for(size_t i=0;i<set_writes.size();++i) {
+            const auto& w=set_writes[i];const auto& b=descriptor_contract[i];
+            mismatch |= w.dstBinding!=b.binding || w.descriptorType!=b.descriptorType ||
+                        w.descriptorCount!=b.descriptorCount || w.dstArrayElement!=0;
+            reserve+=b.descriptorCount;
+        }
+        if(mismatch) {
+            repaired=set_writes;repair_images.reserve(reserve);
+            static std::atomic<unsigned> reports{0};
+            for(size_t i=0;i<repaired.size();++i) {
+                auto& w=repaired[i];const auto& b=descriptor_contract[i];
+                if(w.dstBinding==b.binding && w.descriptorType==b.descriptorType &&
+                   w.descriptorCount==b.descriptorCount && w.dstArrayElement==0)continue;
+                if(reports.fetch_add(1)<32)
+                    std::printf("TLOU descriptor contract repair: slot=%zu binding=%u->%u count=%u->%u type=%u->%u\n",
+                        i,w.dstBinding,b.binding,w.descriptorCount,b.descriptorCount,
+                        unsigned(w.descriptorType),unsigned(b.descriptorType));
+                ASSERT_MSG(w.dstArrayElement==0,"Unexpected descriptor array offset");
+                const bool image=b.descriptorType==vk::DescriptorType::eSampledImage ||
+                                 b.descriptorType==vk::DescriptorType::eStorageImage;
+                if(image && (w.descriptorCount!=b.descriptorCount || w.descriptorType!=b.descriptorType)) {
+                    ASSERT_MSG(w.pImageInfo && Detail::DescriptorSourceOffset(source_images,w.pImageInfo,w.descriptorCount)!=
+                               Detail::InvalidDescriptorOffset,"Invalid source image descriptor range");
+                    const auto start=repair_images.size();
+                    for(u32 n=0;n<b.descriptorCount;++n) {
+                        if(n<w.descriptorCount) {
+                            ASSERT_MSG(w.descriptorType==b.descriptorType || !w.pImageInfo[n].imageView,
+                                       "Non-null image descriptor type mismatch");
+                            repair_images.push_back(w.pImageInfo[n]);
+                        } else repair_images.emplace_back(VK_NULL_HANDLE,VK_NULL_HANDLE,vk::ImageLayout::eGeneral);
+                    }
+                    w.pImageInfo=repair_images.data()+start;
+                } else {
+                    ASSERT_MSG(w.descriptorType==b.descriptorType && w.descriptorCount==b.descriptorCount,
+                               "Non-image descriptor contract mismatch");
+                }
+                w.dstBinding=b.binding;w.descriptorCount=b.descriptorCount;w.descriptorType=b.descriptorType;
+            }
+        }
+    }
+    auto& actual=repaired.empty()?set_writes:repaired;
     const auto desc_set = desc_heap.Commit(*desc_layout);
-    for (auto& set_write : set_writes) {
+    for (auto& set_write : actual) {
         set_write.dstSet = desc_set;
     }
-    instance.GetDevice().updateDescriptorSets(set_writes, {});
+    instance.GetDevice().updateDescriptorSets(actual, {});
     scheduler.Record([bind_point, layout, desc_set](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindDescriptorSets(bind_point, layout, 0, desc_set, {});
     });

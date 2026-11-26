@@ -24,6 +24,7 @@
 #include "common/elf_info.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/renderer_vulkan/tlou_qualcomm_dead_int_decls.h"
 
 namespace Vulkan {
 
@@ -43,6 +44,9 @@ bool LowerCapturedQualcommGraphics(std::span<const u32> src, std::vector<u32>& d
                                    bool vertex) {
     dst.clear();
     if (src.size()<5 || src[0]!=0x07230203) return false;
+    // New permutations of the same emitter layout are admitted only when
+    // every removed declaration is proved unused. Keep exact old ALU lowering.
+    if (QualcommDeadIntDecls::Strip(src,dst)) return true;
     u64 hash = 14695981039346656037ull;
     for (u32 word : src)
         for (unsigned shift = 0; shift < 32; shift += 8)
@@ -641,10 +645,15 @@ GraphicsPipeline::GraphicsPipeline(
                         // Prefer optimized code: the rewrite is algebraically
                         // exact and removes the wide ALU compiler failure mode.
                         compat.flags=pipeline_info.flags;
-                        auto retry=device.createGraphicsPipelineUnique(nullptr,compat);
+                        // The normalized shader has its own Vulkan driver key.
+                        // Save/restore only binaries matching this actual create
+                        // info, never alias the original rejected pipeline.
+                        auto retry=CreateCachedGraphicsPipeline(device,pipeline_cache,compat,key,
+                            instance.GetPipelineBinaryGlobalKey(),binary_directory);
                         if(retry.result!=vk::Result::eSuccess) {
                             compat.flags|=vk::PipelineCreateFlagBits::eDisableOptimization;
-                            retry=device.createGraphicsPipelineUnique(nullptr,compat);
+                            retry=CreateCachedGraphicsPipeline(device,pipeline_cache,compat,key,
+                                instance.GetPipelineBinaryGlobalKey(),binary_directory);
                         }
                         rr=retry.result;rp=std::move(retry.value);
                         if(rr==vk::Result::eSuccess) {
@@ -653,7 +662,7 @@ GraphicsPipeline::GraphicsPipeline(
                             // pipeline_info points to this stable array. The
                             // same exact variants must be used by square pass.
                             std::ranges::copy(stages_compat,shader_stages.begin());
-                            std::printf("Qualcomm graphics recovered: exact declaration/ALU lowering VS/PS key=%016llx\n",
+                            std::printf("Qualcomm graphics recovered: verified dead declarations or exact ALU lowering VS/PS key=%016llx\n",
                                 static_cast<unsigned long long>(key_hash));
                         }
                     }

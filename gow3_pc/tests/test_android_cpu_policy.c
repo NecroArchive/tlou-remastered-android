@@ -49,6 +49,16 @@ int main(void) {
     assert(!tlou_aot_split_prime_enabled()); // FEX mode remains untouched
     assert(!setenv("BB_AOT","/data/local/libtlouaot.so",1));
     assert(tlou_aot_split_prime_enabled());
+    assert(!unsetenv("TLOU_AOT_SPLIT_PRIME"));
+    assert(!setenv("TLOU_AOT_CORTEX_RENDER","1",1));
+    cpu_set_t cortex; CPU_ZERO(&cortex);
+    CPU_SET(4,&cortex);CPU_SET(5,&cortex);CPU_SET(6,&cortex);CPU_SET(7,&cortex);
+    assert(tlou_aot_split_prime_enabled());
+    assert(tlou_aot_split_prime_mask("GPU command",&cortex,&for_gpu));
+    assert(CPU_COUNT(&for_gpu)==4);
+    assert(!tlou_aot_split_prime_mask("NdJobWorkerThread",&cortex,&for_gpu));
+    assert(!tlou_aot_split_prime_mask("GPU command",&only_one,&for_gpu));
+    assert(!unsetenv("TLOU_AOT_CORTEX_RENDER"));
     assert(!unsetenv("BB_AOT"));assert(!unsetenv("TLOU_AOT_SPLIT_PRIME"));
     cpu_set_t set,roundtrip;char text[CPU_SETSIZE*6];
     CPU_ZERO(&set);CPU_SET(2,&set);CPU_SET(CPU_SETSIZE-1,&set);

@@ -3048,7 +3048,7 @@ void BufferCache::DownloadRangesAsync(std::span<const std::pair<VAddr, u64>> ran
         VAddr address;
         u64 size;
     };
-    std::vector<Copy> pending;
+    boost::container::small_vector<Copy, 16> pending;
     u64 total_size_bytes = 0;
     for (const auto& [address, size] : ranges) {
         if (size == 0) {
@@ -3134,7 +3134,7 @@ void BufferCache::DownloadRangesAsync(std::span<const std::pair<VAddr, u64>> ran
         }
     }
     if (!never_protect && (SafeReadbacks() || protect)) {
-        std::vector<VAddr> pages;
+        boost::container::small_vector<VAddr, 32> pages;
         const auto now = std::chrono::steady_clock::now();
         for (const auto& [address, size] : readback.pieces) {
             if (!protect && open_readback_ranges.Contains(address, size)) {

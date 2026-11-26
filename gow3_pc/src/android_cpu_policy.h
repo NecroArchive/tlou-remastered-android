@@ -75,15 +75,22 @@ static inline int tlou_cpu_policy_enabled(void) {
  * The toggle name is retained for saved preference/ABI compatibility; both
  * critical threads can migrate across allowed PRIME cores. Workers are never
  * narrowed by this option, and FEX is unchanged. */
+static inline int tlou_aot_cortex_render_enabled(void) {
+    const char *flag=getenv("TLOU_AOT_CORTEX_RENDER");
+    const char *aot=getenv("BB_AOT");
+    return aot && *aot && flag && !strcmp(flag,"1");
+}
 static inline int tlou_aot_split_prime_enabled(void) {
     const char *value=getenv("TLOU_AOT_SPLIT_PRIME");
     const char *aot=getenv("BB_AOT");
-    return aot && *aot && value && !strcmp(value,"1");
+    return (aot && *aot && value && !strcmp(value,"1")) || tlou_aot_cortex_render_enabled();
 }
 static inline int tlou_aot_split_prime_mask(const char *role,
                                             const cpu_set_t *fast,
                                             cpu_set_t *out) {
-    if (!role || !fast || !out || CPU_COUNT(fast)!=2) return 0;
+    if (!role || !fast || !out) return 0;
+    const int count=CPU_COUNT(fast);
+    if (tlou_aot_cortex_render_enabled() ? count<2 : count!=2) return 0;
     // TLOU log 2(5): draw pinned to CPU6 coincided with 56.9 -> 32.8
     // flips/s, while GPU command dropped to ~38% and recorder stayed ~63%.
     // Exclusive masks make CPU6 a serial bottleneck even when CPU7 is free.

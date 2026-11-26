@@ -449,6 +449,8 @@ public final class GameActivity extends Activity {
             // UBWC compatibility; do not silently disagree between probes.
             String eglRenderer=memoryRenderer;
             String displayBefore=env.get("GOW3_SCREEN_W")+"x"+env.get("GOW3_SCREEN_H");
+            String cortexStatus=TlouDevicePolicy.configureCortexPerformance(env,eglRenderer);
+            RunLog.write(this,"Cortex render performance="+cortexStatus);
             String compactStatus=TlouDevicePolicy.configureCompactPresent(env);
             RunLog.write(this,"Android 720p Vulkan presentation="+compactStatus+
                 " • output="+displayBefore+" -> "+

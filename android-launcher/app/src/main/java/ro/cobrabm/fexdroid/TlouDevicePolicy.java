@@ -74,6 +74,17 @@ final class TlouDevicePolicy {
         return "fixed-1280x720";
     }
 
+    /** A6xx/A7xx performance tier: never enable on Adreno 8xx/Oryon.
+     * This is separate from RAM and A6xx compatibility policies. */
+    static String configureCortexPerformance(Map<String,String> env, String renderer) {
+        String gpu=renderer==null?"":renderer.toLowerCase(Locale.ROOT);
+        if (!gpu.matches(".*adreno[^0-9]*[67][0-9]{2}([^0-9]|$).*") ||
+                "1".equals(env.get("TLOU_AOT_SPLIT_PRIME"))) return "unchanged";
+        env.put("TLOU_AOT_CORTEX_RENDER","1");
+        env.put("TLOU_WARMUP_LIMITED","1");
+        return "shared-fast-cores; bounded-warmup";
+    }
+
     static boolean isEightGiBClass(long totalMemBytes) {
         // Physical 8 GiB phones usually expose 7.2-8.0 GiB to Android.
         // Excludes 12/16 GiB devices of every GPU generation.

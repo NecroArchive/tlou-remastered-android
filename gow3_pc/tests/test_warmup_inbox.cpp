@@ -21,6 +21,18 @@ int main() {
     assert(WarmupThreadCount(1) == 1 && WarmupThreadCount(2) == 1 && WarmupThreadCount(4) == 1);
     assert(WarmupThreadCount(6) == 4 && WarmupThreadCount(8) == 6 && WarmupThreadCount(32) == 6);
 
+    assert(WarmupAdmission(2479, 858, 16) == 0);
+    assert(WarmupAdmission(16, 1, 16) == 1);
+    assert(WarmupAdmission(32, 32, 16) == 16);
+    assert(WarmupAdmission(1, 2, 16) == 16);
+    assert(WarmupAdmission(2479, 858, 0) == 32);
+    // A slow consumer cannot accumulate a backlog beyond the limit.
+    unsigned submitted = 0, completed = 0;
+    for (unsigned i = 0; i < 2505; ++i) {
+        submitted += WarmupAdmission(submitted, completed, 16);
+        assert(submitted - completed <= 16);
+        if (submitted > completed) ++completed;
+    }
     // Batches: never more than asked, oldest first, nothing lost across threads.
     WarmupInbox<int> inbox;
     std::vector<std::thread> producers;

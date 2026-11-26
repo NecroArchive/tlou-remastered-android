@@ -142,6 +142,22 @@ public final class TlouDevicePolicyTest {
         e=env();e.put("GOW3_SCREEN_W","1116");e.put("GOW3_SCREEN_H","2480");
         ok("display-smaller-than-720p".equals(TlouDevicePolicy.configureCompactPresent(e)),
             "portrait display unchanged");
+        for(String gpu:new String[]{"Adreno 650","Adreno (TM) 730","Adreno (TM) 750"}) {
+            e=env();
+            ok("shared-fast-cores; bounded-warmup".equals(
+                TlouDevicePolicy.configureCortexPerformance(e,gpu)), "Cortex tier "+gpu);
+            ok("1".equals(e.get("TLOU_AOT_CORTEX_RENDER")) &&
+                "1".equals(e.get("TLOU_WARMUP_LIMITED")), "Cortex flags");
+        }
+        for(String gpu:new String[]{"Adreno 830","Adreno 840","Mali-G720",""}) {
+            e=env();
+            ok("unchanged".equals(TlouDevicePolicy.configureCortexPerformance(e,gpu)),
+                "do not modify newer/unknown GPU "+gpu);
+            ok(e.isEmpty(),"unexpected profile flags");
+        }
+        e=env();e.put("TLOU_AOT_SPLIT_PRIME","1");
+        ok("unchanged".equals(TlouDevicePolicy.configureCortexPerformance(e,"Adreno 750")),
+            "preserve Oryon policy even if renderer is misreported");
         System.out.println("TlouDevicePolicyTest: PASS (A740 UBWC, 720p all SoCs, Oryon automatic, A6xx/A8xx memory, 8 GB RAM)");
     }
 }

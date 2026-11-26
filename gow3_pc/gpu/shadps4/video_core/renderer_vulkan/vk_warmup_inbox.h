@@ -21,6 +21,15 @@ inline unsigned WarmupThreadCount(unsigned cores) {
     return cores <= 4 ? 1u : std::min(cores - 2, 6u);
 }
 
+// Count queued AND running builds, without unsigned underflow. A zero budget
+// means retain the original batch behavior (non-mobile or opt-out).
+inline unsigned WarmupAdmission(unsigned submitted, unsigned completed,
+                                unsigned limit, unsigned batch = 32) {
+    if (!limit) return batch;
+    const unsigned pending = submitted > completed ? submitted - completed : 0;
+    return pending >= limit ? 0 : std::min(batch, limit - pending);
+}
+
 /// Items made on worker threads, handed to the GPU thread a few at a time so that a frame
 /// never pays for the whole cache at once.
 template <typename T>

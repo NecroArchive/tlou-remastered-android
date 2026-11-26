@@ -1367,7 +1367,7 @@ struct PipelineCache::BackgroundWarmup {
     u64 pump_ns = 0, pump_max_ns = 0, pump_gap_max_ns = 0;
     u32 batches = 0;
     bool finished = false;
-    u32 loaded = 0, threads = 0, readers = 1;
+    u32 loaded = 0, threads = 0, readers = 1, pending_limit = 0;
     std::chrono::steady_clock::time_point started, last_batch;
     std::chrono::steady_clock::time_point last_pump{}, last_report{};
     std::unique_ptr<WarmupPool> pool; ///< last: its jobs use the members above
@@ -1384,7 +1384,15 @@ bool PipelineCache::StartBackgroundWarmUp() {
     auto& warm = *background;
     warm.started = std::chrono::steady_clock::now();
     warm.threads = WarmupThreadCount(std::max(1u, std::thread::hardware_concurrency()));
+    // Older Adreno has concurrent driver compilation pressure during boot.
+    // Bound both worker concurrency and admitted (queued + running) builds.
+    if (const char* env = std::getenv("TLOU_WARMUP_LIMITED"); env && env[0] == '1') {
+        warm.threads = std::min(warm.threads, 2u);
+        warm.pending_limit = 16;
+    }
     warm.pool = std::make_unique<WarmupPool>(warm.threads, true);
+    std::printf("TLOU warm-up admission: threads=%u pending-limit=%u (0=legacy)\n",
+                warm.threads, warm.pending_limit);
     // The first job reads the whole store; with one thread the builds queue behind it.
     warm.pool->Push([this, &warm] {
         const auto reader_started = std::chrono::steady_clock::now();
@@ -1625,7 +1633,9 @@ void PipelineCache::PumpWarmUp() {
     Gow3Overlay::SetBackgroundLoading(done, std::max(warm.total.load(), done));
 
     static const std::array<Shader::RuntimeInfo, MaxShaderStages> no_runtime_infos{};
-    for (auto& entry : warm.read.Take(32)) {
+    const u32 budget = WarmupAdmission(warm.submitted.load(), warm.completed.load(),
+                                       warm.pending_limit);
+    for (auto& entry : warm.read.Take(budget)) {
         warm.read_queue_ns += ElapsedNs(entry.queued);
         if (entry.compute ? compute_pipelines.contains(entry.compute_key)
                           : graphics_pipelines.contains(entry.graphics_key)) {

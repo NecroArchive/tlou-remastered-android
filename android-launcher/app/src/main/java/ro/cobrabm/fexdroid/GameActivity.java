@@ -456,8 +456,9 @@ public final class GameActivity extends Activity {
                 env.put("TLOU_ADRENOTOOLS_HOOK_DIR",getApplicationInfo().nativeLibraryDir);
                 // Raw .so imports retain the original basename in driver_name.
                 String importedName=PortSettings.prefs(this).getString("driver_name","").toLowerCase(java.util.Locale.ROOT);
-                if(custom.getName().startsWith("driver-") &&
-                    (importedName.startsWith("vulkan.adr") || importedName.startsWith("vulkan.qcom")))
+                if(custom.getName().startsWith("vulkan.adr") || custom.getName().startsWith("vulkan.qcom") ||
+                    (custom.getName().startsWith("driver-") &&
+                    (importedName.startsWith("vulkan.adr") || importedName.startsWith("vulkan.qcom"))))
                     env.put("TLOU_EXTERNAL_QUALCOMM_DRIVER","1");
                 String searchPath=DriverArchive.librarySearchPath(new File(getFilesDir(),"drivers"),custom);
                 env.put("LD_LIBRARY_PATH",searchPath+":"+cpuLibraryPath);

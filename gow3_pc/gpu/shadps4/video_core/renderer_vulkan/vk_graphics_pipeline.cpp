@@ -9,6 +9,8 @@
 #include <fstream>
 #include <mutex>
 #include <cstdlib>
+#include <initializer_list>
+#include <vector>
 #include <boost/container/small_vector.hpp>
 
 #include "common/assert.h"
@@ -32,6 +34,81 @@ std::atomic<u64> g_gow3_pipeline_total_ns, g_gow3_pipeline_driver_ns;
 std::atomic<u32> g_gow3_pipelines_built;
 namespace {
 using Clock = std::chrono::steady_clock;
+
+// Exact captured TLOU graphics pair (guest VS c8987d69, PS b7ecfe4a).
+// Both captures from two rejected pipeline keys were byte-identical.
+// No shader hash alone is sufficient to authorize rewriting a permutation.
+// Preserve all outputs, descriptors, execution modes and render state.
+bool LowerCapturedQualcommGraphics(std::span<const u32> src, std::vector<u32>& dst,
+                                   bool vertex) {
+    dst.clear();
+    if (src.size() != (vertex ? 9320u : 1710u) || src[0] != 0x07230203 ||
+        src[3] != (vertex ? 1549u : 244u)) return false;
+    u64 hash = 14695981039346656037ull;
+    for (u32 word : src)
+        for (unsigned shift = 0; shift < 32; shift += 8)
+            hash = (hash ^ ((word >> shift) & 255u)) * 1099511628211ull;
+    if (hash != (vertex ? 0xc40a1aaec9bc5787ull : 0x0515614fcf5f28e0ull)) return false;
+    std::vector<u32> out(src.begin(), src.begin() + 5);
+    u32 next = src[3];
+    const u32 mask = next++, shift = next++;
+    auto emit = [&](u32 op, std::initializer_list<u32> a) {
+        out.push_back((u32(a.size()+1)<<16)|op);
+        out.insert(out.end(), a.begin(), a.end());
+    };
+    auto bin = [&](u32 op, u32 a, u32 b) {
+        const u32 id = next++;
+        emit(op, {10,id,a,b}); return id;
+    };
+    // Unsigned full 64-bit product represented as low/high uint32 words.
+    auto product = [&](u32 a,u32 b,u32 type,u32 result) {
+        const u32 a0=bin(199,a,mask),a1=bin(194,a,shift);
+        const u32 b0=bin(199,b,mask),b1=bin(194,b,shift);
+        const u32 p0=bin(132,a0,b0),p1=bin(132,a0,b1);
+        const u32 p2=bin(132,a1,b0),p3=bin(132,a1,b1);
+        const u32 c0=bin(194,p0,shift),c1=bin(199,p1,mask),c2=bin(199,p2,mask);
+        const u32 t=bin(128,bin(128,c0,c1),c2);
+        const u32 h=bin(128,bin(128,bin(128,p3,bin(194,p1,shift)),
+                                     bin(194,p2,shift)),bin(194,t,shift));
+        const u32 low=bin(132,a,b);
+        emit(80,{type,result,low,h});
+    };
+    unsigned extended=0,wide=0,converted=0;
+    for (size_t i=5;i<src.size();) {
+        const u32 n=src[i]>>16, op=src[i]&65535u;
+        if (!n || n>src.size()-i) return false;
+        auto a=src.subspan(i+1,n-1);
+        bool skip=false;
+        if(op==17 && a.size()==1) {
+            // Capabilities corresponding exclusively to the dead narrow/wide
+            // declarations in these exact two modules.
+            switch(a[0]) {case 11:case 22:case 39:case 4433:case 4448:skip=true;break;}
+        } else if ((op==21 || op==5) && !a.empty()) {
+            skip=(a[0]>=4 && a[0]<=7)||a[0]==11;
+        } else if (op==43 && a.size()>=3) {
+            skip=(a[1]>=26 && a[1]<=28)||a[1]==32||a[1]==33;
+        }
+        if(skip){i+=n;continue;}
+        if(vertex && op==54) {
+            emit(43,{10,mask,65535}); emit(43,{10,shift,16});
+        }
+        if(vertex && (op==113||op==132||op==128) && a.size()>=3 &&
+            a[0]==11 && a[1]>=447 && a[1]<=450) {
+            ++wide;i+=n;continue;
+        }
+        if(vertex && op==124 && a.size()==3 && a[0]==14 && a[1]==451 && a[2]==450) {
+            product(441,446,14,451);++converted;i+=n;continue;
+        }
+        if(vertex && op==151 && a.size()==4 && a[0]==42) {
+            product(a[2],a[3],a[0],a[1]);++extended;i+=n;continue;
+        }
+        out.insert(out.end(),src.begin()+i,src.begin()+i+n);i+=n;
+    }
+    if(vertex && (extended!=6 || wide!=4 || converted!=1))return false;
+    out[3]=vertex?next:src[3];
+    dst=std::move(out);
+    return true;
+}
 // gow3 19 Oct 2026 (#40, AMD Radeon RX 9070 XT): a graphics pipeline the driver refused
 // (ErrorInitializationFailed) stopped every game at start. It is now created again without the
 // pipeline cache and pipeline binaries; refused again, its draws are skipped and it is logged.
@@ -505,6 +582,8 @@ GraphicsPipeline::GraphicsPipeline(
     if (pipeline_result != vk::Result::eSuccess) {
         pipe = CreateRefusedAgain(device, pipeline_info, pipeline_result, key_hash, "graphics pipeline");
     }
+    // Keep replacement module handles alive through the optional square pass.
+    std::vector<vk::UniqueShaderModule> recovered_modules;
     // Retry the exact same rendering state without driver optimizer passes.
     // With a native subgroup of 64, explicit 64 is redundant for graphics.
     if (!pipe && pipeline_result==vk::Result::eErrorUnknown &&
@@ -519,6 +598,51 @@ GraphicsPipeline::GraphicsPipeline(
             compat.flags|=vk::PipelineCreateFlagBits::eDisableOptimization;
             auto retry=device.createGraphicsPipelineUnique(nullptr,compat);
             rr=retry.result;rp=std::move(retry.value);
+        }
+        if(rr!=vk::Result::eSuccess) {
+            constexpr auto vs=u32(Shader::SwStage::Vertex);
+            constexpr auto fs=u32(Shader::SwStage::Fragment);
+            if(infos[vs] && infos[fs] && infos[vs]->pgm_hash==0xc8987d69ull &&
+               infos[fs]->pgm_hash==0xb7ecfe4aull) {
+                std::vector<u32> vs_src,fs_src,vs_lower,fs_lower;
+                const auto get=[&](u32 stage,std::vector<u32>& words) {
+                    return CopyShaderModuleSource(device,modules[stage],words) ||
+                           LoadExactComputeSpirv(infos[stage]->pgm_hash,key.stage_hashes[stage],words);
+                };
+                if(get(vs,vs_src) && get(fs,fs_src) &&
+                   LowerCapturedQualcommGraphics(vs_src,vs_lower,true) &&
+                   LowerCapturedQualcommGraphics(fs_src,fs_lower,false)) {
+                    auto make=[&](const std::vector<u32>& words) {
+                        return device.createShaderModuleUnique(vk::ShaderModuleCreateInfo{
+                            .codeSize=words.size()*sizeof(u32),.pCode=words.data()});
+                    };
+                    auto v=make(vs_lower), f=make(fs_lower);
+                    if(v.result==vk::Result::eSuccess && f.result==vk::Result::eSuccess) {
+                        for(auto& stage:stages_compat) {
+                            if(stage.stage==vk::ShaderStageFlagBits::eVertex)stage.module=*v.value;
+                            if(stage.stage==vk::ShaderStageFlagBits::eFragment)stage.module=*f.value;
+                        }
+                        // Prefer optimized code: the rewrite is algebraically
+                        // exact and removes the wide ALU compiler failure mode.
+                        compat.flags=pipeline_info.flags;
+                        auto retry=device.createGraphicsPipelineUnique(nullptr,compat);
+                        if(retry.result!=vk::Result::eSuccess) {
+                            compat.flags|=vk::PipelineCreateFlagBits::eDisableOptimization;
+                            retry=device.createGraphicsPipelineUnique(nullptr,compat);
+                        }
+                        rr=retry.result;rp=std::move(retry.value);
+                        if(rr==vk::Result::eSuccess) {
+                            recovered_modules.push_back(std::move(v.value));
+                            recovered_modules.push_back(std::move(f.value));
+                            // pipeline_info points to this stable array. The
+                            // same exact variants must be used by square pass.
+                            std::ranges::copy(stages_compat,shader_stages.begin());
+                            std::printf("Qualcomm graphics recovered: exact 32-bit VS/PS key=%016llx\n",
+                                static_cast<unsigned long long>(key_hash));
+                        }
+                    }
+                }
+            }
         }
         if(rr==vk::Result::eSuccess) {
             pipe=std::move(rp);

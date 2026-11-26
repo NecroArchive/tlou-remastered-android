@@ -307,7 +307,8 @@ final class TouchControllerOverlay extends View {
         circle(c,"cross",39,"×",0xff88aaff); circle(c,"square",39,"□",0xffd6a0ce);
         drawStick(c,"leftstick"); drawStick(c,"rightstick");
         circle(c,"l3",29,"L3",0xffa0aec0); circle(c,"r3",29,"R3",0xffa0aec0);
-        rectangle(c,"shake",118,actionStyle?"↻":"AGITAR");
+        if (actionStyle) rectangle(c,"shake",118,"↻");
+        else rectangle(c,"shake",118,"AGITAR");
         if(actionStyle) {
             // Native Canvas symbols and game-specific action captions. The
             // underlying PlayStation buttons are unchanged, including alternate

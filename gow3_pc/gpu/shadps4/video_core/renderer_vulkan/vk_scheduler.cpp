@@ -308,11 +308,15 @@ void Scheduler::WaitGuestOrder(const GuestOrder& order) {
         return;
     }
     const auto start = std::chrono::steady_clock::now();
-    while (!met()) {
-        KickRecording(true);
-        Gow3Copy::WaitAsync();
-        std::this_thread::yield();
-    }
+    // The order is a captured pair of sequences, not an instruction to
+    // drain all uploads submitted after this fence. The same sequence-based
+    // primitives already used by WaitHostCopies/WaitDeferredSignals keep
+    // the necessary release/acquire ordering and help the pool when disabled.
+    KickRecording(true);
+    Detail::WaitForHostCopySequence(host_copies_done, order.host_copies);
+    Detail::WaitForDeferredSignal(*deferred_signals_done, order.deferred_signals,
+                                  Gow3Copy::Enabled(),
+                                  [] { Gow3Copy::WaitAsync(); });
     if (OrderWaitStatsEnabled()) {
         NoteOrderWait(3, start);
     }

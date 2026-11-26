@@ -214,6 +214,45 @@ Gow3VkGetInstanceProcAddr Load() {
         return LoadSystemVulkan();
     }
     void* lib = dlopen(driver, RTLD_NOW | RTLD_LOCAL);
+#ifdef __ANDROID__
+    // Some proprietary imports need an older mapper SONAME supplied by the
+    // device rather than the archive. Try only the actual exact vendor
+    // library if the dynamic linker reports that dependency missing. This
+    // does not substitute a different mapper ABI or invent a shim.
+    if (!lib && IsExternalVendorVulkan(driver)) {
+        const char* first_error = dlerror();
+        const bool mapper_missing = first_error &&
+            std::strstr(first_error, "vendor.qti.hardware.display.mapper@2.0.so");
+        std::fprintf(stderr, "Vulkan: initial imported driver load: %s\n",
+                     first_error ? first_error : "unknown dynamic-linker error");
+        if (mapper_missing) {
+            static const char* const candidates[] = {
+                "/vendor/lib64/vendor.qti.hardware.display.mapper@2.0.so",
+                "/odm/lib64/vendor.qti.hardware.display.mapper@2.0.so",
+                "/vendor/lib64/hw/vendor.qti.hardware.display.mapper@2.0.so",
+            };
+            for (const char* candidate : candidates) {
+                void* mapper = dlopen(candidate, RTLD_NOW | RTLD_LOCAL);
+                if (!mapper) {
+                    const char* reason = dlerror();
+                    std::fprintf(stderr, "Vulkan: exact mapper %s unavailable: %s\n",
+                                 candidate, reason ? reason : "unknown");
+                    continue;
+                }
+                lib = dlopen(driver, RTLD_NOW | RTLD_LOCAL);
+                if (lib) {
+                    std::fprintf(stderr,"Vulkan: imported driver loaded with exact vendor mapper %s\n",candidate);
+                    break; // keep dependency resident for process lifetime
+                }
+                const char* reason=dlerror();
+                std::fprintf(stderr,"Vulkan: imported driver still unavailable: %s\n",
+                             reason ? reason : "unknown");
+                dlclose(mapper);
+            }
+        }
+        if (!lib) lib = dlopen(driver, RTLD_NOW | RTLD_LOCAL);
+    }
+#endif
     if (!lib) {
         const char* error = dlerror();
         std::fprintf(stderr, "Vulkan: cannot load driver %s: %s\n", driver,

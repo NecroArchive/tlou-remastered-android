@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: TLOU action controls, native cheats and exact Qualcomm shader retries; release 89f0abff75762f8ab927f43a564c94af99a5f8c9.
+# Trigger 2026-11-26: preserve classic flashlight shake contract alongside action controls, cheats, Qualcomm fixes; release 74885db38dd1b6434a27f928784dd7836132858f.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

@@ -3,6 +3,8 @@
 
 #include <limits>
 #include <cstdio>
+#include <chrono>
+#include <cstdlib>
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
@@ -13,6 +15,46 @@ void DumpGpuCheckpoints(const Instance& instance);
 void DumpDeviceFault(const Instance& instance);
 
 constexpr u64 WAIT_TIMEOUT = 1000000000;
+namespace {
+bool QualcommTimeline(const Instance& instance) {
+#ifdef __ANDROID__
+    return instance.GetDriverID() == vk::DriverId::eQualcommProprietary;
+#else
+    (void)instance;
+    return false;
+#endif
+}
+// A successful timeline wait proves the requested value has completed.
+// Publish the lower bound monotonically, without a second driver round trip.
+void PublishCompleted(std::atomic<u64>& known, u64 completed) {
+    u64 old = known.load(std::memory_order_acquire);
+    while (old < completed &&
+           !known.compare_exchange_weak(old, completed, std::memory_order_release,
+                                        std::memory_order_relaxed)) {}
+}
+#ifdef __ANDROID__
+struct TimelineStats {
+    u64 queries{}, waits{}, query_ns{}, wait_ns{}, avoided{};
+    std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    void Report() {
+        if (((queries + waits + avoided) & 255u) != 0 ||
+            std::chrono::steady_clock::now() - last < std::chrono::seconds(5)) return;
+        std::printf("TLOU timeline driver (5 s, per-thread): queries=%llu query-ms=%.2f waits=%llu wait-ms=%.2f avoided=%llu\n",
+                    (unsigned long long)queries, query_ns / 1e6,
+                    (unsigned long long)waits, wait_ns / 1e6,
+                    (unsigned long long)avoided);
+        queries = waits = query_ns = wait_ns = avoided = 0;
+        last = std::chrono::steady_clock::now();
+    }
+};
+thread_local TimelineStats timeline_stats;
+bool TimelineProfile() {
+    static const bool enabled = [] {const char* e=std::getenv("TLOU_DRIVER_WAIT_PROFILE");return e && e[0]=='1';}();
+    return enabled;
+}
+#endif
+}
+
 
 Semaphore::Semaphore(const Instance& instance_) : instance{instance_} {
     const vk::StructureChain semaphore_chain = {
@@ -32,25 +74,39 @@ Semaphore::Semaphore(const Instance& instance_) : instance{instance_} {
 Semaphore::~Semaphore() = default;
 
 void Semaphore::Refresh() {
-    u64 this_tick{};
-    u64 counter{};
-    do {
-        this_tick = gpu_tick.load(std::memory_order_acquire);
-        auto [counter_result, cntr] = instance.GetDevice().getSemaphoreCounterValue(*semaphore);
-        // gow3 20 Oct 2026: a device loss is often first seen here (GitHub #67); report what
-        // the GPU was doing, as the waits and the submit do, before stopping.
-        if (counter_result == vk::Result::eErrorDeviceLost) {
-            DumpGpuCheckpoints(instance);
-            DumpDeviceFault(instance);
-        }
-        ASSERT_MSG(counter_result == vk::Result::eSuccess,
-                   "Failed to get master semaphore value: {}", vk::to_string(counter_result));
-        counter = cntr;
-        if (counter < this_tick) {
-            return;
-        }
-    } while (!gpu_tick.compare_exchange_weak(this_tick, counter, std::memory_order_release,
-                                             std::memory_order_relaxed));
+    // CurrentTick is the next recording value, not a submitted signal.
+    // If every value below it is already completed, querying the driver
+    // cannot improve the result at this point. Other ICDs retain their
+    // previous polling behavior.
+    if (QualcommTimeline(instance) && KnownGpuTick() >= CurrentTick() - 1) {
+#ifdef __ANDROID__
+        if (TimelineProfile()) { ++timeline_stats.avoided; timeline_stats.Report(); }
+#endif
+        return;
+    }
+#ifdef __ANDROID__
+    const bool profile = TimelineProfile();
+    const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
+    auto [counter_result, counter] = instance.GetDevice().getSemaphoreCounterValue(*semaphore);
+#ifdef __ANDROID__
+    if (profile) {
+        ++timeline_stats.queries;
+        timeline_stats.query_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        timeline_stats.Report();
+    }
+#endif
+    if (counter_result == vk::Result::eErrorDeviceLost) {
+        DumpGpuCheckpoints(instance);
+        DumpDeviceFault(instance);
+    }
+    ASSERT_MSG(counter_result == vk::Result::eSuccess,
+               "Failed to get master semaphore value: {}", vk::to_string(counter_result));
+    // Concurrent refreshers may already have published a newer value.
+    // CAS the maximum of the snapshots; never call the driver again merely
+    // because another CPU thread won the atomic race.
+    PublishCompleted(gpu_tick, counter);
 }
 
 bool Semaphore::WaitFor(u64 tick, u64 timeout_ns) {
@@ -62,10 +118,24 @@ bool Semaphore::WaitFor(u64 tick, u64 timeout_ns) {
         .pSemaphores = &semaphore.get(),
         .pValues = &tick,
     };
-    if (instance.GetDevice().waitSemaphores(&wait_info, timeout_ns) != vk::Result::eSuccess) {
+#ifdef __ANDROID__
+    const bool profile = TimelineProfile();
+    const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
+    const auto result = instance.GetDevice().waitSemaphores(&wait_info, timeout_ns);
+#ifdef __ANDROID__
+    if (profile) {
+        ++timeline_stats.waits;
+        timeline_stats.wait_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        timeline_stats.Report();
+    }
+#endif
+    if (result != vk::Result::eSuccess) {
         return false; // timeout (a lost device shows in the next plain Wait)
     }
-    Refresh();
+    if (QualcommTimeline(instance)) PublishCompleted(gpu_tick, tick);
+    else Refresh();
     return true;
 }
 
@@ -89,7 +159,19 @@ void Semaphore::Wait(u64 tick) {
 
     unsigned seconds=0;
     for (;;) {
+#ifdef __ANDROID__
+        const bool profile = TimelineProfile();
+        const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
         const auto result=instance.GetDevice().waitSemaphores(&wait_info, WAIT_TIMEOUT);
+#ifdef __ANDROID__
+        if (profile) {
+            ++timeline_stats.waits;
+            timeline_stats.wait_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - start).count();
+            timeline_stats.Report();
+        }
+#endif
         if (result==vk::Result::eSuccess) break;
         if (result==vk::Result::eErrorDeviceLost) {
             DumpGpuCheckpoints(instance);
@@ -104,7 +186,8 @@ void Semaphore::Wait(u64 tick) {
                          (unsigned long long)CurrentTick());
         }
     }
-    Refresh();
+    if (QualcommTimeline(instance)) PublishCompleted(gpu_tick, tick);
+    else Refresh();
 }
 
 } // namespace Vulkan

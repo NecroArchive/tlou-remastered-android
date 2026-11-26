@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: FPS HUD physical top edge and exact Qualcomm u32 partial-product shader; release 24a8bccfd67bc42c488146bfd14445cf433a1512.
+# Trigger 2026-11-26: exact Qualcomm unified LDS32 shader and A840 V39 on-demand startup; release 871bcbae21af82dfcdb7d7cb229315e94d6f0362.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

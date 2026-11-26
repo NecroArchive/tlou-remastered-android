@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: finer producer dependencies, exact host copy sequencing, safe parallel pipelines, structural Qualcomm legalization and dense EOP batch; release bbd7be3238f860d54722ce0f34de90bbb6a158b6.
+# Trigger 2026-11-26: fine producer windows, exact copy waits, safe parallel pipelines, structural Qualcomm recovery, dense EOP batch and complete diagnostic export; release 5e27dc78591d0dadb8e10bf23e33341505d5c24a.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "bbd7be3238f860d54722ce0f34de90bbb6a158b6"
+          test "$(git rev-parse HEAD)" = "5e27dc78591d0dadb8e10bf23e33341505d5c24a"
           bash -n android/bionic/package_aotnative_v020.sh
           grep -Fq 'TLOU Qualcomm: verified selected ICD mapped' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
           grep -Fq 'readback.tick >= watch_tick' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
@@ -100,6 +100,8 @@ jobs:
           /tmp/test_tlou_eop_batch_policy
           c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_qualcomm_dead_int_decls.cpp -o /tmp/test_tlou_qualcomm_dead_int_decls
           /tmp/test_tlou_qualcomm_dead_int_decls
+          grep -Fq 'i<12' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RunLog.java
+          grep -Fq 'RunLog.rotateShaderCaptures(this)' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
           grep -Fq 'gpu_write_window_shift = 16' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
           grep -Fq 'QualcommDeadIntDecls::Strip' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
           grep -Fq '!BackgroundWarmupActive()' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp

@@ -537,6 +537,10 @@ private:
     u64 RangeTick() const;
     /// gow3: scheduler tick of the newest large GPU write (over 64 KiB) into each 1 MiB window,
     /// and of the newest smaller one into each 4 KiB page: when the GPU data of a page is final.
+    // Qualcomm's fine-grained GPU write history avoids waiting for an
+    // unrelated write elsewhere in a 1 MiB window. All consumers use the
+    // same granularity. Keep desktop and Turnip tracking unchanged.
+    u32 gpu_write_window_shift = 20;
     std::unordered_map<u64, u64> gpu_write_window_tick;
     std::unordered_map<u64, u64> gpu_write_page_tick;
     /// gow3: the page's GPU bytes are final and in mapped memory: copied to guest memory, page

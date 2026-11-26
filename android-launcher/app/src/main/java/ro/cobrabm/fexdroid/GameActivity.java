@@ -471,10 +471,10 @@ public final class GameActivity extends Activity {
             // A750 + imported Gen8 V39 repeatedly lost the device DURING concurrent
             // warm-up, even with only 16 admitted jobs. Compile on demand on this pair.
             String selectedDriverName=PortSettings.prefs(this).getString("driver_name","").toLowerCase(java.util.Locale.ROOT);
-            if(eglRenderer!=null && eglRenderer.contains("750") &&
+            if(eglRenderer!=null && (eglRenderer.contains("750")||eglRenderer.contains("840")) &&
                 selectedDriverName.contains("turnip") && selectedDriverName.contains("v39")) {
                 env.put("TLOU_NO_BACKGROUND_WARMUP","1");
-                RunLog.write(this,"A750 V39: on-demand pipelines (avoid simultaneous driver warm-up and submit)");
+                RunLog.write(this,"A750/A840 V39: on-demand pipelines (avoid simultaneous driver warm-up and submit)");
             }
             String ubwcStatus=TlouDevicePolicy.configureUbwcHint(
                 env,ubwcMode,eglRenderer,env.get("GOW3_VULKAN_DRIVER"),

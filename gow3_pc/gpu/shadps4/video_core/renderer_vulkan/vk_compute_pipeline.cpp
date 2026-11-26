@@ -18,6 +18,7 @@
 #include "video_core/renderer_vulkan/vk_qualcomm_image1d_compat.h"
 #include "video_core/renderer_vulkan/vk_qualcomm_tlou_workgroup.h"
 #include "video_core/renderer_vulkan/vk_qualcomm_tlou_u32.h"
+#include "video_core/renderer_vulkan/vk_qualcomm_tlou_lds32.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
@@ -453,6 +454,24 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                 std::fprintf(stderr,"Qualcomm u32 partial-products variant rejected small=%d: %s\n",int(small),vk::to_string(pr).c_str());
             }
         }
+    }
+    if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled &&
+        info_.pgm_hash == 0x71859bbbull) {
+        std::vector<u32> original, lowered;
+        if (LoadExactComputeSpirv(info_.pgm_hash, compute_key.value, original) &&
+            QualcommTLOULds32::Lower(original,lowered)) {
+            const vk::ShaderModuleCreateInfo mi{
+                .codeSize=lowered.size()*sizeof(u32),.pCode=lowered.data()};
+            auto [mr,sm]=device.createShaderModuleUnique(mi);
+            if(mr==vk::Result::eSuccess) {
+                auto ci=compute_pipeline_ci;ci.stage.module=*sm;
+                auto [pr,p]=device.createComputePipelineUnique(vk::PipelineCache{},ci);
+                if(pr==vk::Result::eSuccess){
+                    pipe=std::move(p);pipeline_result=pr;
+                    std::fprintf(stderr,"Qualcomm compute recovered: unified LDS32, 69 wide accesses, 7 barriers, 3 atomics preserved\n");
+                }else std::fprintf(stderr,"Qualcomm unified LDS32 pipeline rejected: %s\n",vk::to_string(pr).c_str());
+            }else std::fprintf(stderr,"Qualcomm unified LDS32 module rejected: %s\n",vk::to_string(mr).c_str());
+        }else std::fprintf(stderr,"Qualcomm unified LDS32: capture mismatch, no modification\n");
     }
     if (pipeline_result != vk::Result::eSuccess) {
         if (qualcomm) CaptureQualcommComputeFailure(info_.pgm_hash, compute_key.value);

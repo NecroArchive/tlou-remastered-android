@@ -1007,27 +1007,12 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
                                vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlagBits::eByRegion,
                                {}, {}, pre_barriers);
-        vk::ImageBlit blit =
+        const vk::ImageBlit blit =
             MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height);
 #ifdef __ANDROID__
-        // Compensate the reported 180-degree orientation mismatch on the
-        // proprietary Qualcomm presentation path ONLY. Android Activity,
-        // touch layout, crop, guest render passes and Turnip remain unchanged.
-        // Use the actual VkPhysicalDevice driver, including a system fallback,
-        // not the name of the driver's ZIP in the launcher.
-        if (instance.GetDriverID()==vk::DriverId::eQualcommProprietary) {
-            const char* mode=std::getenv("TLOU_QUALCOMM_PRESENT_ROTATE");
-            const bool rotate=!(mode && mode[0]=='0');
-            if(rotate) {
-                std::swap(blit.srcOffsets[0].x,blit.srcOffsets[1].x);
-                std::swap(blit.srcOffsets[0].y,blit.srcOffsets[1].y);
-            }
-            static const bool logged=[rotate] {
-                std::printf("TLOU Qualcomm present transform: %s (image only)\n",rotate?"180 degrees":"identity");
-                return true;
-            }();
-            (void)logged;
-        }
+        // Android Activity is the sole orientation authority. Rotating only
+        // the guest image here inverts it relative to touch controls/HUD and
+        // defeats the landscape/reverse/sensor settings on the proprietary ICD.
         // The fitted frame is already surrounded by black bars INSIDE the
         // AHardwareBuffer. Send the actual scene rectangle with its FRAME.
         // On Android, Fill Screen crops this exact source rectangle before

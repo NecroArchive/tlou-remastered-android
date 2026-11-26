@@ -3069,6 +3069,66 @@ void BufferCache::DownloadRangesAsync(std::span<const std::pair<VAddr, u64>> ran
     if (total_size_bytes == 0) {
         return;
     }
+#ifdef __ANDROID__
+    // Every piece here is a snapshot of the SAME EOP fence: collecting repeated
+    // or adjacent ranges separately copies/protects identical guest bytes twice.
+    // Do not merge across a producer fence, across arenas, or with normal
+    // deferred readbacks. Preserve the exact union, guard and landing policy.
+    if (yield_to_cpu && (protect || never_protect) &&
+        instance.GetDriverID() == vk::DriverId::eQualcommProprietary &&
+        pending.size() > 1) {
+        const size_t old_count = pending.size();
+        const u64 old_bytes = total_size_bytes;
+        size_t written = 0;
+        for (size_t first = 0; first < old_count;) {
+            size_t last = first + 1;
+            while (last < old_count && pending[last].arena == pending[first].arena) ++last;
+            // Only within one contiguous run of the same arena: other source
+            // arenas keep their original relative order and ownership.
+            if (last - first > 1)
+                std::sort(pending.begin() + first, pending.begin() + last,
+                    [](const Copy& a, const Copy& b) { return a.address < b.address; });
+            const size_t run_start = written;
+            for (size_t i = first; i < last; ++i) {
+                const Copy item = pending[i];
+                if (written > run_start) {
+                    Copy& prev = pending[written - 1];
+                    const u64 prev_end = prev.address + prev.size;
+                    const u64 item_end = item.address + item.size;
+                    if (item.address <= prev_end) {
+                        prev.size = std::max(prev_end, item_end) - prev.address;
+                        continue;
+                    }
+                }
+                pending[written++] = item;
+            }
+            first = last;
+        }
+        pending.resize(written);
+        readback.pieces.clear();
+        readback.offsets.clear();
+        total_size_bytes = 0;
+        for (const auto& item : pending) {
+            readback.pieces.emplace_back(item.address, item.size);
+            readback.offsets.push_back(total_size_bytes);
+            total_size_bytes += (item.size + 63) & ~u64(63);
+        }
+        struct CompactStats { u64 calls{}, before{}, after{}, bytes{}; };
+        static thread_local CompactStats stats;
+        static thread_local auto report_time = std::chrono::steady_clock::now();
+        ++stats.calls; stats.before += old_count; stats.after += written;
+        stats.bytes += old_bytes - total_size_bytes;
+        if ((stats.calls & 255u) == 0 &&
+            std::chrono::steady_clock::now() - report_time >= std::chrono::seconds(5)) {
+            std::printf("TLOU Qualcomm EOP compact: calls=%llu pieces=%llu->%llu staging-saved=%llu bytes\n",
+                        (unsigned long long)stats.calls, (unsigned long long)stats.before,
+                        (unsigned long long)stats.after, (unsigned long long)stats.bytes);
+            std::fflush(stdout);
+            stats = {};
+            report_time = std::chrono::steady_clock::now();
+        }
+    }
+#endif
     for (const auto& [address, size] : readback.pieces) {
         readback.span_lo = std::min(readback.span_lo, address);
         readback.span_hi = std::max(readback.span_hi, address + size);

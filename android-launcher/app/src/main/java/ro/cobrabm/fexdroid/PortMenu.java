@@ -194,6 +194,9 @@ final class PortMenu {
                 break;
             case "video":
                 heading("VÍDEO E TELA");
+                if(inGame) choice("game_orientation_v3","Orientação da tela",
+                    new String[]{"Paisagem","Paisagem invertida","Automática (sensor)"},
+                    new String[]{"landscape","reverse","sensor"},"landscape");
                 choice("resolution","Resolução interna",
                     new String[]{"Original (1080p)","1280 × 720","960 × 540","640 × 360"},
                     new String[]{"original","720","540","360"},"original");

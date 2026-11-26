@@ -35,6 +35,7 @@
 #include "core/memory.h"
 #include "core/platform.h"
 #include "video_core/amdgpu/liverpool.h"
+#include "video_core/amdgpu/tlou_eop_batch_policy.h"
 #include "gow3_write_log.h"
 #include "video_core/amdgpu/pm4_cmds.h"
 #include "video_core/amdgpu/pm4_packet_checksum.h"
@@ -899,29 +900,25 @@ static void SubmitDeferredReadbacks(Vulkan::Rasterizer& rasterizer, bool compute
     }();
     if (batch) {
         struct State {
-            u64 tick{}, events{}, eop{}, releases{}, flushes{}, grouped{};
-            std::chrono::steady_clock::time_point first{}, report{};
+            AmdGpu::Detail::EopBatchPolicy policy;
+            u64 eop{}, releases{}, flushes{}, grouped{};
+            std::chrono::steady_clock::time_point report{};
         };
         static thread_local State state;
         const auto now=std::chrono::steady_clock::now();
         const u64 tick=rasterizer.GetRuntime().GetScheduler().CurrentTick();
-        if(state.tick!=tick || !state.events) {
-            state.tick=tick;
-            state.events=0;
-            state.first=now;
-        }
-        ++state.events;
+        const u64 now_ns=std::chrono::duration_cast<std::chrono::nanoseconds>(
+            now.time_since_epoch()).count();
         if(compute)++state.releases;else ++state.eop;
-        if(state.events>=8 || now-state.first>=std::chrono::microseconds(350)) {
+        if(state.policy.Observe(tick,now_ns)) {
             ++state.flushes;
-            state.events=0;
             rasterizer.Flush();
         } else {
             ++state.grouped;
         }
         if(state.report.time_since_epoch().count()==0)state.report=now;
         if(now-state.report>=std::chrono::seconds(5)) {
-            std::printf("TLOU EOP batching (5 s): graphics=%llu compute=%llu deferred-immediate-flush=%llu cap-flush=%llu\\n",
+            std::printf("TLOU EOP batching (5 s): graphics=%llu compute=%llu deferred-immediate-flush=%llu cap-flush=%llu\n",
                 (unsigned long long)state.eop,(unsigned long long)state.releases,
                 (unsigned long long)state.grouped,(unsigned long long)state.flushes);
             state.eop=state.releases=state.grouped=state.flushes=0;
@@ -946,8 +943,11 @@ static void FlushReadbacksBeforeYield(Vulkan::Rasterizer* rasterizer) {
 #ifdef __ANDROID__
     if(!rasterizer || !rasterizer->DrawPipeIdle())return;
     auto& cache=rasterizer->GetBufferCache();
-    if(cache.HasDeferredSignals() && cache.HasUnsubmittedReadback())
-        rasterizer->Flush();
+    if(!cache.HasDeferredSignals())return;
+    if(cache.HasUnsubmittedReadback())rasterizer->Flush();
+    // Completion may arrive while all PM4 queues are yielded; the regular
+    // throttled poll lands it without another forced wait.
+    cache.PollReadbacks();
 #else
     (void)rasterizer;
 #endif

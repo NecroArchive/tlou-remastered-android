@@ -652,7 +652,16 @@ bool Instance::CreateDevice() {
         return !(env && env[0] == '0');
     }();
     static constexpr std::array queue_priorities = {1.0f, 1.0f, 1.0f};
-    const u32 queue_count =
+    // Android's AHardwareBuffer presenter submits on the graphics queue
+    // already. Do not activate the desktop third-queue present lock or
+    // synchronous side-queue fetches solely because the proprietary ICD
+    // advertises additional logical graphics queues. Match the single-queue
+    // path used by Turnip when it exposes one graphics queue.
+    bool single_graphics_queue = false;
+#ifdef __ANDROID__
+    single_graphics_queue = GetDriverID() == vk::DriverId::eQualcommProprietary;
+#endif
+    const u32 queue_count = single_graphics_queue ? 1u :
         std::min<u32>(present_queue_wanted ? 3u : 2u,
                       family_properties[queue_family_index].queueCount);
     std::vector<vk::DeviceQueueCreateInfo> queue_infos = {vk::DeviceQueueCreateInfo{
@@ -973,6 +982,7 @@ bool Instance::CreateDevice() {
 #endif
     std::printf("GPU: presents on %s\n",
                 queue_count > 2 ? "their own queue (GOW3_PRESENT_QUEUE=0: the graphics queue)"
+                : single_graphics_queue ? "the graphics queue (Android Qualcomm single-queue policy)"
                 : present_queue_wanted ? "the graphics queue (the family has no third queue)"
                                        : "the graphics queue (GOW3_PRESENT_QUEUE=0)");
     // A graphics queue without SPARSE_BINDING is NOT a legal fallback for

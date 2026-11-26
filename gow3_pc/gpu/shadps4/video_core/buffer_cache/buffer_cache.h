@@ -550,7 +550,8 @@ private:
     bool CopyFinishedGpuPage(VAddr page, bool finished_only = false);
     /// gow3: copies GPU data of `pieces` to guest memory with a copy on the second queue that
     /// waits for main-queue tick `wait_tick` only. False: not possible.
-    bool SideQueueFetch(std::span<const std::pair<VAddr, u64>> pieces, u64 wait_tick);
+    bool SideQueueFetch(std::span<const std::pair<VAddr, u64>> pieces, u64 wait_tick,
+                        bool final_pages = false);
     /// gow3: a page whose GPU bytes are partly in flight: the finished ones are fetched (second
     /// queue) and stop being GPU data, so the rest can take the shared path.
     bool FetchOldGpuBytes(VAddr page);

@@ -95,7 +95,7 @@ public final class GameActivity extends Activity {
         logFile=RunLog.runtime(this);
         if(logFile.exists()){ File previous=new File(logDir,"runtime-previous.log"); previous.delete(); logFile.renameTo(previous); }
         try(FileOutputStream out=new FileOutputStream(logFile)){out.write("TLOU runtime: aguardando inicialização do processo\n".getBytes(StandardCharsets.UTF_8));}
-        String orientation=PortSettings.prefs(this).getString("game_orientation","landscape");
+        String orientation=PortSettings.prefs(this).getString("game_orientation_v2","reverse");
         int requested="reverse".equals(orientation)?ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE:
             "sensor".equals(orientation)?ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:
             ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;

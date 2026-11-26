@@ -14,16 +14,25 @@ namespace Vulkan::Detail {
 // Every release-store that advances completed must notify_all().
 inline void WaitForHostCopySequence(std::atomic<std::uint64_t>& completed,
                                     std::uint64_t target) {
-    unsigned short_spins = 0;
-    while (completed.load(std::memory_order_acquire) < target) {
-        if (short_spins++ < 4) {
-            std::this_thread::yield();
-        } else {
-            const auto observed = completed.load(std::memory_order_acquire);
-            if (observed < target) {
-                completed.wait(observed, std::memory_order_acquire);
-            }
-        }
+    // Android's scheduler yield is relatively costly on the measured
+    // 5-10 us handoffs. A bounded local poll gives the already-running
+    // recorder time to publish its sequence before we enter the kernel.
+    // Never spin indefinitely or weaken the acquire on guest-copy data.
+#if defined(__ANDROID__) && defined(__aarch64__)
+    for (unsigned i = 0; i < 128; ++i) {
+        if (completed.load(std::memory_order_acquire) >= target) return;
+        asm volatile("yield" ::: "memory");
+    }
+#else
+    for (unsigned i = 0; i < 4; ++i) {
+        if (completed.load(std::memory_order_acquire) >= target) return;
+        std::this_thread::yield();
+    }
+#endif
+    for (;;) {
+        const auto observed = completed.load(std::memory_order_acquire);
+        if (observed >= target) return;
+        completed.wait(observed, std::memory_order_acquire);
     }
 }
 

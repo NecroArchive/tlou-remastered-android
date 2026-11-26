@@ -63,6 +63,10 @@ final class RunLog {
             paths.add("tlou/qualcomm-compute-failed.txt");
             for(int i=0;i<8;i++)
                 paths.add("tlou/qualcomm-compute-failed-"+i+".spv");
+            for(int i=0;i<4;i++) {
+                paths.add("tlou/qualcomm-graphics-"+i+".txt");
+                for(int stage=0;stage<6;stage++)paths.add("tlou/qualcomm-graphics-"+i+"-"+stage+".spv");
+            }
             for(String path:paths) {
                 File file=new File(c.getFilesDir(),path);if(!file.isFile())continue;
                 zip.putNextEntry(new ZipEntry(path));

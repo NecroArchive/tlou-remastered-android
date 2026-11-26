@@ -95,7 +95,12 @@ public final class GameActivity extends Activity {
         logFile=RunLog.runtime(this);
         if(logFile.exists()){ File previous=new File(logDir,"runtime-previous.log"); previous.delete(); logFile.renameTo(previous); }
         try(FileOutputStream out=new FileOutputStream(logFile)){out.write("TLOU runtime: aguardando inicialização do processo\n".getBytes(StandardCharsets.UTF_8));}
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        String orientation=PortSettings.prefs(this).getString("game_orientation","landscape");
+        int requested="reverse".equals(orientation)?ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE:
+            "sensor".equals(orientation)?ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+        setRequestedOrientation(requested);
+        RunLog.write(this,"Orientação da tela: "+orientation);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         prepared=getIntent().getStringExtra("prepared_path");
         if (prepared==null) throw new IllegalStateException("Caminho preparado não informado");

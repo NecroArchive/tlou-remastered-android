@@ -285,6 +285,13 @@ public:
         return vk13_features.subgroupSizeControl && vk13_props.maxSubgroupSize >= 64;
     }
 
+    // VkPhysicalDeviceVulkan13Properties advertises required subgroup size per
+    // stage; maxSubgroupSize by itself does not authorize the stage pNext.
+    bool CanRequireSubgroup64(vk::ShaderStageFlagBits stage) const {
+        return IsSubgroupSize64Supported() && vk13_props.minSubgroupSize<=64 &&
+               bool(vk13_props.requiredSubgroupSizeStages & stage);
+    }
+
     /// Returns true when VK_KHR_workgroup_memory_explicit_layout is supported.
     bool IsWorkgroupMemoryExplicitLayoutSupported() const {
         return workgroup_memory_explicit_layout &&

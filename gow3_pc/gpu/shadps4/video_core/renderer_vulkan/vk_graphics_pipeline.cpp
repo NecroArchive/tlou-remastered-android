@@ -5,6 +5,10 @@
 #include <atomic>
 #include <chrono>
 #include <utility>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <cstdlib>
 #include <boost/container/small_vector.hpp>
 
 #include "common/assert.h"
@@ -317,7 +321,12 @@ GraphicsPipeline::GraphicsPipeline(
         .requiredSubgroupSize = 64,
     };
     for (auto& stage : shader_stages) {
-        stage.pNext = instance.IsSubgroupSize64Supported() ? &subgroup_size_ci : nullptr;
+        // Qualcomm may support subgroup size control in compute but not
+        // fragment/vertex. Do not submit invalid required-size stage chains.
+        const bool require64=instance.GetDriverID()==vk::DriverId::eQualcommProprietary
+            ? instance.CanRequireSubgroup64(stage.stage)
+            : instance.IsSubgroupSize64Supported();
+        stage.pNext = require64 ? &subgroup_size_ci : nullptr;
     }
 
     const auto depth_format =
@@ -495,6 +504,53 @@ GraphicsPipeline::GraphicsPipeline(
     const u64 key_hash = std::hash<GraphicsPipelineKey>{}(key);
     if (pipeline_result != vk::Result::eSuccess) {
         pipe = CreateRefusedAgain(device, pipeline_info, pipeline_result, key_hash, "graphics pipeline");
+    }
+    // Retry the exact same rendering state without driver optimizer passes.
+    // With a native subgroup of 64, explicit 64 is redundant for graphics.
+    if (!pipe && pipeline_result==vk::Result::eErrorUnknown &&
+        instance.GetDriverID()==vk::DriverId::eQualcommProprietary) {
+        auto compat=pipeline_info;
+        auto stages_compat=shader_stages;
+        if (instance.SubgroupSize()==64)
+            for (auto& stage:stages_compat)stage.pNext=nullptr;
+        compat.pStages=stages_compat.data();
+        auto [rr,rp]=device.createGraphicsPipelineUnique(nullptr,compat);
+        if(rr!=vk::Result::eSuccess) {
+            compat.flags|=vk::PipelineCreateFlagBits::eDisableOptimization;
+            auto retry=device.createGraphicsPipelineUnique(nullptr,compat);
+            rr=retry.result;rp=std::move(retry.value);
+        }
+        if(rr==vk::Result::eSuccess) {
+            pipe=std::move(rp);
+            std::printf("Qualcomm graphics recovered: unchanged shader/state key=%016llx\n",
+                static_cast<unsigned long long>(key_hash));
+        } else {
+            std::printf("Qualcomm graphics still refused: key=%016llx result=%s\n",
+                static_cast<unsigned long long>(key_hash),vk::to_string(rr).c_str());
+            // Capture exact rejected permutations, not arbitrary binaries with
+            // matching guest hashes. Keep capture small and serialize writers.
+            static std::mutex capture_mutex;
+            static unsigned captures=0;
+            std::scoped_lock lock{capture_mutex};
+            if(captures<4) if(const char* root=std::getenv("GOW3_GPU_USER_DIR");root&&*root) {
+                const unsigned slot=captures++;
+                const std::filesystem::path dir(root);
+                std::ofstream report(dir/("qualcomm-graphics-"+std::to_string(slot)+".txt"));
+                report<<"key="<<std::hex<<key_hash<<" native_subgroup="<<std::dec<<instance.SubgroupSize()
+                      <<" colors="<<unsigned(key.num_color_attachments)<<" depth="<<unsigned(key.z_format)
+                      <<" stencil="<<unsigned(key.stencil_format)<<"\n";
+                for(size_t i=0;i<MaxShaderStages;++i)if(infos[i]) {
+                    std::vector<u32> spv;
+                    const bool ok=LoadExactComputeSpirv(infos[i]->pgm_hash,key.stage_hashes[i],spv);
+                    report<<"stage="<<i<<" guest_hash="<<std::hex<<infos[i]->pgm_hash
+                          <<" permutation="<<key.stage_hashes[i]<<" bytes="<<std::dec<<(ok?spv.size()*4:0)<<"\n";
+                    if(ok) {
+                        std::ofstream out(dir/("qualcomm-graphics-"+std::to_string(slot)+"-"+std::to_string(i)+".spv"),std::ios::binary);
+                        out.write(reinterpret_cast<const char*>(spv.data()),std::streamsize(spv.size()*4));
+                    }
+                }
+            }
+        }
     }
     pipeline = std::move(pipe);
     if (!pipeline) {

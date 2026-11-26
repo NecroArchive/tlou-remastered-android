@@ -686,7 +686,8 @@ void PipelineCache::PublishGraphics(bool wait) {
         if (!build->stages_published) {
             build->pipeline->PublishStages(build->live_infos);
         }
-        RegisterPipelineData(key, std::hash<GraphicsPipelineKey>{}(key), build->data);
+        if (!build->pipeline->Failed())
+            RegisterPipelineData(key, std::hash<GraphicsPipelineKey>{}(key), build->data);
         graphics_pipelines.emplace(key, std::move(build->pipeline));
         ++num_new_pipelines;
         it = pending_graphics.erase(it);
@@ -711,7 +712,12 @@ void PipelineCache::FinishCompilations() {
 }
 
 bool PipelineCache::AsyncCompilation() const {
+    // Qualcomm first gameplay: 5603 draws were skipped in one sample while
+    // compiling asynchronously. One-shot effects cannot be replayed later.
+    // Keep background warm-up and the lossless deferred-draw path available;
+    // disallow only the path that explicitly drops a pending draw.
     return compiler && !sync_compile &&
+           instance.GetDriverID()!=vk::DriverId::eQualcommProprietary &&
            Gow3Settings::Get().async_shaders.load(std::memory_order_relaxed);
 }
 
@@ -938,7 +944,7 @@ void PipelineCache::RunPrecompile(PrecompiledCompute& job) {
     job.key.value = TlouComputeSplit::PermutationKey(job.hash, HashCombine(job.hash, 0));
     job.pipeline = std::make_unique<ComputePipeline>(
         instance, scheduler, desc_heap, profile, *worker_pipeline_caches[AsyncCompiler::WorkerIndex()],
-        job.key, job.program->info, module, job.sdata, false);
+        job.key, job.program->info, module, job.sdata, false, job.spirv);
     finish(true);
 }
 
@@ -1453,7 +1459,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
             sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
 
-        RegisterPipelineData(sel.graphics_key, pipeline_hash, sdata);
+        if (!it->second->Failed()) RegisterPipelineData(sel.graphics_key, pipeline_hash, sdata);
         ++num_new_pipelines;
 
         if (EmulatorSettings.IsShaderCollect()) {

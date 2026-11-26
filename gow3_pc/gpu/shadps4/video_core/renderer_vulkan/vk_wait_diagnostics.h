@@ -42,7 +42,8 @@ public:
     static bool Enabled() {
         static const bool enabled = [] {
             const char* value = std::getenv("GOW3_PERF_DIAG");
-            return value && value[0] == '1';
+            const char* comparison=std::getenv("TLOU_DRIVER_WAIT_PROFILE");
+            return (value && value[0] == '1') || (comparison && comparison[0]=='1');
         }();
         return enabled;
     }

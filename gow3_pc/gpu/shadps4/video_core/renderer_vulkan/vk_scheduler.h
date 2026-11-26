@@ -1038,6 +1038,10 @@ public:
 
 private:
     void AllocateWorkerCommandBuffers();
+    void InitDriverProbe();
+    void BeginDriverProbe();
+    void EndDriverProbe(u64 tick);
+    void CollectDriverProbe(u64 tick, u64 submit_ns);
 
     std::unique_ptr<RecordChunk> AcquireChunk();
 
@@ -1054,6 +1058,19 @@ private:
     DynamicState dynamic_state;
     SubmitFunc on_submit{};
     vk::CommandBuffer current_cmdbuf;
+    // Optional, bounded queue timestamp sampling. Never wait for a query,
+    // never end a render pass to measure it, and never reset an in-flight query.
+    static constexpr u32 DriverProbeSlots=32;
+    vk::UniqueQueryPool driver_probe_pool;
+    std::array<u64,DriverProbeSlots> driver_probe_ticks{};
+    u64 driver_probe_write{},driver_probe_read{},driver_probe_prev_tick{},driver_probe_prev_end{};
+    u64 driver_probe_mask=~u64{0};
+    double driver_probe_period=1.0;
+    bool driver_probe_enabled{},driver_probe_active{};
+    u64 driver_probe_submits{},driver_probe_submit_ns{},driver_probe_samples{};
+    u64 driver_probe_empty{},driver_probe_gap_count{},driver_probe_drops{};
+    double driver_probe_gpu_ns{},driver_probe_gap_ns{},driver_probe_overlap_ns{};
+    std::chrono::steady_clock::time_point driver_probe_report=std::chrono::steady_clock::now();
     std::condition_variable_any event_cv;
     struct PendingOp {
         Common::UniqueFunction<void> callback;

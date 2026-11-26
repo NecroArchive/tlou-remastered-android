@@ -106,6 +106,30 @@ class AllPatchVariants(unittest.TestCase):
         self.assertNotIn("w 115fb9c ",catalog)  # guest data
         self.assertNotIn("--no-dirty-check",catalog)
 
+    def test_optional_cheats_require_every_original_byte(self):
+        originals,segments=fixture()
+        for spans in patches.CHEATS_111.values():
+            for at,old,new in spans:
+                self.assertEqual(len(bytes.fromhex(old)),len(bytes.fromhex(new)))
+                originals[(at,len(bytes.fromhex(old)))]=bytes.fromhex(old)
+        read=lambda a,n: originals.get((a,n),b"")
+        catalog,names,_,_=mod.catalog_data(patches,read,segments,0x1200000,True)
+        self.assertEqual(len(names),13)
+        self.assertIn("cheat_ammo",names)
+        self.assertIn("cheat_flashlight",names)
+        self.assertIn("w 2c0f34 488d05d541330180783902",catalog)
+        self.assertIn("w 697b93 c5f210d190",catalog)
+        first=patches.CHEATS_111["cheat_ammo"][0]
+        originals[(first[0],len(bytes.fromhex(first[1])))]=b""
+        _,names,_,_=mod.catalog_data(patches,read,segments,0x1200000,True)
+        self.assertNotIn("cheat_ammo",names)
+        self.assertIn("cheat_flashlight",names)
+        digest=next(iter(patches.RESOLUTION_111_SELF_SHA256))
+        self.assertEqual(patches.selected_options({"cheat_ammo":True},"01.11",digest)["cheat_ammo"],
+                         patches.CHEATS_111["cheat_ammo"])
+        with self.assertRaises(ValueError):
+            patches.selected_options({"cheat_ammo":True},"01.00",patches.BASE_SELF_SHA256)
+
     def test_refuses_corrupt_or_unsupported_patch_bytes(self):
         originals,segments=fixture()
         corrupted=dict(originals)

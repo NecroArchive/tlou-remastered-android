@@ -453,6 +453,27 @@ def scene_aim_resolution_patches(resolution):
     return patches
 
 
+# Native 1.11 cheats: same-length instruction variants, never x86 code caves.
+# Infinite Ammo is the game's own Quick Menu boolean (0x15f5110 + 0x39),
+# corroborated by set-player-infinite-ammo at 0x5251d0. Preserve all original
+# follow-up predicates and branch destinations; no writes to the original SELF.
+# Flashlight: Celogamez_9.00 GoldHEN 1.11 reference, adapted at the subtraction
+# so both the stored charge and subsequent zero comparison remain consistent.
+CHEATS_111 = {
+    "cheat_ammo": [
+        (0x2C0F34, "488d05d541330180783900", "488d05d541330180783902"),
+        (0x4B0CC3, "488d054644140180783900", "488d054644140180783902"),
+        (0x556654, "488d05b5ea090180783900", "488d05b5ea090180783902"),
+        (0x556FEE, "488d051be1090180783900", "488d051be1090180783902"),
+        (0x55C871, "488d059888090180783900", "488d059888090180783902"),
+        (0x681B8E, "4c8d3d7b35f70041807f3900", "4c8d3d7b35f70041807f3902"),
+        (0x684BBB, "488d054e05f70080783900", "488d054e05f70080783902"),
+    ],
+    "cheat_flashlight": [
+        (0x697B93, "c5f25c5018", "c5f210d190"),
+    ],
+}
+
 def selected_options(options, profile="01.00", self_sha=None):
     options = options or {}
     if not isinstance(options, dict):
@@ -474,6 +495,13 @@ def selected_options(options, profile="01.00", self_sha=None):
             raise ValueError("Opção de patch inválida: " + name)
         if options.get(name, False):
             selected["disable-" + name] = changes
+    for name, changes in CHEATS_111.items():
+        if type(options.get(name, False)) is not bool:
+            raise ValueError("Opção de cheat inválida: " + name)
+        if options.get(name, False):
+            if profile != "01.11" or self_sha not in RESOLUTION_111_SELF_SHA256:
+                raise ValueError("Cheats exigem eboot 1.11 verificado")
+            selected[name] = changes
     return selected
 
 
@@ -504,7 +532,7 @@ def write_selected(source, prepared, options):
     profile = known_profile(digest)
     if profile is None:
         if (options or {}).get("resolution", "original") != "original" or any(
-            (options or {}).get(name, False) for name in PERFORMANCE_EFFECTS
+            (options or {}).get(name, False) for name in (*PERFORMANCE_EFFECTS, *CHEATS_111)
         ):
             raise ValueError("Eboot não reconhecido: patches exigem SHA-256 validado")
         # A prepared directory may be manually reused after replacing the game:

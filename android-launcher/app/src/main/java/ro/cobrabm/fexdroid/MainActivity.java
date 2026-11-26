@@ -274,6 +274,15 @@ public final class MainActivity extends Activity {
             toggleSetting(box,"subsurface","Desativar subsurface",true);
             toggleSetting(box,"omni_light_shadows","Desativar sombras de luzes omni (1.11)",false);
             toggleSetting(box,"spot_light_shadows","Desativar sombras de holofotes (1.11)",false);
+            LinearLayout cheats=card(root,"CHEATS (1.11)");
+            toggleSetting(cheats,"cheat_ammo","Munição infinita",false);
+            toggleSetting(cheats,"cheat_flashlight","Lanterna infinita",false);
+            cheats.addView(text("Somente campanha. Pode exigir recompilar a CPU ARM64 uma vez. Reinicie o jogo para aplicar.",12,MUTED));
+            add(cheats,"Desativar cheats",false,()->{
+                SharedPreferences.Editor edit=prefs.edit();
+                for(String key:PortSettings.CHEATS)edit.putBoolean(key,false);
+                edit.apply();buildHome();
+            });
             add(box,"Restaurar patches e resolução",false,()->{
                 SharedPreferences.Editor edit=prefs.edit().putString("resolution","original");
                 for(String key:PortSettings.EFFECTS)edit.putBoolean(key,false);
@@ -325,6 +334,9 @@ public final class MainActivity extends Activity {
             choice(controls,"control_color","Cor dos controles",
                 new String[]{"Verde oliva","Âmbar","Branco","Vermelho","Azul"},
                 new String[]{"olive","amber","white","red","blue"},"olive");
+            choice(controls,"control_style","Estilo dos controles",
+                new String[]{"Ação TLOU","PlayStation clássico"},
+                new String[]{"action","classic"},"action");
             controlSizeSetting(controls);
             controls.addView(text("Para mover botões, abra o menu durante o jogo.",12,MUTED));
             toggleSetting(app,"launch_direct","Entrar direto no jogo",false);

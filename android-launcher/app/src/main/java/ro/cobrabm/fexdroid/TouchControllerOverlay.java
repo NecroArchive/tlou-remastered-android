@@ -27,6 +27,15 @@ final class TouchControllerOverlay extends View {
         {1120,405},{1190,475},{1120,545},{1050,475},
         {320,612},{420,614},{860,614},{960,612},{640,636}
     };
+    // Mobile action geometry derived from the approved Uncharted layout.
+    // Classic positions remain in their existing preference namespace.
+    private static final float[][] ACTION_DEFAULT={
+        {275,105},{115,105},{570,105},{710,105},{1005,105},{1160,105},
+        {145,235},{85,295},{205,295},{145,355},
+        {1120,280},{1190,435},{1050,565},{980,398},
+        {145,570},{318,590},{730,590},{850,570},{640,655}
+    };
+    private final boolean actionStyle;
     private final PadBridge pad;
     private final SharedPreferences preferences;
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -42,18 +51,20 @@ final class TouchControllerOverlay extends View {
 
     TouchControllerOverlay(Context context,PadBridge pad,boolean mouseEnabled) {
         super(context); this.pad=pad; this.mouseEnabled=mouseEnabled;
-        preferences=context.getSharedPreferences("gow3",Context.MODE_PRIVATE);
+        actionStyle=!"classic".equals(PortSettings.prefs(context).getString("control_style","action"));
+        preferences=context.getSharedPreferences(actionStyle?"tlou_action_touch":"gow3",Context.MODE_PRIVATE);
+        float[][] defaults=actionStyle?ACTION_DEFAULT:DEFAULT;
         for (int i=0;i<NAMES.length;i++) {
             String name=NAMES[i];
-            centers.put(name,new PointF(preferences.getFloat("overlay_x_"+name,DEFAULT[i][0]),
-                                        preferences.getFloat("overlay_y_"+name,DEFAULT[i][1])));
+            centers.put(name,new PointF(preferences.getFloat("overlay_x_"+name,defaults[i][0]),
+                                        preferences.getFloat("overlay_y_"+name,defaults[i][1])));
         }
         setContentDescription("On-screen PlayStation controller");
     }
     private PointF center(String name) { return centers.get(name); }
     // Scale the visuals and touch targets without changing saved button positions.
     private float controlSize() {
-        int percent=PortSettings.prefs(getContext()).getInt("control_size",120);
+        int percent=PortSettings.prefs(getContext()).getInt("control_size",actionStyle?100:120);
         return Math.max(0.75f,Math.min(1.60f,percent/100f));
     }
     // The 1280x720 layout drawn at one scale in the centred 16:9 area, as the game (MainActivity):
@@ -61,7 +72,17 @@ final class TouchControllerOverlay extends View {
     private float scale() { return Math.max(1e-3f,Math.min(getWidth()/1280f,getHeight()/720f)); }
     private float offsetX() { return (getWidth()-1280f*scale())/2f; }
     private float offsetY() { return (getHeight()-720f*scale())/2f; }
-    private float layoutX(MotionEvent e,int index) { return (e.getX(index)-offsetX())/scale(); }
+    private float horizontalScale() { return actionStyle?Math.max(1f,getWidth()/(1280f*scale())):1f; }
+    private float displayX(float x) { return 640f+(x-640f)*horizontalScale(); }
+    private float layoutX(MotionEvent e,int index) {
+        return 640f+((e.getX(index)-offsetX())/scale()-640f)/horizontalScale();
+    }
+    private PointF visibleCenter(String name) {
+        PointF p=center(name); return new PointF(displayX(p.x),p.y);
+    }
+    private float visibleDistance(float x,float y,PointF p) {
+        return (float)Math.hypot((x-p.x)*horizontalScale(),y-p.y);
+    }
     private float layoutY(MotionEvent e,int index) { return (e.getY(index)-offsetY())/scale(); }
     private static float distance(float x,float y,PointF p) { return (float)Math.hypot(x-p.x,y-p.y); }
     private static boolean stick(String name) { return name.equals("leftstick") || name.equals("rightstick"); }
@@ -77,17 +98,17 @@ final class TouchControllerOverlay extends View {
     private String hit(float x,float y) {
         PointF dpad=dpadCenter();
         float size=controlSize();
-        if (!editing && distance(x,y,dpad)<112*size && distance(center("up").x,center("up").y,dpad)<115 &&
+        if (!editing && visibleDistance(x,y,dpad)<112*size && distance(center("up").x,center("up").y,dpad)<115 &&
             distance(center("left").x,center("left").y,dpad)<115 &&
             distance(center("right").x,center("right").y,dpad)<115 &&
             distance(center("down").x,center("down").y,dpad)<115) return "dpad";
         String winner=null; float best=Float.MAX_VALUE;
         for (String name:NAMES) {
             PointF p=center(name);
-            float dx=Math.abs(x-p.x),dy=Math.abs(y-p.y);
+            float dx=Math.abs(x-p.x)*horizontalScale(),dy=Math.abs(y-p.y);
             boolean inside=rectangle(name) ? dx<(name.equals("touchpad") ? 72 : 62)*size && dy<38*size
-                    : distance(x,y,p)<(stick(name) ? 70 : name.equals("l3") || name.equals("r3") ? 39 : 48)*size;
-            if (inside && distance(x,y,p)<best) { best=distance(x,y,p); winner=name; }
+                    : visibleDistance(x,y,p)<(stick(name) ? (actionStyle?82:70) : name.equals("l3") || name.equals("r3") ? 39 : 48)*size;
+            if (inside && visibleDistance(x,y,p)<best) { best=visibleDistance(x,y,p); winner=name; }
         }
         return winner;
     }
@@ -104,18 +125,25 @@ final class TouchControllerOverlay extends View {
             if (p==null) continue;
             if (control.equals("dpad")) {
                 PointF c=dpadCenter();
-                if (p.x<c.x-22*size) pressed.add("left");
-                if (p.x>c.x+22*size) pressed.add("right");
-                if (p.y<c.y-22*size) pressed.add("up");
-                if (p.y>c.y+22*size) pressed.add("down");
+                float dx=(p.x-c.x)*horizontalScale(),dy=p.y-c.y;
+                if(actionStyle) {
+                    // TLOU weapon/item selection is cardinal, not a diagonal combo.
+                    if(Math.max(Math.abs(dx),Math.abs(dy))>12*size)
+                        pressed.add(Math.abs(dx)>Math.abs(dy)?(dx<0?"left":"right"):(dy<0?"up":"down"));
+                } else {
+                    if(dx<-22*size)pressed.add("left");if(dx>22*size)pressed.add("right");
+                    if(dy<-22*size)pressed.add("up");if(dy>22*size)pressed.add("down");
+                }
             } else if (control.equals("leftstick")) {
                 left=true; PointF c=center(control);
-                lx=axis(Math.max(-1f,Math.min(1f,(p.x-c.x)/(56f*size))));
-                ly=axis(Math.max(-1f,Math.min(1f,(p.y-c.y)/(56f*size))));
+                float dx=(p.x-c.x)*horizontalScale(),dy=p.y-c.y;
+                float range=Math.max(56f*size,(float)Math.hypot(dx,dy));
+                if(Math.hypot(dx,dy)>4*size){lx=axis(dx/range);ly=axis(dy/range);}
             } else if (control.equals("rightstick")) {
                 right=true; PointF c=center(control);
-                rx=axis(Math.max(-1f,Math.min(1f,(p.x-c.x)/(56f*size))));
-                ry=axis(Math.max(-1f,Math.min(1f,(p.y-c.y)/(56f*size))));
+                float dx=(p.x-c.x)*horizontalScale(),dy=p.y-c.y;
+                float range=Math.max(56f*size,(float)Math.hypot(dx,dy));
+                if(Math.hypot(dx,dy)>4*size){rx=axis(dx/range);ry=axis(dy/range);}
             } else if (control.equals("l2")) { l2=255; pressed.add(control); }
             else if (control.equals("r2")) { r2=255; pressed.add(control); }
             else if (control.equals("touchpad")) pressed.add("touchpad_right"); /* 右侧点击:打开游戏暂停菜单,进而可进存档列表 */
@@ -137,8 +165,9 @@ final class TouchControllerOverlay extends View {
     }
     void resetLayout() {
         SharedPreferences.Editor editor=preferences.edit();
+        float[][] defaults=actionStyle?ACTION_DEFAULT:DEFAULT;
         for (int i=0;i<NAMES.length;i++) {
-            String name=NAMES[i]; centers.get(name).set(DEFAULT[i][0],DEFAULT[i][1]);
+            String name=NAMES[i]; centers.get(name).set(defaults[i][0],defaults[i][1]);
             editor.remove("overlay_x_"+name).remove("overlay_y_"+name);
         }
         editor.apply(); release(); invalidate();
@@ -150,13 +179,13 @@ final class TouchControllerOverlay extends View {
             if (action==MotionEvent.ACTION_CANCEL) { editPointer=-1; dragged=null; return true; }
             if (action==MotionEvent.ACTION_DOWN) {
                 float x=layoutX(e,at),y=layoutY(e,at);
-                if (x>548 && x<732 && y<72) { finishEdit(); return true; }
+                if (displayX(x)>548 && displayX(x)<732 && y<72) { finishEdit(); return true; }
                 dragged=hit(x,y); editPointer=dragged==null ? -1 : id;
             } else if (action==MotionEvent.ACTION_MOVE && editPointer>=0 && dragged!=null) {
                 int index=e.findPointerIndex(editPointer);
                 float barX=offsetX()/scale(),barY=offsetY()/scale();
                 if (index>=0) center(dragged).set(
-                    Math.max(36-barX,Math.min(1244+barX,layoutX(e,index))),
+                    Math.max(actionStyle?80:36-barX,Math.min(actionStyle?1200:1244+barX,layoutX(e,index))),
                     Math.max(36-barY,Math.min(684+barY,layoutY(e,index))));
                 invalidate();
             } else if ((action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_POINTER_UP)
@@ -205,7 +234,7 @@ final class TouchControllerOverlay extends View {
     }
 
     private void circle(Canvas c,String name,float r,String label,int accent) {
-        PointF p=center(name);
+        PointF p=visibleCenter(name);
         float size=controlSize();
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(overlayFill(name.equals(dragged),pressed.contains(name)));
@@ -213,11 +242,11 @@ final class TouchControllerOverlay extends View {
         paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2); paint.setColor(themeColor());
         c.drawCircle(p.x,p.y,r*size,paint);
         paint.setStyle(Paint.Style.FILL); paint.setTypeface(Typeface.DEFAULT_BOLD);
-        paint.setTextSize((label.length()>2 ? 19 : 33)*size); paint.setTextAlign(Paint.Align.CENTER);
+        paint.setColor(themeColor()); paint.setTextSize((label.length()>2 ? 19 : 33)*size); paint.setTextAlign(Paint.Align.CENTER);
         c.drawText(label,p.x,p.y-(paint.ascent()+paint.descent())/2,paint);
     }
     private void rectangle(Canvas c,String name,float width,String label) {
-        PointF p=center(name);
+        PointF p=visibleCenter(name);
         float size=controlSize();
         float halfWidth=width*size/2f,halfHeight=25f*size,corner=14f*size;
         // The touchpad button presses "touchpad_right" (right-side click, opens the pause menu),
@@ -234,7 +263,7 @@ final class TouchControllerOverlay extends View {
         c.drawText(label,p.x,p.y-(paint.ascent()+paint.descent())/2,paint);
     }
     private void drawStick(Canvas c,String name) {
-        PointF center=center(name);
+        PointF center=visibleCenter(name);
         float size=controlSize();
         paint.setStyle(Paint.Style.FILL); paint.setColor(overlayFill(name.equals(dragged),false));
         c.drawCircle(center.x,center.y,57*size,paint);
@@ -245,7 +274,7 @@ final class TouchControllerOverlay extends View {
             if (name.equals(controls.valueAt(i))) {
                 PointF p=positions.get(controls.keyAt(i));
                 if (p!=null) {
-                    knobX=center.x+Math.max(-27*size,Math.min(27*size,p.x-center.x));
+                    knobX=center.x+Math.max(-27*size,Math.min(27*size,displayX(p.x)-center.x));
                     knobY=center.y+Math.max(-27*size,Math.min(27*size,p.y-center.y));
                 }
                 break;
@@ -258,9 +287,16 @@ final class TouchControllerOverlay extends View {
         c.drawText(name.equals("leftstick") ? "L" : "R",knobX,
                    knobY-(paint.ascent()+paint.descent())/2,paint);
     }
+    private void caption(Canvas c,String name,String pt,String en) {
+        PointF p=visibleCenter(name);
+        paint.setStyle(Paint.Style.FILL);paint.setColor(themeColor());
+        paint.setTypeface(Typeface.DEFAULT_BOLD);paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTextSize(13*controlSize());
+        c.drawText(TlouLanguage.t(getContext(),pt),p.x,p.y+(rectangle(name)?39:54)*controlSize(),paint);
+    }
     @Override protected void onDraw(Canvas c) {
         super.onDraw(c); refreshTheme(); c.save(); c.translate(offsetX(),offsetY()); c.scale(scale(),scale());
-        rectangle(c,"l2",108,"L2"); rectangle(c,"l1",108,"L1");
+        rectangle(c,"l2",108,actionStyle?"L2": "L2"); rectangle(c,"l1",108,"L1");
         rectangle(c,"r1",108,"R1"); rectangle(c,"r2",108,"R2");
         rectangle(c,"touchpad",126,"TOUCH"); rectangle(c,"options",108,"OPTIONS");
         circle(c,"up",39,"▲",0xffc6ad76); circle(c,"left",39,"◀",0xffc6ad76);
@@ -269,7 +305,17 @@ final class TouchControllerOverlay extends View {
         circle(c,"cross",39,"×",0xff88aaff); circle(c,"square",39,"□",0xffd6a0ce);
         drawStick(c,"leftstick"); drawStick(c,"rightstick");
         circle(c,"l3",29,"L3",0xffa0aec0); circle(c,"r3",29,"R3",0xffa0aec0);
-        rectangle(c,"shake",118,"AGITAR");
+        rectangle(c,"shake",118,actionStyle?"↻":"AGITAR");
+        if(actionStyle) {
+            // Native Canvas symbols and game-specific action captions. The
+            // underlying PlayStation buttons are unchanged, including alternate
+            // shoulder mappings selected in the original game.
+            caption(c,"l1","CORRER","SPRINT"); caption(c,"l2","MIRAR","AIM");
+            caption(c,"r1","ESCUTA","LISTEN"); caption(c,"r2","ATIRAR","FIRE");
+            caption(c,"triangle","INTERAGIR","INTERACT"); caption(c,"square","CORPO A CORPO","MELEE");
+            caption(c,"circle","AGACHAR","CROUCH"); caption(c,"cross","SUBIR","CLIMB");
+            caption(c,"shake","LANTERNA","FLASHLIGHT");
+        }
         if (editing) {
             paint.setStyle(Paint.Style.FILL); paint.setColor(0xcc15171d);
             c.drawRoundRect(548,9,732,62,13,13,paint);

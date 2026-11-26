@@ -25,6 +25,7 @@ final class PadBridge {
     // physical buttons are released, preventing accidental flashlight toggles.
     private boolean physicalShakeLatch;
     private boolean queued;
+    private String lastPublished;
 
     PadBridge(File state) { this.state=state; reset(); }
 
@@ -129,6 +130,7 @@ final class PadBridge {
     }
 
     void reset() {
+        lastPublished=null;
         keys.clear(); physicalShakeLatch=false;
         lx=ly=rx=ry=128; l2=r2=hatX=hatY=0;
         virtualKeys.clear(); virtualLx=virtualLy=virtualRx=virtualRy=128;
@@ -164,13 +166,16 @@ final class PadBridge {
             .append(" rx=").append(virtualRightActive ? virtualRx : rx)
             .append(" ry=").append(virtualRightActive ? virtualRy : ry)
             .append(" l2=").append(leftTrigger).append(" r2=").append(rightTrigger).append('\n');
+        String next=text.toString();
+        if(next.equals(lastPublished) && state.isFile())return;
         File temp=new File(state.getPath()+".tmp");
         try {
             state.getParentFile().mkdirs();
             try (FileOutputStream out=new FileOutputStream(temp)) {
-                out.write(text.toString().getBytes(StandardCharsets.US_ASCII));
+                out.write(next.getBytes(StandardCharsets.US_ASCII));
             }
             if (!temp.renameTo(state)) throw new java.io.IOException("Cannot publish controller state");
+            lastPublished=next;
         } catch (java.io.IOException ex) { android.util.Log.e("God of War III", "Controller bridge",ex); }
     }
 }

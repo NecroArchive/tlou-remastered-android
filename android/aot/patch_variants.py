@@ -67,7 +67,7 @@ def boot_layout(boot: Path):
         return boot.stat().st_size - size, size, segments
 
 
-def catalog_data(patches, boot_bytes, segments, image_size):
+def catalog_data(patches, boot_bytes, segments, image_size, include_cheats=False):
     """Emit only code variants; always validate *all* optional byte guards."""
     lines = [
         "# TLOU 1.11: all verified effects and resolution variants.",
@@ -83,6 +83,13 @@ def catalog_data(patches, boot_bytes, segments, image_size):
               for res in RESOLUTIONS]
     groups += [("effect_" + effect, "",
                 patches.PERFORMANCE_EFFECTS_111[effect]) for effect in EFFECTS]
+    if include_cheats:
+        for name, spans in patches.CHEATS_111.items():
+            if all(boot_bytes(at, len(bytes.fromhex(old))) == bytes.fromhex(old)
+                   for at, old, _ in spans):
+                groups.append((name, "", spans))
+            else:
+                print("Cheat omitted: incompatible executable guard " + name, flush=True)
     for group, exclusive, spans in groups:
         lines.append("group " + group + (" excl=" + exclusive if exclusive else ""))
         group_names.append(group)
@@ -120,7 +127,7 @@ def catalog_data(patches, boot_bytes, segments, image_size):
             code_count += 1
         if not group_code:
             raise ValueError("Patch option has no compiled code variant: " + group)
-    if len(group_names) != len(EFFECTS) + len(RESOLUTIONS):
+    if len(group_names) != len(groups):
         raise ValueError("Incomplete TLOU patch variant catalog")
     return "\n".join(lines) + "\n", group_names, code_count, data_count
 
@@ -232,7 +239,7 @@ def create_catalog(baseline_boot: Path, eboot_digest: str, destination: Path):
         def read(offset, length):
             f.seek(start + offset)
             return f.read(length)
-        catalog, groups, codes, data = catalog_data(patches, read, segments, image_size)
+        catalog, groups, codes, data = catalog_data(patches, read, segments, image_size, include_cheats=True)
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_suffix(".tmp")
     tmp.write_text(catalog, encoding="ascii")

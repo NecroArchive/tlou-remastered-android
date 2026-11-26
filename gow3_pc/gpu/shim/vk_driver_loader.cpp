@@ -231,6 +231,10 @@ Gow3VkGetInstanceProcAddr Load() {
         uint32_t version = 5;
         if (negotiate(&version) != 0) {
             std::fprintf(stderr, "Vulkan: driver %s rejected ICD interface version 5\n", driver);
+            if (IsExternalVendorVulkan(driver)) {
+                std::fprintf(stderr,"Vulkan: proprietary ICD negotiation failed; using SYSTEM driver instead\n");
+                return LoadSystemVulkan();
+            }
             return nullptr;
         }
     }
@@ -242,10 +246,19 @@ Gow3VkGetInstanceProcAddr Load() {
     }
     if (!gipa) {
         if (void* hmi = dlsym(lib, "HMI")) {
-            return OpenHal(hmi, driver);
+            if (auto hal = OpenHal(hmi, driver)) return hal;
+            if (IsExternalVendorVulkan(driver)) {
+                std::fprintf(stderr,"Vulkan: external Qualcomm HAL failed; using SYSTEM driver instead\n");
+                return LoadSystemVulkan();
+            }
+            return nullptr;
         }
         std::fprintf(stderr, "Vulkan: driver %s exports none of vk_icdGetInstanceProcAddr, "
                              "vkGetInstanceProcAddr and HMI (Android Vulkan HAL module)\n", driver);
+        if (IsExternalVendorVulkan(driver)) {
+            std::fprintf(stderr,"Vulkan: external Qualcomm entry point missing; using SYSTEM driver instead\n");
+            return LoadSystemVulkan();
+        }
         return nullptr;
     }
     std::fprintf(stderr, "Vulkan: direct driver %s via %s\n", driver, entry);

@@ -11,6 +11,7 @@ import java.util.Map;
 /** Log 32 launch profile. Experimental A/B switches are NOT user preferences. */
 final class PortSettings {
     static final String[] EFFECTS={"ssao","motion_blur","depth_of_field","bloom","sunlight_shadows","subsurface","omni_light_shadows","spot_light_shadows"};
+    static final String[] CHEATS={"cheat_ammo","cheat_flashlight"};
     static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences("tlou",Context.MODE_PRIVATE);
     }
@@ -64,6 +65,7 @@ final class PortSettings {
         // Preserve the existing CPU policy and FEX/AOT native wake behavior.
         options.put("job_sleep",true);
         for(String key:EFFECTS) options.put(key,p.getBoolean(key,false));
+        for(String key:CHEATS) options.put(key,p.getBoolean(key,false));
         File file=new File(context.getFilesDir(),"patch-options.json");
         Files.write(file.toPath(),options.toString().getBytes(StandardCharsets.UTF_8));
         return file;

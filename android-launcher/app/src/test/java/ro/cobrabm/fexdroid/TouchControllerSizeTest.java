@@ -24,7 +24,7 @@ public class TouchControllerSizeTest {
     @Before public void setUp() throws Exception {
         context=RuntimeEnvironment.getApplication();
         settings=PortSettings.prefs(context);
-        settings.edit().clear().commit();
+        settings.edit().clear().putString("control_style","classic").commit();
         context.getSharedPreferences("gow3",Context.MODE_PRIVATE).edit().clear().commit();
         overlay=new TouchControllerOverlay(context,null,false);
         hit=TouchControllerOverlay.class.getDeclaredMethod("hit",float.class,float.class);
@@ -56,6 +56,20 @@ public class TouchControllerSizeTest {
         settings.edit().putInt("control_size",100).commit();
         assertNull(hitAt(800f,355f)); // same center, smaller radius
         assertEquals("cross",hitAt(800f,300f));
+    }
+
+    @Test public void actionLayoutUsesSeparatePositionsAndWidescreenHitTargets() throws Exception {
+        settings.edit().putString("control_style","action").putInt("control_size",100).commit();
+        overlay=new TouchControllerOverlay(context,null,false);
+        overlay.layout(0,0,1600,720);
+        assertEquals("triangle",hitAt(1120f,280f));
+        assertEquals("leftstick",hitAt(145f,570f));
+        assertEquals("rightstick",hitAt(850f,570f));
+        assertEquals("shake",hitAt(640f,655f));
+        assertEquals("dpad",hitAt(145f,295f));
+        settings.edit().putString("control_style","classic").commit();
+        overlay=new TouchControllerOverlay(context,null,false);
+        assertEquals("cross",hitAt(1120f,545f));
     }
 
     @Test public void scalePreferenceIsClampedWithoutErasingIt() throws Exception {

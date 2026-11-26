@@ -100,7 +100,8 @@ final class RuntimeAot {
            variants.optString("sha256").length()!=64)return false;
         JSONArray groups=variants.optJSONArray("groups");
         int count="1.00".equals(version)?13:PortSettings.EFFECTS.length+3;
-        if(groups==null || groups.length()!=count)return false;
+        if(groups==null || groups.length()<count ||
+            groups.length()>count+("1.11".equals(version)?PortSettings.CHEATS.length:0))return false;
         java.util.HashSet<String> all=new java.util.HashSet<>();
         for(int i=0;i<groups.length();i++)all.add(groups.optString(i));
         if(all.size()!=groups.length())return false;
@@ -117,7 +118,24 @@ final class RuntimeAot {
                  "base_static_ray_hit_submesh_bounds","base_frame_timeout",
                  "base_job_sleep"})
                 if(!all.contains(base))return false;
+        if("1.11".equals(version)) {
+            all.removeAll(java.util.Arrays.asList("resolution_720","resolution_540","resolution_360"));
+            for(String effect:effects)all.remove("effect_"+effect);
+            for(String cheat:PortSettings.CHEATS)all.remove(cheat);
+            if(!all.isEmpty())return false;
+        }
         return true;
+    }
+
+    static String missingCheatVariants(JSONObject source, JSONObject selected) {
+        java.util.Set<String> groups=new java.util.HashSet<>();
+        JSONObject catalog=source.optJSONObject("variant_catalog");
+        JSONArray names=catalog==null?null:catalog.optJSONArray("groups");
+        if(names!=null)for(int i=0;i<names.length();i++)groups.add(names.optString(i));
+        java.util.ArrayList<String> missing=new java.util.ArrayList<>();
+        for(String cheat:PortSettings.CHEATS)
+            if(selected.optBoolean(cheat,false)&&!groups.contains(cheat))missing.add(cheat);
+        return String.join(", ",missing);
     }
 
     /**
@@ -273,7 +291,11 @@ final class RuntimeAot {
             report.toPath()),StandardCharsets.UTF_8));
         String version=source.optString("version");
         if(!"1.00".equals(version)&&!"1.11".equals(version))return "";
-        if(hasCompleteVariantCatalog(source))return "";
+        if(hasCompleteVariantCatalog(source)) {
+            JSONObject selected=new JSONObject(new String(Files.readAllBytes(
+                PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
+            return missingCheatVariants(source,selected);
+        }
         if("aarch64_generated_native_ready".equals(source.optString("status")))
             return "biblioteca ARM64 antiga (precisa de uma única recompilação para ativar todos os patches)";
         JSONObject compiled=source.optJSONObject("native_patch_options");
@@ -383,10 +405,11 @@ final class RuntimeAot {
                 throw new java.io.IOException(
                     "Catálogo de todas as variantes ARM64 ausente ou alterado. Recompile uma vez.");
             JSONObject builtVariants=source.optJSONObject("variant_build");
+            int requiredGroups=allVariants.getJSONArray("groups").length();
             if(builtVariants==null ||
-                builtVariants.optInt("groups",-1)!=11 ||
-                builtVariants.optInt("groups_with_code",-1)!=11 ||
-                builtVariants.optInt("variants_planned",0)<11 ||
+                builtVariants.optInt("groups",-1)!=requiredGroups ||
+                builtVariants.optInt("groups_with_code",-1)!=requiredGroups ||
+                builtVariants.optInt("variants_planned",0)<requiredGroups ||
                 builtVariants.optInt("variants_built",0)!=
                     builtVariants.optInt("variants_planned",-1) ||
                 builtVariants.optInt("variants_skipped",-1)!=0)
@@ -397,6 +420,7 @@ final class RuntimeAot {
                     "Faltam correções obrigatórias dos workers/animação no ARM64.");
             JSONObject actual=new JSONObject(new String(Files.readAllBytes(
                 PortSettings.patchOptions(context).toPath()),StandardCharsets.UTF_8));
+            pendingPatches=missingCheatVariants(source,actual);
             if(!actual.optBoolean("job_sleep",false))
                 throw new java.io.IOException("Política de workers incompatível.");
             compiledResolution=actual.optString("resolution","original");

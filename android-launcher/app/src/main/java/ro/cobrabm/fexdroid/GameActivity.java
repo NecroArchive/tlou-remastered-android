@@ -61,6 +61,7 @@ public final class GameActivity extends Activity {
     private volatile Process game;
     private File logFile;
     private TextView status;
+    private boolean hudDragging;
     private FrameLayout gameLayout;
     private PortMenu playerMenu;
     private boolean editingControls;
@@ -134,6 +135,7 @@ public final class GameActivity extends Activity {
         status.setOnTouchListener((v,e)->{
             FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)status.getLayoutParams();
             if(e.getActionMasked()==MotionEvent.ACTION_DOWN){
+                hudDragging=true;
                 // Convert anchor-based placement to absolute TOP|LEFT before dragging.
                 lp.gravity=Gravity.TOP|Gravity.LEFT;
                 lp.leftMargin=status.getLeft();lp.topMargin=status.getTop();
@@ -142,16 +144,19 @@ public final class GameActivity extends Activity {
                 return true;
             }
             if(e.getActionMasked()==MotionEvent.ACTION_MOVE){
-                lp.leftMargin=Math.max(dp(4),Math.min(layout.getWidth()-status.getWidth()-dp(4),(int)(e.getRawX()-drag[0])));
-                lp.topMargin=Math.max(dp(4),Math.min(layout.getHeight()-status.getHeight()-dp(4),(int)(e.getRawY()-drag[1])));
+                android.graphics.Insets safe=hudSafeInsets();
+                lp.leftMargin=Math.max(safe.left,Math.min(layout.getWidth()-safe.right-status.getWidth(),(int)(e.getRawX()-drag[0])));
+                lp.topMargin=Math.max(safe.top,Math.min(layout.getHeight()-safe.bottom-status.getHeight(),(int)(e.getRawY()-drag[1])));
                 status.setLayoutParams(lp);return true;
             }
             if(e.getActionMasked()==MotionEvent.ACTION_UP){
+                android.graphics.Insets safe=hudSafeInsets();
                 PortSettings.prefs(this).edit().putString("hud_corner","-1")
-                    .putFloat("hud_x",lp.leftMargin/(float)Math.max(1,layout.getWidth()-status.getWidth()))
-                    .putFloat("hud_y",lp.topMargin/(float)Math.max(1,layout.getHeight()-status.getHeight())).apply();
-                v.performClick();return true;
+                    .putFloat("hud_x",(lp.leftMargin-safe.left)/(float)Math.max(1,layout.getWidth()-safe.left-safe.right-status.getWidth()))
+                    .putFloat("hud_y",(lp.topMargin-safe.top)/(float)Math.max(1,layout.getHeight()-safe.top-safe.bottom-status.getHeight())).apply();
+                hudDragging=false;placeHud();v.performClick();return true;
             }
+            if(e.getActionMasked()==MotionEvent.ACTION_CANCEL){hudDragging=false;placeHud();}
             return true;
         });
         setContentView(layout);
@@ -570,21 +575,24 @@ public final class GameActivity extends Activity {
         }
         placeHud();
     }
+    private android.graphics.Insets hudSafeInsets() {
+        WindowInsets insets=gameLayout==null?null:gameLayout.getRootWindowInsets();
+        return insets==null?android.graphics.Insets.NONE:
+            insets.getInsets(WindowInsets.Type.displayCutout());
+    }
     private void placeHud() {
         status.post(()->{
-            if(gameLayout==null || closing.get() || gameLayout.getWidth()<1 ||
+            if(gameLayout==null || closing.get() || hudDragging || gameLayout.getWidth()<1 ||
                 gameLayout.getHeight()<1)return;
             SharedPreferences p=PortSettings.prefs(this);
-            android.graphics.Insets safe=android.graphics.Insets.NONE;
-            WindowInsets insets=gameLayout.getRootWindowInsets();
-            if(insets!=null)safe=insets.getInsets(WindowInsets.Type.displayCutout()|WindowInsets.Type.systemBars());
+            android.graphics.Insets safe=hudSafeInsets();
             int margin=dp(8);
             int availableWidth=Math.max(1,gameLayout.getWidth()-safe.left-safe.right);
             int availableHeight=Math.max(1,gameLayout.getHeight()-safe.top-safe.bottom);
             int allowedWidth=Math.max(1,availableWidth-2*margin);
             if(status.getMaxWidth()!=allowedWidth)status.setMaxWidth(allowedWidth);
             int[] anchor=HudPlacement.position(availableWidth,availableHeight,status.getWidth(),status.getHeight(),
-                margin,p.getString("hud_corner","0"),p.getFloat("hud_x",0),p.getFloat("hud_y",0));
+                margin,0,p.getString("hud_corner","0"),p.getFloat("hud_x",0),p.getFloat("hud_y",0));
             int x=safe.left+anchor[0],y=safe.top+anchor[1];
             FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)status.getLayoutParams();
             if(lp.gravity== (Gravity.TOP|Gravity.LEFT) && lp.leftMargin==x &&

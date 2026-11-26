@@ -28,7 +28,11 @@ final class HudPresentation {
         view.setTextSize(prefs.getInt("hud_size",12));
         view.setTextColor(FPS_COLOR);
         view.setSingleLine(true);view.setMaxLines(1);view.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        int pad=Math.round(6*density);view.setPadding(pad,pad,pad,pad);
+        // One line, no font ascent/descent padding and only 2dp vertically.
+        // Leave the band above the shoulder controls usable.
+        view.setIncludeFontPadding(false);
+        int pad=Math.round(6*density),vertical=Math.round(2*density);
+        view.setPadding(pad,vertical,pad,vertical);
         android.graphics.drawable.GradientDrawable bg=new android.graphics.drawable.GradientDrawable();
         bg.setColor((prefs.getInt("hud_opacity",70)*255/100)<<24);bg.setCornerRadius(4*density);view.setBackground(bg);
     }

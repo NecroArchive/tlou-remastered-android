@@ -3,9 +3,12 @@ package ro.cobrabm.fexdroid;
 /** Physical screen anchors inside the usable viewport, independent of menu position. */
 final class HudPlacement {
     static int[] position(int width,int height,int hudWidth,int hudHeight,int margin,String corner,float nx,float ny) {
+        return position(width,height,hudWidth,hudHeight,margin,margin,corner,nx,ny);
+    }
+    static int[] position(int width,int height,int hudWidth,int hudHeight,int margin,int topMargin,String corner,float nx,float ny) {
         int maxX=Math.max(0,width-hudWidth),maxY=Math.max(0,height-hudHeight);
         int left=Math.min(margin,maxX),right=Math.max(left,maxX-margin);
-        int top=Math.min(margin,maxY),bottom=Math.max(top,maxY-margin);
+        int top=Math.min(topMargin,maxY),bottom=Math.max(top,maxY-margin);
         int x=left,y=top;
         switch(corner) {
             case "1":x=right;break;

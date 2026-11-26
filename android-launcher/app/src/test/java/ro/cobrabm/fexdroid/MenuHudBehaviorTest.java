@@ -33,6 +33,8 @@ public class MenuHudBehaviorTest {
     }
     @Test public void topRightHasNoOldMenuOffsetAndAllAnchorsStayInBounds(){
         assertArrayEquals(new int[]{792,8},HudPlacement.position(1000,500,200,30,8,"1",0,0));
+        assertArrayEquals(new int[]{1392,0},HudPlacement.position(1840,832,440,48,8,0,"1",0,0));
+        assertArrayEquals(new int[]{1400,0},HudPlacement.position(1840,832,440,48,8,0,"-1",1,0));
         for(int i=0;i<9;i++){
             int[] xy=HudPlacement.position(1000,500,200,30,8,""+i,0,0);
             assertTrue(xy[0]>=0&&xy[0]+200<=1000);assertTrue(xy[1]>=0&&xy[1]+30<=500);

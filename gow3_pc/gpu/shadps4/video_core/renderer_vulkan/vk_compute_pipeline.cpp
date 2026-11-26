@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/vk_qualcomm_float_compat.h"
 #include "video_core/renderer_vulkan/vk_qualcomm_image1d_compat.h"
 #include "video_core/renderer_vulkan/vk_qualcomm_tlou_workgroup.h"
+#include "video_core/renderer_vulkan/vk_qualcomm_tlou_u32.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
@@ -424,6 +425,32 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                     pipe=std::move(p);pipeline_result=pr;
                     std::fprintf(stderr,"Qualcomm compute recovered: exact 32x2 / 16 Y-slice workgroup, 2D output preserved\n");
                 } else std::fprintf(stderr,"Qualcomm 32x2 workgroup rejected: %s\n",vk::to_string(pr).c_str());
+            }
+        }
+    }
+    if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled &&
+        info_.pgm_hash == 0x4a705408ull) {
+        std::vector<u32> original, lowered;
+        if (LoadExactComputeSpirv(info_.pgm_hash, compute_key.value, original)) {
+            for (bool small : {false,true}) {
+                if (!QualcommTLOUU32::Lower(original,lowered,small)) continue;
+                const vk::ShaderModuleCreateInfo mi{
+                    .codeSize=lowered.size()*sizeof(u32),.pCode=lowered.data()};
+                auto [mr,sm]=device.createShaderModuleUnique(mi);
+                if (mr!=vk::Result::eSuccess) {
+                    std::fprintf(stderr,"Qualcomm u32 module rejected (%d): %s\n",int(small),vk::to_string(mr).c_str());
+                    continue;
+                }
+                auto ci=compute_pipeline_ci;ci.stage.module=*sm;
+                // Exact shader has no subgroup instructions; native width is fine.
+                ci.stage.pNext=nullptr;
+                auto [pr,p]=device.createComputePipelineUnique(vk::PipelineCache{},ci);
+                if (pr==vk::Result::eSuccess) {
+                    pipe=std::move(p);pipeline_result=pr;
+                    std::fprintf(stderr,"Qualcomm compute recovered: exact u32 partial products, small=%d\n",int(small));
+                    break;
+                }
+                std::fprintf(stderr,"Qualcomm u32 partial-products variant rejected small=%d: %s\n",int(small),vk::to_string(pr).c_str());
             }
         }
     }

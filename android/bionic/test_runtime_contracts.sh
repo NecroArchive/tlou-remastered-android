@@ -458,3 +458,7 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread \
   -I "$test_dir" -I gow3_pc/gpu/shim -I gow3_pc/gpu/shadps4 \
   gow3_pc/tests/test_tlou_threaded_record_chunk.cpp -o "$test_dir/threaded-copy"
 "$test_dir/threaded-copy" --correctness-only
+
+# Exact integer multiply lowering used only by the captured Qualcomm shader.
+g++ -std=c++20 -O2 -UNDEBUG -Wall -Wextra -Werror gow3_pc/tests/test_tlou_qualcomm_u32.cpp -o "$test_dir/qualcomm-u32"
+"$test_dir/qualcomm-u32"

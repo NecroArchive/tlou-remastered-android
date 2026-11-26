@@ -95,12 +95,7 @@ public final class GameActivity extends Activity {
         logFile=RunLog.runtime(this);
         if(logFile.exists()){ File previous=new File(logDir,"runtime-previous.log"); previous.delete(); logFile.renameTo(previous); }
         try(FileOutputStream out=new FileOutputStream(logFile)){out.write("TLOU runtime: aguardando inicialização do processo\n".getBytes(StandardCharsets.UTF_8));}
-        String orientation=PortSettings.prefs(this).getString("game_orientation_v3","landscape");
-        int requested="reverse".equals(orientation)?ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE:
-            "sensor".equals(orientation)?ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:
-            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
-        setRequestedOrientation(requested);
-        RunLog.write(this,"Orientação da tela: "+orientation);
+        applyScreenOrientation();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         prepared=getIntent().getStringExtra("prepared_path");
         if (prepared==null) throw new IllegalStateException("Caminho preparado não informado");
@@ -446,6 +441,8 @@ public final class GameActivity extends Activity {
                     RunLog.write(this,"TLOU movie NV12 aligned-plane compatibility: "+gameVersion);
                 }
             }
+            // Light, per-driver comparison. No per-draw GPU profiler and no forced waits.
+            env.put("TLOU_DRIVER_WAIT_PROFILE","1");
             RunLog.write(this,PortSettings.experimentReport(this,env));
             String driver=getSharedPreferences("tlou",MODE_PRIVATE).getString("driver_path", "");
             if(!driver.isEmpty()) {
@@ -563,9 +560,23 @@ public final class GameActivity extends Activity {
         if(touch!=null && !closing.get())applyLiveSettings();
     }
 
+    private void applyScreenOrientation() {
+        String orientation=PortSettings.prefs(this).getString("game_orientation_v3","landscape");
+        int requested="reverse".equals(orientation)?ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE:
+            "sensor".equals(orientation)?ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+        if(getRequestedOrientation()!=requested) setRequestedOrientation(requested);
+        RunLog.write(this,"Orientação da tela: "+orientation+" (Activity, imagem e controles)");
+    }
+
     private void applyLiveSettings() {
         if(closing.get() || status==null || touch==null)return;
         SharedPreferences p=PortSettings.prefs(this);
+        int requested="reverse".equals(p.getString("game_orientation_v3","landscape"))?
+            ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE:
+            "sensor".equals(p.getString("game_orientation_v3","landscape"))?
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+        if(getRequestedOrientation()!=requested)applyScreenOrientation();
         status.setVisibility(p.getBoolean("hud_visible",true)?View.VISIBLE:View.GONE);
         HudPresentation.style(status,p);
         String controlMode=p.getString("touch_mode","auto");

@@ -260,6 +260,7 @@ private:
     void ReadWarmEntry(BackgroundWarmup& warm, std::vector<u8>&& data);
     bool MergeWarmStage(WarmStage& stage);
     void PumpWarmUp();
+    bool BackgroundWarmupActive() const;
     void StopWarmUp();
     /// gow3 25 Oct 2026: the cached pipelines in order of their last use, most recent first, for
     /// the next background warm-up (vk_pipeline_serialization.cpp).

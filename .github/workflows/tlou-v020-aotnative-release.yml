@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: Qualcomm unified LDS32 and A840 V39 sampler descriptor compatibility with null-image binding preservation; release b316e31e731ad6b921f9f3bbe29c864bc42fd24f.
+# Trigger 2026-11-26: generic structural Qualcomm compute integer/LDS legalization, validated on all three captured failing modules; release e97122a97afe23a5fbf10f1499dd1373ad2c1460.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

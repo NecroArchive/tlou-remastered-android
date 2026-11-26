@@ -226,10 +226,35 @@ void Scheduler::SignalAfterHostCopies(std::function<void()> signal) {
 extern "C" char __ImageBase;
 #endif
 static bool OrderWaitStatsEnabled() {
-    static const bool on = std::getenv("GOW3_PROFILE") != nullptr;
+    static const bool on = [] {
+        const char* e=std::getenv("TLOU_DRIVER_WAIT_PROFILE");
+        return std::getenv("GOW3_PROFILE") != nullptr || (e && e[0]=='1');
+    }();
     return on;
 }
 static void NoteOrderWait(int kind, std::chrono::steady_clock::time_point start) {
+    // Distinguish the four actual ordering costs without enabling the full
+    // per-task profiler, taking its global lock, or resolving stack symbols.
+    static const bool detailed=std::getenv("GOW3_PROFILE")!=nullptr;
+    if (!detailed) {
+        struct Totals {
+            std::array<u64,4> calls{}, ns{};
+            std::chrono::steady_clock::time_point last=std::chrono::steady_clock::now();
+        };
+        static thread_local Totals totals;
+        const auto now=std::chrono::steady_clock::now();
+        ++totals.calls[kind];
+        totals.ns[kind]+=std::chrono::duration_cast<std::chrono::nanoseconds>(now-start).count();
+        if(now-totals.last>=std::chrono::seconds(5)) {
+            std::printf("TLOU host order (5 s per-thread): signal=%llu/%.2fms recorder=%llu/%.2fms copy-worker=%llu/%.2fms chained=%llu/%.2fms\n",
+                (unsigned long long)totals.calls[0],totals.ns[0]/1e6,
+                (unsigned long long)totals.calls[1],totals.ns[1]/1e6,
+                (unsigned long long)totals.calls[2],totals.ns[2]/1e6,
+                (unsigned long long)totals.calls[3],totals.ns[3]/1e6);
+            totals.calls={};totals.ns={};totals.last=now;
+        }
+        return;
+    }
     static std::mutex mutex;
     static std::map<std::pair<const void*, int>, std::pair<u64, u64>> waits;
     static auto last = std::chrono::steady_clock::now();

@@ -16,6 +16,7 @@
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_qualcomm_float_compat.h"
 #include "video_core/renderer_vulkan/vk_qualcomm_image1d_compat.h"
+#include "video_core/renderer_vulkan/vk_qualcomm_tlou_workgroup.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
@@ -403,6 +404,27 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
             TryQualcommNarrowImage1DVariant(device, compute_pipeline_ci,
                                             info_.pgm_hash, compute_key.value, pipe)) {
             pipeline_result = vk::Result::eSuccess;
+        }
+    }
+    if (pipeline_result == vk::Result::eErrorUnknown && retry_enabled &&
+        info_.pgm_hash == 0x4a705408ull) {
+        std::vector<u32> original, smaller, no_read;
+        if (LoadExactComputeSpirv(info_.pgm_hash, compute_key.value, original) &&
+            QualcommTLOUWorkgroup::Reduce(original, smaller)) {
+            // Keep 2D coordinates. Remove only the demonstrably unused read capability.
+            if (QualcommImage1DCompat::DropUnusedImageReadCapability(smaller,no_read))
+                smaller=std::move(no_read);
+            const vk::ShaderModuleCreateInfo mi{
+                .codeSize=smaller.size()*sizeof(u32),.pCode=smaller.data()};
+            auto [mr,sm]=device.createShaderModuleUnique(mi);
+            if (mr==vk::Result::eSuccess) {
+                auto ci=compute_pipeline_ci;ci.stage.module=*sm;
+                auto [pr,p]=device.createComputePipelineUnique(vk::PipelineCache{},ci);
+                if (pr==vk::Result::eSuccess) {
+                    pipe=std::move(p);pipeline_result=pr;
+                    std::fprintf(stderr,"Qualcomm compute recovered: exact 32x2 / 16 Y-slice workgroup, 2D output preserved\n");
+                } else std::fprintf(stderr,"Qualcomm 32x2 workgroup rejected: %s\n",vk::to_string(pr).c_str());
+            }
         }
     }
     if (pipeline_result != vk::Result::eSuccess) {

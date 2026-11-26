@@ -39,7 +39,7 @@ inline bool NarrowNonArrayed1DWrite(std::span<const uint32_t> original,
                    original[i + 2] == uint32_type && original[i + 3] == 2) {
             uint32_vec2 = original[i + 1];
         } else if (op == OpTypeImage && n >= 9 &&
-                   original[i + 3] == 1 &&  // Dim1D
+                   original[i + 3] == 0 &&  // SPIR-V Dim1D=0, Dim2D=1
                    original[i + 5] == 0 &&  // non-arrayed
                    original[i + 7] == 2) { // storage image
             image1d_type = original[i + 1];

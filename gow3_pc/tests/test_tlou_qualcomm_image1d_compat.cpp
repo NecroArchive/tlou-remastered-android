@@ -20,7 +20,7 @@ int main() {
     Add(source,17,{56});   // REQUIRED StorageImageWriteWithoutFormat
     Add(source,21,{10,32,0});                    // OpTypeInt %10 32 0
     Add(source,23,{14,10,2});                    // OpTypeVector %14 %10 2
-    Add(source,25,{56,8,1,0,0,0,2,0});          // image1D, nonarrayed, storage
+    Add(source,25,{56,8,0,0,0,0,2,0});          // image1D, nonarrayed, storage
     Add(source,61,{56,214,58});                 // OpLoad image %214
     Add(source,80,{14,211,89,90});              // vec2 coordinate %211=(%89,%90)
     Add(source,99,{214,211,213,0});             // OpImageWrite %214 %211 %213
@@ -49,7 +49,7 @@ int main() {
     assert(!NarrowNonArrayed1DWrite(rejected,patched));
     rejected=source;
     for(size_t i=5;i<rejected.size();i+=rejected[i]>>16)
-        if((rejected[i]&0xffff)==25) {rejected[i+3]=2;break;}
+        if((rejected[i]&0xffff)==25) {rejected[i+3]=1;break;}
     assert(!NarrowNonArrayed1DWrite(rejected,patched)); // 2D needs Y
     rejected=source;
     for(size_t i=5;i<rejected.size();i+=rejected[i]>>16)

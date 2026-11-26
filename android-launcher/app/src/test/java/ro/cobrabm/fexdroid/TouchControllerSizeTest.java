@@ -62,11 +62,11 @@ public class TouchControllerSizeTest {
         settings.edit().putString("control_style","action").putInt("control_size",100).commit();
         overlay=new TouchControllerOverlay(context,null,false);
         overlay.layout(0,0,1600,720);
-        assertEquals("triangle",hitAt(1120f,280f));
-        assertEquals("leftstick",hitAt(145f,570f));
-        assertEquals("rightstick",hitAt(850f,570f));
+        assertEquals("triangle",hitAt(1125f,285f));
+        assertEquals("leftstick",hitAt(142f,570f));
+        assertEquals("rightstick",hitAt(825f,575f));
         assertEquals("shake",hitAt(640f,655f));
-        assertEquals("dpad",hitAt(145f,295f));
+        assertEquals("dpad",hitAt(145f,302f));
         settings.edit().putString("control_style","classic").commit();
         overlay=new TouchControllerOverlay(context,null,false);
         assertEquals("cross",hitAt(1120f,545f));

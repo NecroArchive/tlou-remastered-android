@@ -1406,6 +1406,11 @@ struct PipelineCache::BackgroundWarmup {
 };
 
 bool PipelineCache::StartBackgroundWarmUp() {
+    if (const char* no_warmup = std::getenv("TLOU_NO_BACKGROUND_WARMUP");
+        no_warmup && no_warmup[0]=='1') {
+        StartOnDemand();
+        return true;
+    }
     if (!Storage::DataBase::Instance().ConcurrentReads()) {
         return false;
     }

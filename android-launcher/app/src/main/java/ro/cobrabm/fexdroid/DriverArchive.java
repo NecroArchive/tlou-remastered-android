@@ -51,7 +51,9 @@ public final class DriverArchive {
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Cannot create driver directory");
     }
     /** Reject other architectures and glibc builds before they can be selected. */
-    public static void validateLibrary(File library) throws IOException {
+    public static void validateLibrary(File library) throws IOException { neededLibraries(library); }
+    private static List<String> neededLibraries(File library) throws IOException {
+        List<String> dependencies=new ArrayList<>();
         try (RandomAccessFile f=new RandomAccessFile(library,"r")) {
             byte[] head=new byte[64]; f.readFully(head);
             ByteBuffer h=ByteBuffer.wrap(head).order(ByteOrder.LITTLE_ENDIAN);
@@ -91,8 +93,62 @@ public final class DriverArchive {
                 String n=name.toString();
                 if (n.contains("/") || n.matches(".*\\.so\\.[0-9].*") || n.startsWith("ld-linux"))
                     throw new Rejected(Reason.WRONG_ABI);
+                dependencies.add(n);
             }
         } catch (EOFException e) { throw invalid(); }
+        return dependencies;
+    }
+
+    /**
+     * An AdrenoTools ZIP may place QTI mapper/support libraries in subdirectories.
+     * The standalone Bionic child previously searched only the selected ICD's
+     * directory. Resolve actual DT_NEEDED names within this one imported package,
+     * including transitive dependencies; never mix files from other drivers.
+     */
+    public static String librarySearchPath(File driversRoot,File selected) throws IOException {
+        File root=driversRoot.getCanonicalFile(), library=selected.getCanonicalFile();
+        File parent=library.getParentFile();
+        LinkedHashSet<String> paths=new LinkedHashSet<>();
+        paths.add(parent.getPath());
+        if(!library.toPath().startsWith(root.toPath()))return String.join(":",paths);
+        File pack=parent;
+        while(pack!=null && !pack.equals(root) &&
+              !new File(pack,".driver-info.properties").isFile())pack=pack.getParentFile();
+        if(pack==null || pack.equals(root) || !pack.getName().matches("[0-9a-f]{64}"))
+            return String.join(":",paths); // raw standalone library
+        Map<String,List<File>> byName=new HashMap<>();
+        ArrayDeque<File> scan=new ArrayDeque<>();scan.add(pack);
+        int visited=0;
+        while(!scan.isEmpty()) {
+            File node=scan.removeFirst();
+            if(++visited>512)throw invalid();
+            if(Files.isSymbolicLink(node.toPath()))continue;
+            if(node.isDirectory()) {
+                File[] children=node.listFiles();
+                if(children!=null)for(File c:children)scan.add(c);
+            } else if(node.isFile() && node.getName().endsWith(".so")) {
+                byName.computeIfAbsent(node.getName(), k->new ArrayList<>()).add(node);
+            }
+        }
+        ArrayDeque<File> queue=new ArrayDeque<>();queue.add(library);
+        Set<String> checked=new HashSet<>();
+        while(!queue.isEmpty()) {
+            File current=queue.removeFirst().getCanonicalFile();
+            if(!checked.add(current.getPath()))continue;
+            for(String name:neededLibraries(current)) {
+                List<File> candidates=byName.get(name);
+                if(candidates==null || candidates.isEmpty())continue; // OS dependency
+                File same=new File(current.getParentFile(),name);
+                File match=same.isFile()&&!Files.isSymbolicLink(same.toPath())?same:
+                    candidates.size()==1?candidates.get(0):null;
+                if(match==null)throw new IOException("Ambiguous driver dependency: "+name);
+                match=match.getCanonicalFile();
+                if(!match.toPath().startsWith(pack.toPath()))throw invalid();
+                paths.add(match.getParentFile().getPath());
+                queue.add(match);
+            }
+        }
+        return String.join(":",paths);
     }
     public static Installed install(File root,InputStream input,int api,MetadataReader reader) throws Exception {
         root=root.getCanonicalFile();

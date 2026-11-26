@@ -5,6 +5,11 @@
 #include <mutex>
 #include <vector>
 #include <cstdlib>
+#ifdef __ANDROID__
+#include <fstream>
+#include <string>
+#include <sys/stat.h>
+#endif
 #include <boost/container/static_vector.hpp>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -116,6 +121,31 @@ std::vector<vk::PhysicalDevice> EnumeratePhysicalDevices(vk::UniqueInstance& ins
     auto [devices_result, devices] = instance->enumeratePhysicalDevices();
     ASSERT_MSG(devices_result == vk::Result::eSuccess, "Failed to enumerate physical devices: {}",
                vk::to_string(devices_result));
+#ifdef __ANDROID__
+    // An isolated Android Vulkan loader must actually map the selected external
+    // ICD, not successfully enumerate the device using the stock driver.
+    const char* strict=std::getenv("TLOU_EXTERNAL_QUALCOMM_DRIVER");
+    const char* expected=std::getenv("GOW3_VULKAN_DRIVER");
+    if(strict && strict[0]=='1' && expected && *expected) {
+        struct stat target{};
+        bool mapped=false;
+        if(stat(expected,&target)==0) {
+            std::ifstream maps("/proc/self/maps");
+            std::string line;
+            while(std::getline(maps,line)) {
+                const auto slash=line.find('/');
+                if(slash==std::string::npos)continue;
+                struct stat actual{};
+                if(stat(line.c_str()+slash,&actual)==0 &&
+                    actual.st_dev==target.st_dev && actual.st_ino==target.st_ino) {
+                    mapped=true;break;
+                }
+            }
+        }
+        ASSERT_MSG(mapped,"The requested external Qualcomm ICD was not mapped: {}",expected);
+        std::fprintf(stderr,"TLOU Qualcomm: verified selected ICD mapped: %s\n",expected);
+    }
+#endif
     return std::move(devices);
 }
 

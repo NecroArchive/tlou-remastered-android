@@ -525,6 +525,12 @@ void Liverpool::ProcessLoop(std::stop_token stoken) {
         // decoded (num_submits 0) is not done until then (work_retired).
         if (rasterizer) {
             rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonSubmissionEnd);
+#ifdef __ANDROID__
+            // No additional decoded work is guaranteed to follow. Close the
+            // batch here rather than making a guest wait on an unsubmitted tick.
+            if(rasterizer->GetBufferCache().HasUnsubmittedReadback())
+                rasterizer->Flush();
+#endif
             rasterizer->WaitDeferredSignals();
         }
         {
@@ -879,6 +885,74 @@ void SignalEop(const PM4CmdEventWriteEop& eop) {
         [] { SignalEopInterrupt(); });
 }
 
+// Batch actual readbacks, NOT their guest-visible signals. Each producer's
+// copy, snapshot, page protection and fence callback remain in original order.
+// Android's small EOP/RELEASE_MEM submissions cost hundreds of ms per 5 s.
+// Bound the open tick to eight readback-producing events or 350 us between
+// events. A natural submit changes the tick and starts a new group.
+// Guest idle, faults, and unmet PM4 waits retain explicit submission paths.
+static void SubmitDeferredReadbacks(Vulkan::Rasterizer& rasterizer, bool compute) {
+#ifdef __ANDROID__
+    static const bool batch = [] {
+        const char* env = std::getenv("GOW3_RAYCAST_FLUSH");
+        return !env || std::string_view{env} != "immediate";
+    }();
+    if (batch) {
+        struct State {
+            u64 tick{}, events{}, eop{}, releases{}, flushes{}, grouped{};
+            std::chrono::steady_clock::time_point first{}, report{};
+        };
+        static thread_local State state;
+        const auto now=std::chrono::steady_clock::now();
+        const u64 tick=rasterizer.GetRuntime().GetScheduler().CurrentTick();
+        if(state.tick!=tick || !state.events) {
+            state.tick=tick;
+            state.events=0;
+            state.first=now;
+        }
+        ++state.events;
+        if(compute)++state.releases;else ++state.eop;
+        if(state.events>=8 || now-state.first>=std::chrono::microseconds(350)) {
+            ++state.flushes;
+            state.events=0;
+            rasterizer.Flush();
+        } else {
+            ++state.grouped;
+        }
+        if(state.report.time_since_epoch().count()==0)state.report=now;
+        if(now-state.report>=std::chrono::seconds(5)) {
+            std::printf("TLOU EOP batching (5 s): graphics=%llu compute=%llu deferred-immediate-flush=%llu cap-flush=%llu\\n",
+                (unsigned long long)state.eop,(unsigned long long)state.releases,
+                (unsigned long long)state.grouped,(unsigned long long)state.flushes);
+            state.eop=state.releases=state.grouped=state.flushes=0;
+            state.report=now;
+        }
+        return;
+    }
+#else
+    static const bool lazy = [] {
+        const char* env = std::getenv("GOW3_RAYCAST_FLUSH");
+        return env && std::string_view{env} == "lazy";
+    }();
+    if(!compute && lazy)return;
+#endif
+    rasterizer.Flush();
+}
+
+// An unmet GPU wait can yield while num_submits is still nonzero, so it may
+// never enter the existing idle flush loop. Once the draw pipe has drained,
+// submit any open readback tick before yielding; never publish a fence early.
+static void FlushReadbacksBeforeYield(Vulkan::Rasterizer* rasterizer) {
+#ifdef __ANDROID__
+    if(!rasterizer || !rasterizer->DrawPipeIdle())return;
+    auto& cache=rasterizer->GetBufferCache();
+    if(cache.HasDeferredSignals() && cache.HasUnsubmittedReadback())
+        rasterizer->Flush();
+#else
+    (void)rasterizer;
+#endif
+}
+
 // gow3: end-of-pipe/-shader events run in order with the draws (Rasterizer::RunInOrder: on
 // the draw recording thread when the draw pipeline is in use).
 void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
@@ -1020,13 +1094,7 @@ void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
             // Radeon iGPU the GPU idles ~0.4 ms at every submission boundary. When the guest
             // blocks on the fence before submitting more, the idle loop in Process flushes them
             // at once (HasUnsubmittedReadback); otherwise they go with the next submission.
-            static const bool lazy_flush = [] {
-                const char* env = std::getenv("GOW3_RAYCAST_FLUSH");
-                return env && std::string_view{env} == "lazy";
-            }();
-            if (results_pending && !lazy_flush) {
-                rasterizer.Flush();
-            }
+            if (results_pending) SubmitDeferredReadbacks(rasterizer, false);
             return;
         }
         if (wait_readbacks) {
@@ -1100,9 +1168,7 @@ void RunComputeReleaseMem(Vulkan::Rasterizer& rasterizer, const u8* data) {
         if (cache.DeferUntilLastReadback(deferred_signal, label,
                                          qword ? release.packet.DataQWord() : release.packet.DataDWord(),
                                          qword ? 8 : 4)) {
-            if (results_pending) {
-                rasterizer.Flush(); // the GPU starts on them now (RunEventWriteEop)
-            }
+            if (results_pending) SubmitDeferredReadbacks(rasterizer, true);
             return;
         }
         // Not deferred after all: written now, in order.
@@ -2498,6 +2564,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                         rasterizer->DrainDrawPipe(static_cast<u32>(opcode));
                         continue;
                     }
+                    FlushReadbacksBeforeYield(rasterizer);
                     YIELD_GFX();
                 }
                 g_gfx_wait.store(nullptr, std::memory_order_release);
@@ -3092,6 +3159,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                             NoteComputeWaitDrain(*wait_reg_mem, wait_reg_mem->Test(regs.reg_array));
                             continue;
                         }
+                        FlushReadbacksBeforeYield(rasterizer);
                         YIELD_ASC(vqid);
                     }
                 }

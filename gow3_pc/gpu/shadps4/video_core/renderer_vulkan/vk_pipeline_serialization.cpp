@@ -1631,6 +1631,10 @@ bool PipelineCache::MergeWarmStage(WarmStage& stage) {
     return true;
 }
 
+bool PipelineCache::BackgroundWarmupActive() const {
+    return background && !background->finished;
+}
+
 void PipelineCache::PumpWarmUp() {
     if (!background || background->finished) {
         return;

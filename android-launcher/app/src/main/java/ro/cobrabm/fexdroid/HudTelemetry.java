@@ -28,6 +28,28 @@ final class HudTelemetry {
     private volatile double gpuPercent=Double.NaN;
     private String[] gpuPaths;
     private int gpuRediscover;
+    private long gpuReportAt;
+    private int gpuSamples,gpuMin=100,gpuMax,gpuSum;
+    private String gpuSampleSource="";
+    private void reportGpu(String path,int value,String raw) {
+        if(!path.equals(gpuSampleSource)) {
+            gpuSampleSource=path;gpuSamples=gpuSum=gpuMax=0;gpuMin=100;
+            gpuReportAt=System.nanoTime();
+        }
+        ++gpuSamples;gpuSum+=value;gpuMin=Math.min(gpuMin,value);gpuMax=Math.max(gpuMax,value);
+        long now=System.nanoTime();
+        if(now-gpuReportAt<5_000_000_000L)return;
+        String base="/sys/class/kgsl/kgsl-3d0/";
+        String clock=readOneLine(base+"gpuclk");
+        if(clock==null)clock=readOneLine(base+"devfreq/cur_freq");
+        String max=readOneLine(base+"max_gpuclk");
+        if(max==null)max=readOneLine(base+"devfreq/max_freq");
+        RunLog.write(context,String.format(Locale.US,
+            "GPU kernel (5 s): source=%s avg=%.1f%% range=%d..%d%% samples=%d raw=%s clock=%s max=%s",
+            path,gpuSum/(double)gpuSamples,gpuMin,gpuMax,gpuSamples,raw,clock,max));
+        gpuReportAt=now;gpuSamples=gpuSum=gpuMax=0;gpuMin=100;
+    }
+
 
 
     HudTelemetry(Context context) {this(context,null);}
@@ -252,7 +274,7 @@ final class HudTelemetry {
             String line=PerfHudMetrics.readFirstLine(path);
             int n=path.endsWith("/gpubusy")?PerfHudMetrics.gpuBusyRatio(line):
                 path.endsWith("/mtk_mali/utilization")?PerfHudMetrics.mtkActive(line):PerfHudMetrics.parsePercent(line);
-            if(n>=0){gpuPercent=n;return;}
+            if(n>=0){gpuPercent=n;reportGpu(path,n,line);return;}
         }
         if(++gpuRediscover>=5){gpuPaths=null;gpuRediscover=0;}
     }

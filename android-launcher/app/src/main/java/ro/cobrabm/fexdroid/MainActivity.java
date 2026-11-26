@@ -291,9 +291,9 @@ public final class MainActivity extends Activity {
         } else if(currentTab.equals("settings")) {
             LinearLayout video=card(root,"VÍDEO E TELA");
             screenChoice(video);
-            choice(video,"game_orientation","Orientação da tela",
+            choice(video,"game_orientation_v2","Orientação da tela",
                 new String[]{"Paisagem","Paisagem invertida","Automática (sensor)"},
-                new String[]{"landscape","reverse","sensor"},"landscape");
+                new String[]{"landscape","reverse","sensor"},"reverse");
             choice(video,"fps_limit","Limite de FPS",
                 new String[]{"30 FPS","60 FPS","120 FPS"},
                 new String[]{"30","60","120"},"60");

@@ -25,7 +25,8 @@ inline bool Typed(uint32_t op) {
     case 131:case 132:case 133:case 136:case 151:case 166:case 167:case 168:
     case 169:case 170:case 171:case 172:case 174:case 176:case 178:case 184:
     case 186:case 188:case 194:case 196:case 199:case 202:case 203:
-    case 234:case 237:case 239:case 245:return true;
+    case 154:case 190:case 197:case 234:case 237:case 239:case 245:
+    case 339:case 343:case 345:return true;
     default:return false;
     }
 }
@@ -170,6 +171,42 @@ inline bool Lower(std::span<const uint32_t> src,std::vector<uint32_t>& dst,Stats
             removed[r.id]=true;
         }
     }
+    // Narrow storage-buffer aliases may be declared for the same binding
+    // even if no instruction accesses them. Delete only declarations that
+    // depend on the unused narrow integer types. Any actual access is refused
+    // by the final reference check (including a narrow load or store).
+    bool changed=true;
+    while(changed){
+        changed=false;
+        for(const auto& r:m.rows){
+            if(!r.id||removed[r.id])continue;
+            if(r.op!=23&&r.op!=28&&r.op!=29&&r.op!=30&&r.op!=32&&r.op!=59)continue;
+            bool depends=false;
+            if(!Refs(r,[&](uint32_t id){depends|=removed[id];return true;}))return false;
+            if(depends){removed[r.id]=true;changed=true;}
+        }
+    }
+    // Only the LDS alias and unused narrow declarations were removed above.
+    // An ordinary buffer variable must never be removed merely because it
+    // shares a binding; verify the live counterpart and descriptor ABI.
+    for(const auto& r:m.rows)if(r.op==59&&removed[r.id]&&r.id!=hi.var){
+        if(r.a[2]!=12)return false;
+        uint32_t binding=~0u,set=~0u;
+        for(const auto& d:m.rows)if(d.op==71&&d.a.size()==3&&d.a[0]==r.id){
+            if(d.a[1]==33)binding=d.a[2];
+            if(d.a[1]==34)set=d.a[2];
+        }
+        bool matching=false;
+        for(const auto& other:m.rows)if(other.op==59&&!removed[other.id]&&other.a[2]==12){
+            uint32_t b=~0u,t=~0u;
+            for(const auto& d:m.rows)if(d.op==71&&d.a.size()==3&&d.a[0]==other.id){
+                if(d.a[1]==33)b=d.a[2];
+                if(d.a[1]==34)t=d.a[2];
+            }
+            matching|=binding!=~0u&&set!=~0u&&b==binding&&t==set;
+        }
+        if(!matching)return false;
+    }
     removed[u64]=true;
     std::vector<uint32_t> out(src.begin(),src.begin()+5);
     std::vector<std::array<uint32_t,2>> ptr(src[3]);
@@ -206,12 +243,12 @@ inline bool Lower(std::span<const uint32_t> src,std::vector<uint32_t>& dst,Stats
         }
         if(r.op==15){
             ++entry;
-            if(alias){
-                if(std::count(a.begin()+4,a.end(),hi.var)!=1)return false;
-                out.push_back((uint32_t(a.size())<<16)|15u);
-                for(size_t k=0;k<a.size();++k)if(k<4||a[k]!=hi.var)out.push_back(a[k]);
-                continue;
-            }
+            if(alias&&std::count(a.begin()+4,a.end(),hi.var)!=1)return false;
+            unsigned count=0;
+            for(size_t k=4;k<a.size();++k)count+=removed[a[k]];
+            out.push_back((uint32_t(a.size()+1-count)<<16)|15u);
+            for(size_t k=0;k<a.size();++k)if(k<4||!removed[a[k]])out.push_back(a[k]);
+            continue;
         }
         if(r.op==54&&!constants){emit(43,{u32,mask,65535});emit(43,{u32,shift,16});emit(43,{u32,two,2});constants=true;}
         if(r.op==43&&r.type==u64){
@@ -260,7 +297,10 @@ inline bool Lower(std::span<const uint32_t> src,std::vector<uint32_t>& dst,Stats
             if(a.size()!=4||!t||t->op!=30||t->a.size()!=3||t->a[1]!=u32||t->a[2]!=u32||m.Type(a[2])!=u32||m.Type(a[3])!=u32)return false;
             auto p=product(a[2],a[3]);emit(80,{r.type,r.id,p[0],p[1]});++s.extended;continue;
         }
-        if(r.id&&removed[r.id])continue;
+        if(r.id&&removed[r.id]){
+            if(r.op!=21&&r.op!=23&&r.op!=28&&r.op!=29&&r.op!=30&&r.op!=32&&r.op!=43&&r.op!=59)return false;
+            continue;
+        }
         if(!Refs(r,[&](uint32_t id){return !removed[id]&&!iswide(id);}))return false;
         if(r.op==224)++s.barriers;
         if(r.op==234||r.op==237||r.op==239)++s.atomics;

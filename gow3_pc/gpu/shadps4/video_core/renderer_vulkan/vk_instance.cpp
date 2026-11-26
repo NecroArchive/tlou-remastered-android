@@ -965,6 +965,12 @@ bool Instance::CreateDevice() {
     if (queue_count > 1) {
         copy_queue = device->getQueue(queue_family_index, 1);
     }
+#ifdef __ANDROID__
+    std::printf("TLOU Vulkan queue topology: driver=%s family=%u available=%u created=%u copy=%u present=%u\n",
+                vk::to_string(GetDriverID()).c_str(),queue_family_index,
+                family_properties[queue_family_index].queueCount,queue_count,
+                unsigned(queue_count>1),unsigned(queue_count>2));
+#endif
     std::printf("GPU: presents on %s\n",
                 queue_count > 2 ? "their own queue (GOW3_PRESENT_QUEUE=0: the graphics queue)"
                 : present_queue_wanted ? "the graphics queue (the family has no third queue)"

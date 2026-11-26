@@ -42,6 +42,7 @@ public:
 
     /// Refresh the known GPU tick
     void Refresh();
+    void NoteAvoidedRefresh() noexcept;
 
     /// Waits for a tick to be hit on the GPU
     void Wait(u64 tick);

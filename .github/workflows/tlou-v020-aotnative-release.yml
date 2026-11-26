@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: Qualcomm isolated external ICD, captured graphics recovery, presentation-only orientation, EOP queue status and timeline polling; release 566ba33c933f67a0be2bf2294be44b166bba21d9.
+# Trigger 2026-11-26: shared Android orientation, Qualcomm coherent completed-page batches, timeline polling and queue/KGSL measurements; release 9d0ee6e87cc96c7a14ef8af26b95c6ffc6c4a58c.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -32,11 +32,14 @@ jobs:
         run: |
           set -euo pipefail
           echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "566ba33c933f67a0be2bf2294be44b166bba21d9"
+          test "$(git rev-parse HEAD)" = "9d0ee6e87cc96c7a14ef8af26b95c6ffc6c4a58c"
           bash -n android/bionic/package_aotnative_v020.sh
           grep -Fq 'TLOU Qualcomm: verified selected ICD mapped' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
           grep -Fq 'readback.tick >= watch_tick' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
-          grep -Fq 'TLOU_QUALCOMM_PRESENT_ROTATE' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_presenter.cpp
+          ! grep -Fq 'TLOU_QUALCOMM_PRESENT_ROTATE' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_presenter.cpp
+          grep -Fq 'side-submits-avoided' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
+          grep -Fq 'TLOU_DRIVER_WAIT_PROFILE' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+          grep -Fq 'applyScreenOrientation' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
           test "$(git branch --show-current)" = "tlou-v020-from-stable-011"
           grep -Fq "versionName '0.2.0'" android-launcher/app/build.gradle
           grep -Fq "applicationIdSuffix '.aotnative2'" android-launcher/app/build.gradle

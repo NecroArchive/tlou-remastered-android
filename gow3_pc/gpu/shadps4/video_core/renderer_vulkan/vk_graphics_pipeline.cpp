@@ -54,10 +54,16 @@ bool LowerCapturedQualcommGraphics(std::span<const u32> src, std::vector<u32>& d
     // Captured on 26 Nov 14:56. The three exact modules have no wide/narrow
     // arithmetic or memory accesses; only dead type/constant declarations.
     const bool simple_vertex=vertex && src.size()==1271 && src[3]==160 &&
-        hash==0x427ddcccf807bc1full;
+        (hash==0x427ddcccf807bc1full || hash==0xeafbbb52a907f148ull ||
+         hash==0x685e1111fc2df30aull);
     const bool simple_fragment=!vertex &&
         ((src.size()==794 && src[3]==86 && hash==0x6b90c09f2970206eull) ||
-         (src.size()==987 && src[3]==116 && hash==0x7cfa7c6780a57826ull));
+         (src.size()==987 && src[3]==116 && hash==0x7cfa7c6780a57826ull) ||
+         // 26 Nov 15:56: exact captured variants. Removal of the same
+         // 20 dead declarations leaves every executable instruction intact.
+         (src.size()==1196 && src[3]==150 && hash==0x5e58a2cd42355ca8ull) ||
+         (src.size()==1377 && src[3]==183 && hash==0x3febbe927ccab4d0ull) ||
+         (src.size()==920 && src[3]==109 && hash==0x00cfcf50e42565b9ull));
     if(!(wide_vertex||old_fragment||simple_vertex||simple_fragment))return false;
     std::vector<u32> out(src.begin(), src.begin() + 5);
     u32 next = src[3];

@@ -18,6 +18,7 @@
 #include "video_core/renderer_vulkan/vk_qualcomm_image1d_compat.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 
 namespace Vulkan {
 
@@ -78,24 +79,13 @@ void CaptureQualcommComputeFailure(u64 shader_hash, u64 pipeline_key) {
 // shader instructions, or the global GPU shader cache. This can alter FP
 // denormal/signed-zero behavior, so log exactly when the workaround is used.
 bool TryQualcommFloatControlVariant(vk::Device device, const vk::ComputePipelineCreateInfo& original,
-                                   u64 shader_hash, vk::UniquePipeline& pipeline) {
-    auto& db = Storage::DataBase::Instance();
-    if (!db.IsOpened()) return false;
-    const auto prefix = fmt::format("{:#018x}_", shader_hash);
-    std::vector<std::string> names;
-    db.ForEachBlobName(Storage::BlobType::ShaderBinary, [&](const std::string& name) {
-        if (name.starts_with(prefix) && names.size() < 2) names.push_back(name);
-    });
-    // Never attach a different specialization's SPIR-V to this pipeline.
-    if (names.size() != 1) {
-        std::fprintf(stderr,
-                     "Qualcomm compute FP fallback: %zu shader variants found; "
-                     "refusing ambiguous shader=%016llx\n",
-                     names.size(), static_cast<unsigned long long>(shader_hash));
+                                   u64 shader_hash, u64 pipeline_key, vk::UniquePipeline& pipeline) {
+    std::vector<u32> spirv;
+    if (!LoadExactComputeSpirv(shader_hash, pipeline_key, spirv)) {
+        std::fprintf(stderr,"Qualcomm compute: exact SPIR-V unavailable for shader=%016llx key=%016llx\n",
+                     static_cast<unsigned long long>(shader_hash), static_cast<unsigned long long>(pipeline_key));
         return false;
     }
-    std::vector<u32> spirv;
-    db.Load(Storage::BlobType::ShaderBinary, names[0], spirv);
     std::vector<u32> alternative;
     if (!QualcommFloatCompat::DropExplicitFloatControls(spirv, alternative)) {
         std::fprintf(stderr, "Qualcomm compute FP fallback: no supported "
@@ -146,24 +136,15 @@ bool TryQualcommFloatControlVariant(vk::Device device, const vk::ComputePipeline
 // modes removal. Do not affect Mesa Turnip or any other unverified shader.
 bool TryQualcommNarrowImage1DVariant(vk::Device device,
                                     const vk::ComputePipelineCreateInfo& original,
-                                    u64 shader_hash, vk::UniquePipeline& pipeline) {
+                                    u64 shader_hash, u64 pipeline_key, vk::UniquePipeline& pipeline) {
     constexpr u64 kVerifiedTLOUShaderHash = 0x4a705408ull;
     if (shader_hash != kVerifiedTLOUShaderHash) return false;
-    auto& db = Storage::DataBase::Instance();
-    if (!db.IsOpened()) return false;
-    const auto prefix = fmt::format("{:#018x}_", shader_hash);
-    std::vector<std::string> names;
-    db.ForEachBlobName(Storage::BlobType::ShaderBinary, [&](const std::string& name) {
-        if (name.starts_with(prefix) && names.size() < 2) names.push_back(name);
-    });
-    if (names.size() != 1) {
-        std::fprintf(stderr,
-                     "Qualcomm compute image compatibility: refusing %zu ambiguous shader variants\n",
-                     names.size());
+    std::vector<u32> spirv;
+    if (!LoadExactComputeSpirv(shader_hash, pipeline_key, spirv)) {
+        std::fprintf(stderr,"Qualcomm compute: exact SPIR-V unavailable for shader=%016llx key=%016llx\n",
+                     static_cast<unsigned long long>(shader_hash), static_cast<unsigned long long>(pipeline_key));
         return false;
     }
-    std::vector<u32> spirv;
-    db.Load(Storage::BlobType::ShaderBinary, names[0], spirv);
     if (spirv.size() < 5 || spirv[0] != 0x07230203) return false;
 
     // The attached 6020-byte shader declares read-without-format but NEVER
@@ -412,7 +393,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         const char* float_retry = std::getenv("GOW3_QUALCOMM_FLOAT_CONTROLS_RETRY");
         if (!(float_retry && float_retry[0] == '0') &&
             TryQualcommFloatControlVariant(device, compute_pipeline_ci,
-                                          info_.pgm_hash, pipe)) {
+                                          info_.pgm_hash, compute_key.value, pipe)) {
             pipeline_result = vk::Result::eSuccess;
         }
     }
@@ -420,7 +401,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         const char* image_retry = std::getenv("GOW3_QUALCOMM_IMAGE1D_RETRY");
         if (!(image_retry && image_retry[0] == '0') &&
             TryQualcommNarrowImage1DVariant(device, compute_pipeline_ci,
-                                            info_.pgm_hash, pipe)) {
+                                            info_.pgm_hash, compute_key.value, pipe)) {
             pipeline_result = vk::Result::eSuccess;
         }
     }

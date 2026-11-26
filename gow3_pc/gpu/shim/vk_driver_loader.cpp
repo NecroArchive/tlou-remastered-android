@@ -201,6 +201,9 @@ bool IsExternalVendorVulkan(const char* path) {
     // replaced by the system driver on failure.
     const char* filename = std::strrchr(path, '/');
     filename = filename ? filename + 1 : path;
+    const char* raw_vendor = std::getenv("TLOU_EXTERNAL_QUALCOMM_DRIVER");
+    if (raw_vendor && std::strcmp(raw_vendor,"1")==0 &&
+        std::strncmp(filename,"driver-",7)==0) return true;
     return std::strncmp(filename, "vulkan.adr", 10) == 0 ||
            std::strncmp(filename, "vulkan.qcom", 11) == 0;
 }

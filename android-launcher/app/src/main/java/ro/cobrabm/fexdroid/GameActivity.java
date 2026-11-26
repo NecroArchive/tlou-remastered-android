@@ -285,6 +285,8 @@ public final class GameActivity extends Activity {
             TsoProfile.requireSupported111(base);
             try {
                 nativeAot=RuntimeAot.prepare(this,base);
+                if(!nativeAot.pendingCodePatches.isEmpty())throw new java.io.IOException(
+                    "Variantes ARM64 pendentes: "+nativeAot.pendingCodePatches);
                 args.set(1,nativeAot.bootImage.getAbsolutePath());
                 RunLog.write(this,"CPU backend: native ARM64 AOT; library="+nativeAot.library);
             } catch(Exception problem) {
@@ -441,6 +443,11 @@ public final class GameActivity extends Activity {
                 if(!custom.isFile()) throw new IllegalStateException("Driver selecionado ausente; selecione outro driver no menu");
                 DriverArchive.validateLibrary(custom);
                 env.put("GOW3_VULKAN_DRIVER",custom.getAbsolutePath());
+                // Raw .so imports retain the original basename in driver_name.
+                String importedName=PortSettings.prefs(this).getString("driver_name","").toLowerCase(java.util.Locale.ROOT);
+                if(custom.getName().startsWith("driver-") &&
+                    (importedName.startsWith("vulkan.adr") || importedName.startsWith("vulkan.qcom")))
+                    env.put("TLOU_EXTERNAL_QUALCOMM_DRIVER","1");
                 env.put("LD_LIBRARY_PATH",custom.getParent()+":"+cpuLibraryPath);
             }
             String ubwcMode=PortSettings.prefs(this)

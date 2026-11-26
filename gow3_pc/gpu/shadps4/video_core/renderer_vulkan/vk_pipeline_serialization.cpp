@@ -942,6 +942,38 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     return true;
 }
 
+bool LoadExactComputeSpirv(u64 pgm_hash, u64 pipeline_key, std::vector<u32>& spv) {
+    auto& db = Storage::DataBase::Instance();
+    spv.clear();
+    if (!db.IsOpened()) return false;
+    std::vector<u8> blob;
+    db.Load(Storage::BlobType::ShaderMeta, fmt::format("{:#018x}", pipeline_key), blob);
+    // Read only the fixed metadata header; reject old, unverifiable cache entries.
+    if (blob.size() < 2*sizeof(u32) + 2*sizeof(u64) + sizeof(size_t)) return false;
+    Serialization::Archive ar{std::move(blob)};
+    Serialization::Reader reader{ar};
+    u32 meta_version{}, binary_version{};
+    u64 key{}, binary_hash{};
+    size_t idx{};
+    reader.Read(meta_version);
+    reader.Read(binary_version);
+    reader.Read(key);
+    reader.Read(idx);
+    reader.Read(binary_hash);
+    if (meta_version != Serialization::ShaderMetaVersion ||
+        binary_version != Serialization::ShaderBinaryVersion || !binary_hash ||
+        key != pipeline_key ||
+        TlouComputeSplit::PermutationKey(pgm_hash, HashCombine(pgm_hash, u64(idx))) != key)
+        return false;
+    db.Load(Storage::BlobType::ShaderBinary, Serialization::ShaderBinaryName(pgm_hash, idx), spv);
+    if (spv.size() < 5 || spv[0] != 0x07230203 || spv.size() > 1024*1024 ||
+        XXH3_64bits(spv.data(), spv.size()*sizeof(u32)) != binary_hash) {
+        spv.clear();
+        return false;
+    }
+    return true;
+}
+
 void ComputePipelineKey::Serialize(Serialization::Archive& ar) const {
     Serialization::Writer key{ar};
     key.Write(value);

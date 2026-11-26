@@ -292,11 +292,13 @@ final class TouchControllerOverlay extends View {
         paint.setStyle(Paint.Style.FILL);paint.setColor(themeColor());
         paint.setTypeface(Typeface.DEFAULT_BOLD);paint.setTextAlign(Paint.Align.CENTER);
         paint.setTextSize(13*controlSize());
-        c.drawText(TlouLanguage.t(getContext(),pt),p.x,p.y+(rectangle(name)?39:54)*controlSize(),paint);
+        String translated=TlouLanguage.t(getContext(),pt);
+        if(TlouLanguage.index(getContext())!=0 && translated.equals(pt))translated=en;
+        c.drawText(translated,p.x,p.y+(rectangle(name)?39:54)*controlSize(),paint);
     }
     @Override protected void onDraw(Canvas c) {
         super.onDraw(c); refreshTheme(); c.save(); c.translate(offsetX(),offsetY()); c.scale(scale(),scale());
-        rectangle(c,"l2",108,actionStyle?"L2": "L2"); rectangle(c,"l1",108,"L1");
+        rectangle(c,"l2",108,"L2"); rectangle(c,"l1",108,"L1");
         rectangle(c,"r1",108,"R1"); rectangle(c,"r2",108,"R2");
         rectangle(c,"touchpad",126,"TOUCH"); rectangle(c,"options",108,"OPTIONS");
         circle(c,"up",39,"▲",0xffc6ad76); circle(c,"left",39,"◀",0xffc6ad76);
@@ -314,7 +316,8 @@ final class TouchControllerOverlay extends View {
             caption(c,"r1","ESCUTA","LISTEN"); caption(c,"r2","ATIRAR","FIRE");
             caption(c,"triangle","INTERAGIR","INTERACT"); caption(c,"square","CORPO A CORPO","MELEE");
             caption(c,"circle","AGACHAR","CROUCH"); caption(c,"cross","SUBIR","CLIMB");
-            caption(c,"shake","LANTERNA","FLASHLIGHT");
+            caption(c,"r3","LANTERNA","FLASHLIGHT");
+            caption(c,"shake","AGITAR LANTERNA","SHAKE LIGHT");
         }
         if (editing) {
             paint.setStyle(Paint.Style.FILL); paint.setColor(0xcc15171d);

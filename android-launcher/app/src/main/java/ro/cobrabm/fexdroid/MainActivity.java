@@ -145,7 +145,7 @@ public final class MainActivity extends Activity {
     /** Resize all on-screen buttons and their touch targets, preserving the saved layout. */
     private void controlSizeSetting(LinearLayout parent) {
         final int minPercent=75, maxPercent=160;
-        final int initial=Math.max(minPercent,Math.min(maxPercent,prefs.getInt("control_size",120)));
+        final int initial=Math.max(minPercent,Math.min(maxPercent,prefs.getInt("control_size","classic".equals(prefs.getString("control_style","action"))?120:100)));
         TextView label=text(TlouLanguage.t(this,"Tamanho dos controles (%)")+": "+initial+"%",13,ACCENT);
         parent.addView(label);
         SeekBar seek=new SeekBar(this);

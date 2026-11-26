@@ -267,7 +267,9 @@ final class RuntimeAot {
             JSONObject meta=new JSONObject(new String(Files.readAllBytes(
                 metaFile.toPath()),StandardCharsets.UTF_8));
             JSONObject built=report.optJSONObject("variant_build");
-            int groups="1.00".equals(profile)?13:11;
+            JSONObject catalogInfo=report.optJSONObject("variant_catalog");
+            JSONArray declared=catalogInfo==null?null:catalogInfo.optJSONArray("groups");
+            int groups=declared==null?0:declared.length();
             return "aarch64_generated_native_ready".equals(report.optString("status")) &&
                 ("1.00".equals(profile)||"1.11".equals(profile)) &&
                 hasCompleteVariantCatalog(report) &&

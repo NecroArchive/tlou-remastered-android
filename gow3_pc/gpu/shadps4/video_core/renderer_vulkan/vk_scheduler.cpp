@@ -232,37 +232,73 @@ static bool OrderWaitStatsEnabled() {
     }();
     return on;
 }
-static void NoteOrderWait(int kind, std::chrono::steady_clock::time_point start) {
+using OrderClock = std::chrono::steady_clock;
+static u64 OrderNs(OrderClock::duration duration) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+}
+
+static void NoteOrderWait(int kind, OrderClock::time_point start, OrderClock::time_point now,
+                          std::source_location copy_caller = {}, u64 publish_ns = 0) {
     // Distinguish the four actual ordering costs without enabling the full
     // per-task profiler, taking its global lock, or resolving stack symbols.
     static const bool detailed=std::getenv("GOW3_PROFILE")!=nullptr;
     if (!detailed) {
+        struct CopyWait {
+            std::source_location caller;
+            u64 calls{}, ns{}, publish_ns{};
+        };
         struct Totals {
             std::array<u64,4> calls{}, ns{};
-            std::chrono::steady_clock::time_point last=std::chrono::steady_clock::now();
+            std::array<CopyWait,16> copy_sites{};
+            CopyWait other_copies{};
+            OrderClock::time_point last=OrderClock::now();
         };
         static thread_local Totals totals;
-        const auto now=std::chrono::steady_clock::now();
+        const u64 elapsed = OrderNs(now - start);
         ++totals.calls[kind];
-        totals.ns[kind]+=std::chrono::duration_cast<std::chrono::nanoseconds>(now-start).count();
+        totals.ns[kind] += elapsed;
+        if (copy_caller.line()) {
+            auto site = std::ranges::find_if(totals.copy_sites, [&](const CopyWait& entry) {
+                return !entry.calls || (entry.caller.line() == copy_caller.line() &&
+                    std::string_view{entry.caller.file_name()} == copy_caller.file_name());
+            });
+            auto& entry = site != totals.copy_sites.end() ? *site : totals.other_copies;
+            entry.caller = site != totals.copy_sites.end() ? copy_caller : std::source_location{};
+            ++entry.calls;
+            entry.ns += elapsed;
+            entry.publish_ns += publish_ns;
+        }
         if(now-totals.last>=std::chrono::seconds(5)) {
             std::printf("TLOU host order (5 s per-thread): signal=%llu/%.2fms recorder=%llu/%.2fms copy-worker=%llu/%.2fms chained=%llu/%.2fms\n",
                 (unsigned long long)totals.calls[0],totals.ns[0]/1e6,
                 (unsigned long long)totals.calls[1],totals.ns[1]/1e6,
                 (unsigned long long)totals.calls[2],totals.ns[2]/1e6,
                 (unsigned long long)totals.calls[3],totals.ns[3]/1e6);
-            totals.calls={};totals.ns={};totals.last=now;
+            const auto print_copy_site = [](const CopyWait& site) {
+                if (!site.calls) return;
+                std::string_view file = site.caller.line() ? site.caller.file_name() : "other";
+                if (const auto separator = file.find_last_of("/\\"); separator != file.npos)
+                    file.remove_prefix(separator + 1);
+                std::printf("TLOU recorder wait site (5 s): %.*s:%u calls=%llu total-ms=%.2f "
+                            "publish-ms=%.2f sequence-ms=%.2f\n",
+                            static_cast<int>(file.size()), file.data(),
+                            static_cast<unsigned>(site.caller.line()),
+                            static_cast<unsigned long long>(site.calls), site.ns / 1e6,
+                            site.publish_ns / 1e6, (site.ns - site.publish_ns) / 1e6);
+            };
+            for (const auto& site : totals.copy_sites) print_copy_site(site);
+            print_copy_site(totals.other_copies);
+            totals = {.last = now};
         }
         return;
     }
     static std::mutex mutex;
     static std::map<std::pair<const void*, int>, std::pair<u64, u64>> waits;
     static auto last = std::chrono::steady_clock::now();
-    const auto now = std::chrono::steady_clock::now();
     std::scoped_lock lock{mutex};
     auto& entry = waits[{g_wait_owner, kind}];
     ++entry.first;
-    entry.second += u64(std::chrono::duration_cast<std::chrono::nanoseconds>(now - start).count());
+    entry.second += OrderNs(now - start);
     if (now - last < std::chrono::seconds{5}) {
         return;
     }
@@ -320,7 +356,7 @@ void Scheduler::WaitDeferredSignals() {
                                   Gow3Copy::Enabled(),
                                   [] { Gow3Copy::WaitAsync(); });
     if (OrderWaitStatsEnabled()) {
-        NoteOrderWait(0, start);
+        NoteOrderWait(0, start, OrderClock::now());
     }
 }
 
@@ -343,23 +379,26 @@ void Scheduler::WaitGuestOrder(const GuestOrder& order) {
                                   Gow3Copy::Enabled(),
                                   [] { Gow3Copy::WaitAsync(); });
     if (OrderWaitStatsEnabled()) {
-        NoteOrderWait(3, start);
+        NoteOrderWait(3, start, OrderClock::now());
     }
 }
 
-void Scheduler::WaitHostCopies() {
+void Scheduler::WaitHostCopies(std::source_location caller) {
     guest_write_epoch.fetch_add(1, std::memory_order_relaxed);
     if (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
-        Gow3Stats::WaitTimer timer{Gow3Stats::host_copies_wait_ns};
         Gow3Stats::host_copy_waits.fetch_add(1, std::memory_order_relaxed);
-        const auto start = std::chrono::steady_clock::now();
+        const bool profile = OrderWaitStatsEnabled();
+        const auto start = OrderClock::now();
         KickRecording(true);
+        const auto published = profile ? OrderClock::now() : start;
         // A short spin keeps uncontended completions fast. For longer waits,
         // park until the recorder publishes the required sequence instead of
         // scheduling this thread repeatedly while game workers need CPU time.
         Detail::WaitForHostCopySequence(host_copies_done, host_copies_issued);
-        if (OrderWaitStatsEnabled()) {
-            NoteOrderWait(1, start);
+        const auto now = OrderClock::now();
+        Gow3Stats::host_copies_wait_ns.fetch_add(OrderNs(now - start), std::memory_order_relaxed);
+        if (profile) {
+            NoteOrderWait(1, start, now, caller, OrderNs(published - start));
         }
     }
     // gow3 20 Oct 2026 (idle CPU): nothing on the copy threads and nothing batched by this
@@ -376,7 +415,7 @@ void Scheduler::WaitHostCopies() {
     const auto start = std::chrono::steady_clock::now();
     Gow3Copy::WaitAsync();
     if (OrderWaitStatsEnabled()) {
-        NoteOrderWait(2, start);
+        NoteOrderWait(2, start, OrderClock::now());
     }
 }
 

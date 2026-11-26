@@ -2529,7 +2529,15 @@ bool BufferCache::GpuBytesInFlight(VAddr page) {
     std::bitset<4096> covered;
     if (const auto it = page_writes.find(page >> 12); it != page_writes.end()) {
         auto* semaphore = scheduler.GetWorkSemaphore();
-        semaphore->Refresh(); // the cached value lags: finished work would count as running
+        // Only older writes with unknown completion need a driver query.
+        // Writes since the last readback are covered regardless of completion.
+        const u64 current = scheduler.CurrentTick();
+        const bool need_refresh = std::ranges::any_of(it->second, [&](const PageWrite& write) {
+            return write.tick < last_readback_tick && write.tick < current &&
+                   !semaphore->IsFree(write.tick);
+        });
+        if (need_refresh) semaphore->Refresh();
+        else semaphore->NoteAvoidedRefresh();
         for (const auto& write : it->second) {
             // Recorded since the last readback (the next one brings it) or not finished yet.
             if (write.tick >= last_readback_tick || !semaphore->IsFree(write.tick)) {

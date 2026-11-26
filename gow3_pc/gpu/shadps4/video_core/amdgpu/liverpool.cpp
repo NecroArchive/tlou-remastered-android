@@ -889,7 +889,7 @@ void SignalEop(const PM4CmdEventWriteEop& eop) {
 // Batch actual readbacks, NOT their guest-visible signals. Each producer's
 // copy, snapshot, page protection and fence callback remain in original order.
 // Android's small EOP/RELEASE_MEM submissions cost hundreds of ms per 5 s.
-// Bound the open tick to eight readback-producing events or 350 us between
+// Bound the open tick to twelve readback-producing events or 350 us between
 // events. A natural submit changes the tick and starts a new group.
 // Guest idle, faults, and unmet PM4 waits retain explicit submission paths.
 static void SubmitDeferredReadbacks(Vulkan::Rasterizer& rasterizer, bool compute) {
@@ -901,7 +901,7 @@ static void SubmitDeferredReadbacks(Vulkan::Rasterizer& rasterizer, bool compute
     if (batch) {
         struct State {
             AmdGpu::Detail::EopBatchPolicy policy;
-            u64 eop{}, releases{}, flushes{}, grouped{};
+            u64 eop{}, releases{}, flushes{}, grouped{}, count_flushes{}, age_flushes{};
             std::chrono::steady_clock::time_point report{};
         };
         static thread_local State state;
@@ -910,18 +910,22 @@ static void SubmitDeferredReadbacks(Vulkan::Rasterizer& rasterizer, bool compute
         const u64 now_ns=std::chrono::duration_cast<std::chrono::nanoseconds>(
             now.time_since_epoch()).count();
         if(compute)++state.releases;else ++state.eop;
-        if(state.policy.Observe(tick,now_ns)) {
+        const auto limit=state.policy.ObserveLimit(tick,now_ns);
+        using Limit=AmdGpu::Detail::EopBatchPolicy::Limit;
+        if(limit!=Limit::None) {
             ++state.flushes;
+            if(limit==Limit::Count)++state.count_flushes;else ++state.age_flushes;
             rasterizer.Flush();
         } else {
             ++state.grouped;
         }
         if(state.report.time_since_epoch().count()==0)state.report=now;
         if(now-state.report>=std::chrono::seconds(5)) {
-            std::printf("TLOU EOP batching (5 s): graphics=%llu compute=%llu deferred-immediate-flush=%llu cap-flush=%llu\n",
+            std::printf("TLOU EOP batching (5 s): graphics=%llu compute=%llu deferred-immediate-flush=%llu cap-flush=%llu count=%llu age=%llu\n",
                 (unsigned long long)state.eop,(unsigned long long)state.releases,
-                (unsigned long long)state.grouped,(unsigned long long)state.flushes);
-            state.eop=state.releases=state.grouped=state.flushes=0;
+                (unsigned long long)state.grouped,(unsigned long long)state.flushes,
+                (unsigned long long)state.count_flushes,(unsigned long long)state.age_flushes);
+            state.eop=state.releases=state.grouped=state.flushes=state.count_flushes=state.age_flushes=0;
             state.report=now;
         }
         return;

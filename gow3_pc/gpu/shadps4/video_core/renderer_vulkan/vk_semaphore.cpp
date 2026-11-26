@@ -76,6 +76,16 @@ void Semaphore::NoteAvoidedRefresh() noexcept {
 
 void Semaphore::Refresh() {
 #ifdef __ANDROID__
+    // All issued ticks already known complete. Querying cannot prove
+    // completion of the current unsubmitted tick. A concurrent NextTick()
+    // may advance after this snapshot, just as after an actual driver query.
+    const u64 next = CurrentTick();
+    if (next && KnownGpuTick() >= next - 1) {
+        NoteAvoidedRefresh();
+        return;
+    }
+#endif
+#ifdef __ANDROID__
     const bool profile = TimelineProfile();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 #endif

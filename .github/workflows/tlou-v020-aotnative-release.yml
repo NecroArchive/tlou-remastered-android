@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: common Android timeline, Qualcomm graphics-only queue, shared live orientation, retained shader recovery; release 53e09452c569ceb1be7fac8f32473c169c3b7434.
+# Trigger 2026-11-26: bounded EOP and compute release batching, explicit idle/wait submission, captured Qualcomm shader permutations; release d1ac5c021a7493460e9e05610c68f9b2dc1aeb53.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "53e09452c569ceb1be7fac8f32473c169c3b7434"
+          test "$(git rev-parse HEAD)" = "d1ac5c021a7493460e9e05610c68f9b2dc1aeb53"
           bash -n android/bionic/package_aotnative_v020.sh
           grep -Fq 'TLOU Qualcomm: verified selected ICD mapped' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
           grep -Fq 'readback.tick >= watch_tick' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
@@ -96,6 +96,11 @@ jobs:
           bash android/bionic/test_runtime_contracts.sh
           python3 -m unittest discover -s android/tests -v
           python3 gow3_pc/tests/test_srt_arm64.py -v
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_eop_batch_policy.cpp -o /tmp/test_tlou_eop_batch_policy
+          /tmp/test_tlou_eop_batch_policy
+          grep -Fq 'SubmitDeferredReadbacks(rasterizer, false)' gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp
+          grep -Fq 'SubmitDeferredReadbacks(rasterizer, true)' gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp
+          grep -Fq '0x5e58a2cd42355ca8ull' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
       - name: Restore pinned Bionic native dependencies read-only
         uses: actions/cache/restore@v4
         with:

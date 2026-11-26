@@ -88,5 +88,16 @@ int main(void) {
     tlou_cpu_policy_apply(NULL,0);assert(!sched_getaffinity(0,sizeof(actual),&actual));assert(!memcmp(&actual,&original,sizeof(actual)));
     assert(!setenv("TLOU_FAST_RENDER_CORES","0",1));tlou_cpu_policy_apply(NULL,1);
     assert(!sched_getaffinity(0,sizeof(actual),&actual));assert(!memcmp(&actual,&original,sizeof(actual)));
+    // Cortex helper restore must also work when the legacy flag is OFF.
+    assert(!setenv("BB_AOT","/data/local/libtlouaot.so",1));
+    assert(!setenv("TLOU_AOT_CORTEX_RENDER","1",1));
+    cpu_set_t narrow; CPU_ZERO(&narrow); CPU_SET(first,&narrow);
+    if (!sched_setaffinity(0,sizeof(narrow),&narrow)) {
+        pthread_t thread; void *result=(void *)1;
+        assert(!pthread_create(&thread,NULL,restore_worker,&original));
+        assert(!pthread_join(thread,&result)); assert(!result);
+    }
+    assert(!sched_setaffinity(0,sizeof(original),&original));
+    assert(!unsetenv("TLOU_AOT_CORTEX_RENDER")); assert(!unsetenv("BB_AOT"));
     puts("android-cpu-policy: topology, restricted mask, missing metadata, inheritance, restore and OFF passed");
 }

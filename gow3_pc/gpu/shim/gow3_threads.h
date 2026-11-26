@@ -61,7 +61,8 @@ inline unsigned Available() {
     cpu_set_t set;
 #ifdef __ANDROID__
     // Helper sizing must use the launch mask, not a critical thread's subset.
-    if (tlou_cpu_policy_enabled() && tlou_cpu_parse_mask(std::getenv("TLOU_BASE_CPU_SET"), &set))
+    if ((tlou_cpu_policy_enabled() || tlou_aot_cortex_render_enabled()) &&
+        tlou_cpu_parse_mask(std::getenv("TLOU_BASE_CPU_SET"), &set))
         return std::max(1, CPU_COUNT(&set));
 #endif
     CPU_ZERO(&set);

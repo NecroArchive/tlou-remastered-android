@@ -162,8 +162,11 @@ static inline void tlou_cpu_policy_apply(const char *role,int critical) {
     cpu_set_t prime_choice;
     const int split_role=split && tlou_aot_split_prime_mask(role,&fast,&prime_choice);
     if(split_role) wanted=prime_choice;
-    // Do not pin guest-main/worker/helper threads when only split mode is on.
-    if(!legacy && !split_role)return;
+    // On Cortex, children created by a narrowed render thread inherit that
+    // mask. Restore the original allowed set for every helper/guest role
+    // that invokes the policy, otherwise the fast cores get oversubscribed.
+    // Preserve the existing Oryon-only policy.
+    if(!legacy && !split_role && !tlou_aot_cortex_render_enabled())return;
     CPU_AND(&wanted,&wanted,&baseline);
     if (!CPU_COUNT(&wanted) || sched_getaffinity(0,sizeof(current),&current)) return;
     int result=0;

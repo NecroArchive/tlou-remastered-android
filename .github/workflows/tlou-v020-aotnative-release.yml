@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: Qualcomm structural subgroup and unused narrow buffer aliases; tested on four captured shaders; release 6be319e99de4794203417c5d556dfbd49508685a.
+# Trigger 2026-11-26: Qualcomm lossless graphics, exact fresh compute recovery, stage subgroup contract and landscape options; release 8943440461f270d090e4d79f65a770e686c25fd0.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

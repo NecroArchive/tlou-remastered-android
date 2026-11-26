@@ -47,6 +47,7 @@ bool LowerCapturedQualcommGraphics(std::span<const u32> src, std::vector<u32>& d
     // New permutations of the same emitter layout are admitted only when
     // every removed declaration is proved unused. Keep exact old ALU lowering.
     if (QualcommDeadIntDecls::Strip(src,dst)) return true;
+    if (vertex && QualcommDeadIntDecls::StripCapturedStorageAliases(src,dst)) return true;
     u64 hash = 14695981039346656037ull;
     for (u32 word : src)
         for (unsigned shift = 0; shift < 32; shift += 8)
@@ -629,9 +630,18 @@ GraphicsPipeline::GraphicsPipeline(
                     return CopyShaderModuleSource(device,modules[stage],words) ||
                            LoadExactComputeSpirv(infos[stage]->pgm_hash,key.stage_hashes[stage],words);
                 };
-                if(get(vs,vs_src) && get(fs,fs_src) &&
-                   LowerCapturedQualcommGraphics(vs_src,vs_lower,true) &&
-                   LowerCapturedQualcommGraphics(fs_src,fs_lower,false)) {
+                const bool have_vs=get(vs,vs_src),have_fs=get(fs,fs_src);
+                const bool lower_vs=have_vs&&LowerCapturedQualcommGraphics(vs_src,vs_lower,true);
+                const bool lower_fs=have_fs&&LowerCapturedQualcommGraphics(fs_src,fs_lower,false);
+                std::printf("Qualcomm graphics legalization: key=%016llx VS=%u->%u PS=%u->%u normalized=%u/%u\n",
+                    static_cast<unsigned long long>(key_hash),unsigned(vs_src.size()),unsigned(vs_lower.size()),
+                    unsigned(fs_src.size()),unsigned(fs_lower.size()),unsigned(lower_vs),unsigned(lower_fs));
+                if(have_vs && have_fs && (lower_vs||lower_fs)) {
+                    // A module without a proven rewrite remains byte-identical.
+                    // Do not reject a valid rewrite merely because its partner
+                    // has real narrow/wide instructions.
+                    if(!lower_vs)vs_lower=vs_src;
+                    if(!lower_fs)fs_lower=fs_src;
                     auto make=[&](const std::vector<u32>& words) {
                         return device.createShaderModuleUnique(vk::ShaderModuleCreateInfo{
                             .codeSize=words.size()*sizeof(u32),.pCode=words.data()});
@@ -688,6 +698,24 @@ GraphicsPipeline::GraphicsPipeline(
                 report<<"key="<<std::hex<<key_hash<<" native_subgroup="<<std::dec<<instance.SubgroupSize()
                       <<" colors="<<unsigned(key.num_color_attachments)<<" depth="<<unsigned(key.z_format)
                       <<" stencil="<<unsigned(key.stencil_format)<<"\n";
+                report<<"state topology="<<unsigned(topology)
+                      <<" depth_vk="<<unsigned(pipeline_rendering_ci.depthAttachmentFormat)
+                      <<" stencil_vk="<<unsigned(pipeline_rendering_ci.stencilAttachmentFormat)
+                      <<" samples="<<unsigned(sdata.multisampling.rasterizationSamples)
+                      <<" sample_shading="<<unsigned(sdata.multisampling.sampleShadingEnable)
+                      <<" mixed_samples="<<unsigned(instance.IsMixedDepthSamplesSupported())
+                      <<" dynamic_depth="<<unsigned(instance.IsExtendedDynamicState3Supported())
+                      <<" dynamic_vertex="<<unsigned(instance.IsVertexInputDynamicState())
+                      <<" polygon="<<unsigned(raster_chain.get().polygonMode)
+                      <<" stages="<<shader_stages.size()<<"\n";
+                for(u32 i=0;i<key.num_color_attachments;++i)
+                    report<<"color["<<i<<"] vk="<<unsigned(color_formats[i])
+                          <<" samples="<<unsigned(color_samples[i])
+                          <<" mask="<<static_cast<unsigned>(static_cast<VkColorComponentFlags>(attachments[i].colorWriteMask))
+                          <<" blend="<<unsigned(attachments[i].blendEnable)<<"\n";
+                for(const auto& stage:shader_stages)
+                    report<<"vk_stage="<<unsigned(stage.stage)
+                          <<" require64="<<unsigned(stage.pNext!=nullptr)<<"\n";
                 for(size_t i=0;i<MaxShaderStages;++i)if(infos[i]) {
                     std::vector<u32> spv;
                     const bool ok=CopyShaderModuleSource(device,modules[i],spv)||

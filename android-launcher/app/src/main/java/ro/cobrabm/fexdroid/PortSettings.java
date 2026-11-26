@@ -124,6 +124,7 @@ final class PortSettings {
         env.put("TLOU_SRT_DEP_BATCH","0");
         env.put("GOW3_FETCH_NO_BLOCK","1");
         env.put("GOW3_LAND_ON_GUEST","1");
+        env.put("GOW3_READBACK_WAKE","1");
         env.put("GOW3_STATIC_MIN_BYTES","512");
         env.put("TLOU_STACK_MAPPED_READBACK","1");
         env.put("TLOU_INLINE_SINGLE_COPY","1");

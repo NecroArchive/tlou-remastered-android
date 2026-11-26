@@ -7,6 +7,7 @@
 #endif
 #include <array>
 #include <map>
+#include <memory>
 #include <string>
 #include <fmt/format.h>
 #include <chrono>
@@ -337,15 +338,6 @@ void Liverpool::Process(std::stop_token stoken) {
     }
 }
 
-// gow3 21 Oct 2026 (GPU worker): GOW3_READBACK_WAKE=1 (see the idle loop in ProcessLoop). The
-// scheduler's priority thread wakes the command thread when the GPU has passed a readback; the
-// target is cleared before the Liverpool goes away.
-namespace {
-std::mutex g_readback_wake_mutex;
-Liverpool* g_readback_wake_target = nullptr; ///< guarded by g_readback_wake_mutex
-bool g_readback_woken = false;               ///< guarded by the target's submit_mutex
-} // namespace
-
 void Liverpool::ProcessLoop(std::stop_token stoken) {
     Common::SetCurrentThreadName("shadPS4:GpuCommandProcessor");
 #ifdef __ANDROID__
@@ -388,20 +380,31 @@ void Liverpool::ProcessLoop(std::stop_token stoken) {
         }
         return on;
     }();
-    if (readback_wake) {
-        std::scoped_lock guard{g_readback_wake_mutex};
-        g_readback_wake_target = this;
+    // A scheduler callback can outlive this loop. Keep the target specific to
+    // this session and detach it under the same lock the callback uses.
+    struct ReadbackWake {
+        std::mutex mutex;
+        Liverpool* target = nullptr;
+        bool signaled = false; // guarded by the target's submit_mutex
+    };
+    const auto wake = readback_wake ? std::make_shared<ReadbackWake>() : nullptr;
+    if (wake) {
+        wake->target = this;
     }
     struct WakeTargetReset {
-        bool on;
+        ReadbackWake* wake;
         ~WakeTargetReset() {
-            if (on) {
-                std::scoped_lock guard{g_readback_wake_mutex};
-                g_readback_wake_target = nullptr;
+            if (wake) {
+                std::scoped_lock guard{wake->mutex};
+                wake->target = nullptr;
             }
         }
-    } wake_target_reset{readback_wake};
+    } wake_target_reset{wake.get()};
     u64 wake_armed_tick = 0;
+    u64 readback_completions = 0;
+    u64 readback_timeouts = 0;
+    u64 readback_work_arrivals = 0;
+    auto last_wake_report = std::chrono::steady_clock::now();
 
     while (!stoken.stop_requested()) {
         {
@@ -423,16 +426,16 @@ void Liverpool::ProcessLoop(std::stop_token stoken) {
                     rasterizer->Flush();
                 }
                 rasterizer->GetBufferCache().PollReadbacksNow();
-                if (readback_wake) {
+                if (wake) {
                     auto& scheduler = rasterizer->GetRuntime().GetScheduler();
                     const u64 tick = rasterizer->GetBufferCache().OldestPendingReadbackTick();
                     if (tick != 0 && tick != wake_armed_tick && tick < scheduler.CurrentTick()) {
                         wake_armed_tick = tick;
-                        scheduler.DeferPriorityOperationAt(tick, [] {
-                            std::scoped_lock guard{g_readback_wake_mutex};
-                            if (Liverpool* target = g_readback_wake_target) {
+                        scheduler.DeferPriorityOperationAt(tick, [wake] {
+                            std::scoped_lock guard{wake->mutex};
+                            if (Liverpool* target = wake->target) {
                                 std::scoped_lock target_lock{target->submit_mutex};
-                                g_readback_woken = true;
+                                wake->signaled = true;
                                 target->submit_cv.notify_all();
                             }
                         });
@@ -440,21 +443,36 @@ void Liverpool::ProcessLoop(std::stop_token stoken) {
                 }
                 lk.lock();
                 if (rasterizer->GetBufferCache().HasDeferredSignals()) {
-                    if (readback_wake) {
-                        submit_cv.wait_for(lk, std::chrono::milliseconds{1}, [this] {
-                            return std::exchange(g_readback_woken, false) || num_commands ||
-                                   num_submits || submit_done;
+                    if (wake) {
+                        const bool notified = submit_cv.wait_for(lk, std::chrono::milliseconds{1},
+                                                                [this, &wake] {
+                            return wake->signaled || num_commands || num_submits || submit_done;
                         });
+                        if (std::exchange(wake->signaled, false)) {
+                            ++readback_completions;
+                        } else if (notified) {
+                            ++readback_work_arrivals;
+                        } else {
+                            ++readback_timeouts;
+                        }
                     } else {
                         submit_cv.wait_for(lk, std::chrono::milliseconds{1});
                     }
                 }
             }
             if (serviced_readbacks) {
+                const auto now = std::chrono::steady_clock::now();
                 Gow3Stats::gpu_idle_readback_ns.fetch_add(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now() - idle_start).count(),
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(now - idle_start).count(),
                     std::memory_order_relaxed);
+                if (wake && now - last_wake_report >= std::chrono::seconds{5}) {
+                    std::printf("TLOU readback wake: gpu=%llu timeout=%llu work=%llu\n",
+                                static_cast<unsigned long long>(readback_completions),
+                                static_cast<unsigned long long>(readback_timeouts),
+                                static_cast<unsigned long long>(readback_work_arrivals));
+                    readback_completions = readback_timeouts = readback_work_arrivals = 0;
+                    last_wake_report = now;
+                }
             }
             Common::CondvarWait(submit_cv, lk, stoken,
                                 [this] { return num_commands || num_submits || submit_done; });

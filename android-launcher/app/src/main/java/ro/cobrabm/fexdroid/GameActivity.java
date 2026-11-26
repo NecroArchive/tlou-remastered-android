@@ -94,6 +94,7 @@ public final class GameActivity extends Activity {
         if(!logDir.isDirectory()&&!logDir.mkdirs())throw new java.io.IOException("Falha ao criar pasta dos logs");
         logFile=RunLog.runtime(this);
         if(logFile.exists()){ File previous=new File(logDir,"runtime-previous.log"); previous.delete(); logFile.renameTo(previous); }
+        RunLog.rotateShaderCaptures(this);
         try(FileOutputStream out=new FileOutputStream(logFile)){out.write("TLOU runtime: aguardando inicialização do processo\n".getBytes(StandardCharsets.UTF_8));}
         applyScreenOrientation();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

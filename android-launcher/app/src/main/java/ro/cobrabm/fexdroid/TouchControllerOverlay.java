@@ -32,10 +32,10 @@ final class TouchControllerOverlay extends View {
     // Mobile action geometry derived from the approved Uncharted layout.
     // Classic positions remain in their existing preference namespace.
     private static final float[][] ACTION_DEFAULT={
-        {260,108},{112,108},{585,104},{690,104},{1016,108},{1166,108},
-        {145,242},{85,302},{205,302},{145,362},
-        {1125,285},{1190,455},{1050,565},{980,402},
-        {142,570},{210,535},{905,535},{825,575},{640,655}
+        {247,111},{101,111},{592,105},{701,105},{1035,111},{1188,111},
+        {175,414},{175,414},{175,414},{175,414},
+        {1166,273},{1192,429},{1080,530},{1019,384},
+        {146,532},{284,551},{960,551},{830,532},{640,628}
     };
     private final boolean actionStyle;
     private final PadBridge pad;
@@ -62,7 +62,7 @@ final class TouchControllerOverlay extends View {
     TouchControllerOverlay(Context context,PadBridge pad,boolean mouseEnabled) {
         super(context); this.pad=pad; this.mouseEnabled=mouseEnabled;
         actionStyle=!"classic".equals(PortSettings.prefs(context).getString("control_style","action"));
-        preferences=context.getSharedPreferences(actionStyle?"tlou_action_touch_v2":"gow3",Context.MODE_PRIVATE);
+        preferences=context.getSharedPreferences(actionStyle?"tlou_action_touch_v3":"gow3",Context.MODE_PRIVATE);
         float[][] defaults=actionStyle?ACTION_DEFAULT:DEFAULT;
         for (int i=0;i<NAMES.length;i++) {
             String name=NAMES[i];
@@ -111,7 +111,16 @@ final class TouchControllerOverlay extends View {
     private String hit(float x,float y) {
         PointF dpad=dpadCenter();
         float size=controlSize();
-        if (actionStyle && visibleDistance(x,y,dpad)<58*size*DPAD_VISUAL_SCALE) return "dpad";
+        if(actionStyle) {
+            PointF p=selectorCenter();
+            float dx=(displayX(x)-p.x)/selectorSize(),dy=(y-p.y)/selectorSize();
+            if(Math.abs(dx)<=150 && Math.abs(dy)<=27) {
+                if(editing)return "dpad";
+                if(dx< -118)return "selector_left";
+                if(dx>118)return "selector_right";
+                return "selector_"+Math.min(3,Math.max(0,(int)((dx+118)/59)));
+            }
+        }
         if (!actionStyle && !editing && visibleDistance(x,y,dpad)<112*size && distance(center("up").x,center("up").y,dpad)<115 &&
             distance(center("left").x,center("left").y,dpad)<115 &&
             distance(center("right").x,center("right").y,dpad)<115 &&
@@ -119,11 +128,12 @@ final class TouchControllerOverlay extends View {
         String winner=null; float best=Float.MAX_VALUE;
         for (String name:NAMES) {
             if(actionStyle && (name.equals("up")||name.equals("down")||name.equals("left")||
-                name.equals("right")||name.equals("l3")||name.equals("r3")))continue;
+                name.equals("right")))continue;
             PointF p=center(name);
             float dx=Math.abs(x-p.x)*horizontalScale(),dy=Math.abs(y-p.y);
-            boolean inside=actionStyle ? visibleDistance(x,y,p)<(stick(name)?84:
-                    name.equals("touchpad")||name.equals("options")||name.equals("shake")?38:49)*size : rectangle(name) ? dx<(name.equals("touchpad") ? 72 : 62)*size && dy<38*size
+            boolean inside=actionStyle ? visibleDistance(x,y,p)<(stick(name)?82:
+                    name.equals("touchpad")||name.equals("options")||name.equals("shake")||name.equals("l3")||name.equals("r3")?40:
+                    name.equals("l1")||name.equals("l2")||name.equals("r1")||name.equals("r2")?54:46)*size : rectangle(name) ? dx<(name.equals("touchpad") ? 72 : 62)*size && dy<38*size
                     : visibleDistance(x,y,p)<(stick(name) ? (actionStyle?82:70) : name.equals("l3") || name.equals("r3") ? 39 : 48)*size;
             if (inside && visibleDistance(x,y,p)<best) { best=visibleDistance(x,y,p); winner=name; }
         }
@@ -140,7 +150,10 @@ final class TouchControllerOverlay extends View {
             String control=controls.valueAt(i);
             PointF p=positions.get(controls.keyAt(i));
             if (p==null) continue;
-            if (control.equals("dpad")) {
+            if(control.startsWith("selector_")) {
+                String dir=selectorDirection(control);
+                if(dir!=null)pressed.add(dir);
+            } else if (control.equals("dpad")) {
                 PointF c=dpadCenter();
                 float dx=(p.x-c.x)*horizontalScale(),dy=p.y-c.y;
                 if(actionStyle) {
@@ -170,10 +183,6 @@ final class TouchControllerOverlay extends View {
             } else pressed.add(control);
         }
         if (mouse!=mouseDown) { mouseDown=mouse; }
-        if(actionStyle) {
-            if(leftStickClicked)pressed.add("l3");
-            if(rightStickClicked)pressed.add("r3");
-        }
         pad.virtual(pressed,lx,ly,rx,ry,left,right,l2,r2);
         invalidate();
     }
@@ -259,7 +268,7 @@ final class TouchControllerOverlay extends View {
             positions.put(id,new PointF(x,y));
             touchDownPositions.put(id,new PointF(x,y));touchDownTimes.put(id,e.getEventTime());
         } else if (action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_POINTER_UP) {
-            clickStickIfDoubleTapped(id,e.getEventTime());
+            // Explicit L3/R3 targets; analog taps do not synthesize extra clicks.
             controls.remove(id); positions.remove(id);touchDownPositions.remove(id);touchDownTimes.remove(id);
         }
         if (action==MotionEvent.ACTION_MOVE) {
@@ -271,7 +280,7 @@ final class TouchControllerOverlay extends View {
         publish(); return true;
     }
 
-    private int themedColor=0xffb3c88f;
+    private int themedColor=0xffd6e89f;
     private void refreshTheme() {
         String value=PortSettings.prefs(getContext()).getString("control_color","olive");
         switch(value) {
@@ -279,7 +288,7 @@ final class TouchControllerOverlay extends View {
             case "white": themedColor=0xffe4e9dc; break;
             case "red": themedColor=0xffd28b7e; break;
             case "blue": themedColor=0xff92b5cf; break;
-            default: themedColor=0xffb3c88f; // The Last of Us weathered olive
+            default: themedColor=0xffd6e89f; // The Last of Us weathered olive
         }
     }
     private int themeColor(){return themedColor;}
@@ -436,13 +445,13 @@ final class TouchControllerOverlay extends View {
 
     // Uncharted: desaturated slate surfaces and weathered metallic edges.
     // Neutral steel/sandstone surfaces; pressed controls have a subtle warm highlight.
-    private static final int ACTION_EDGE=0xffc0d1d9;
-    private static final int ACTION_EDGE_ACTIVE=0xffc8b28a;
-    private static final int ACTION_GLYPH=0xffedf4f4;
-    private static final int ACTION_GLYPH_ACTIVE=0xfff1dfba;
+    private static final int ACTION_EDGE=0xffd6e89f;
+    private static final int ACTION_EDGE_ACTIVE=0xfff2ffc1;
+    private static final int ACTION_GLYPH=0xffdce8ad;
+    private static final int ACTION_GLYPH_ACTIVE=0xfff2ffc1;
     private int actionFill(boolean down) {
         float a=Math.min(.95f,.50f+(down?.19f:0f));
-        return (Math.round(a*255f)<<24)|(down?0x00354c5a:0x00132230);
+        return (Math.round(a*255f)<<24)|(down?0x004d6021:0x00142108);
     }
     private int classicFill(boolean down) {
         float a=Math.min(.95f,.50f+(down?.25f:0f));
@@ -502,116 +511,84 @@ final class TouchControllerOverlay extends View {
         c.drawLine(.36f,-.30f,.36f,.11f,paint);
         c.restore();paint.setStyle(Paint.Style.FILL);
     }
+    private void actionSurface(Canvas c,float x,float y,float r,boolean down) {
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(actionFill(down));c.drawCircle(x,y,r,paint);
+        // Edge lighting is confined to the circular button, not the gameplay.
+        paint.setShader(new android.graphics.RadialGradient(x,y,r,
+            new int[]{0x00000000,0x162a3c0b,0x887b983b},new float[]{0f,.70f,1f},
+            android.graphics.Shader.TileMode.CLAMP));
+        c.drawCircle(x,y,r,paint);paint.setShader(null);
+        paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.8f*controlSize());
+        paint.setColor(down?ACTION_EDGE_ACTIVE:themeColor());c.drawCircle(x,y,r,paint);
+    }
+    private void drawMask(Canvas c,String name,float x,float y,float r) {
+        Bitmap icon=glyphs.get(name);
+        if(icon==null){drawActionGlyph(c,name,x,y,r);return;}
+        glyphPaint.setColorFilter(new android.graphics.PorterDuffColorFilter(themeColor(),android.graphics.PorterDuff.Mode.SRC_IN));
+        c.drawBitmap(icon,null,new RectF(x-r,y-r,x+r,y+r),glyphPaint);
+    }
     private void actionButton(Canvas c,String name,float radius,String label) {
-        PointF p=visibleCenter(name);
-        final float r=radius*controlSize();
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(actionFill(pressed.contains(name)));
-        c.drawCircle(p.x,p.y,r,paint);
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setColor(0xe006111b);paint.setStrokeWidth(6f);
-        c.drawCircle(p.x,p.y,r,paint);
-        paint.setColor(pressed.contains(name)?ACTION_EDGE_ACTIVE:ACTION_EDGE);
-        paint.setStrokeWidth(2.8f);c.drawCircle(p.x,p.y,r,paint);
-        if (name.equals("touchpad")) {
-            c.drawRoundRect(p.x-r*.49f,p.y-r*.22f,p.x+r*.26f,p.y+r*.36f,
-                            5f,5f,paint);
-            c.drawRoundRect(p.x-r*.26f,p.y-r*.40f,p.x+r*.50f,p.y+r*.18f,
-                            5f,5f,paint);
-        } else if (name.equals("options")) {
-            paint.setStrokeWidth(4.6f);
-            c.drawLine(p.x-r*.22f,p.y-r*.46f,p.x-r*.22f,p.y+r*.46f,paint);
-            c.drawLine(p.x+r*.22f,p.y-r*.46f,p.x+r*.22f,p.y+r*.46f,paint);
-        } else if ("r2".equals(name)) {
-            drawFirePistol(c,p.x,p.y,r*.77f);
-        } else if ("triangle".equals(name)) {
-            drawInteractHand(c,p.x,p.y,r*.76f);
-        } else {
-            Bitmap detailed=("l1".equals(name)||"r1".equals(name)||"shake".equals(name)||"circle".equals(name))?null:glyphs.get(name);
-            if(detailed!=null) {
-                float iconRadius=r*.82f;
-                c.drawBitmap(detailed,null,
-                    new RectF(p.x-iconRadius,p.y-iconRadius,p.x+iconRadius,p.y+iconRadius),
-                    glyphPaint);
-            } else {
-                // Decoding errors are non-fatal and never affect control input.
-                drawActionGlyph(c,name,p.x,p.y,r*.67f);
-            }
-        }
-        paint.setStyle(Paint.Style.FILL);
-        if(label!=null&&!label.isEmpty()) {
-            paint.setColor(ACTION_GLYPH);paint.setTextAlign(Paint.Align.CENTER);
-            paint.setTypeface(Typeface.DEFAULT_BOLD);
-            paint.setTextSize(18*controlSize());
-            c.drawText(label,p.x,p.y+r+22*controlSize(),paint);
+        PointF p=visibleCenter(name);float s=controlSize(),r=radius*s;
+        actionSurface(c,p.x,p.y,r,pressed.contains(name)||("touchpad".equals(name)&&pressed.contains("touchpad_right")));
+        paint.setColor(themeColor());paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(3*s);
+        if("touchpad".equals(name)) {
+            c.drawRoundRect(p.x-r*.49f,p.y-r*.22f,p.x+r*.26f,p.y+r*.36f,5,5,paint);
+            c.drawRoundRect(p.x-r*.26f,p.y-r*.40f,p.x+r*.50f,p.y+r*.18f,5,5,paint);
+        }else if("options".equals(name)){
+            paint.setStrokeWidth(5*s);c.drawLine(p.x-r*.16f,p.y-r*.40f,p.x-r*.16f,p.y+r*.40f,paint);
+            c.drawLine(p.x+r*.16f,p.y-r*.40f,p.x+r*.16f,p.y+r*.40f,paint);
+        }else drawMask(c,name,p.x,p.y,r*.80f);
+        if(!label.isEmpty()){
+            paint.setStyle(Paint.Style.FILL);paint.setColor(themeColor());paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTypeface(Typeface.DEFAULT_BOLD);paint.setTextSize(23*s);
+            c.drawText(label,p.x,p.y+r+20*s,paint);
         }
     }
-    // Four independently highlighted, bevel-edged arms of a real PS-style
-    // D-pad, instead of the old circle with two crossing lines.
-    // Make the cross large enough to operate with a thumb. Only the D-pad
-    // uses this factor: the analog sticks and action buttons stay unchanged.
-    // Arm extent: 52 * 1.5 = 78 (near the 80-unit analog base radius).
-    private static final float DPAD_VISUAL_SCALE=1.50f;
-    private static final float[][] DPAD_ARMS={
-        {-18f,-52f,18f,-7f}, {7f,-18f,52f,18f},
-        {-18f,7f,18f,52f}, {-52f,-18f,-7f,18f}
-    };
+    // Selector is a visual replacement for the four native directional keys.
+    // Left/right arrows preserve menu navigation and long-gun/handgun access.
     private static final String[] DPAD_DIRECTIONS={"up","right","down","left"};
-    private void actionDpad(Canvas c) {
-        final PointF p=visibleDpadCenter();
-        final float s=controlSize()*DPAD_VISUAL_SCALE;
-        c.save();
-        c.translate(p.x,p.y);
-        for (int i=0;i<4;i++) {
-            final float[] arm=DPAD_ARMS[i];
-            final boolean selected=pressed.contains(DPAD_DIRECTIONS[i]);
-            final float x0=arm[0]*s,y0=arm[1]*s,x1=arm[2]*s,y1=arm[3]*s;
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(selected?0xff405868:0xd91a2b38);
-            c.drawRoundRect(x0,y0,x1,y1,6f*s,6f*s,paint);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(4.5f*s);
-            paint.setColor(0xec06111b);c.drawRoundRect(x0,y0,x1,y1,6f*s,6f*s,paint);
-            paint.setStrokeWidth(2.3f*s);
-            paint.setColor(selected?ACTION_EDGE_ACTIVE:ACTION_EDGE);
-            c.drawRoundRect(x0,y0,x1,y1,6f*s,6f*s,paint);
-            // Engraved directional chevrons: visible on each separate arm.
-            paint.setColor(selected?ACTION_GLYPH_ACTIVE:ACTION_GLYPH);
-            paint.setStrokeWidth(3.3f*s);
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            if (i==0) {
-                c.drawLine(-7f*s,-29f*s,0,-37f*s,paint);
-                c.drawLine(0,-37f*s,7f*s,-29f*s,paint);
-            } else if (i==1) {
-                c.drawLine(29f*s,-7f*s,37f*s,0,paint);
-                c.drawLine(37f*s,0,29f*s,7f*s,paint);
-            } else if (i==2) {
-                c.drawLine(-7f*s,29f*s,0,37f*s,paint);
-                c.drawLine(0,37f*s,7f*s,29f*s,paint);
-            } else {
-                c.drawLine(-29f*s,-7f*s,-37f*s,0,paint);
-                c.drawLine(-37f*s,0,-29f*s,7f*s,paint);
-            }
+    private static final String[] SELECTOR_ICONS={"pistol","brick","bottle","medkit"};
+    static String selectorDirection(String key) {
+        switch(key) {
+            case "selector_left":return "left";
+            case "selector_right":case "selector_0":return "right";
+            case "selector_1":case "selector_2":return "down";
+            case "selector_3":return "up";
+            default:return null;
         }
-        paint.setStrokeCap(Paint.Cap.BUTT);
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(0xff1a2c39);
-        c.drawRoundRect(-12f*s,-12f*s,12f*s,12f*s,3f*s,3f*s,paint);
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(1.4f*s);
-        paint.setColor(ACTION_EDGE);
-        c.drawRoundRect(-12f*s,-12f*s,12f*s,12f*s,3f*s,3f*s,paint);
-        paint.setStyle(Paint.Style.FILL);
+    }
+    private float selectorSize(){return Math.min(controlSize(),1.15f);}
+    private PointF selectorCenter(){
+        PointF p=visibleDpadCenter();float half=150*selectorSize()+5;
+        float edge=(getWidth()/Math.max(scale(),.001f)-1280)/2f;
+        p.x=Math.max(-edge+half,Math.min(1280+edge-half,p.x));return p;
+    }
+    private void actionDpad(Canvas c){
+        PointF p=selectorCenter();float s=selectorSize();
+        c.save();c.translate(p.x,p.y);c.scale(s,s);
+        paint.setStyle(Paint.Style.FILL);paint.setColor(0x99131e07);
+        c.drawRoundRect(-150,-27,150,27,27,27,paint);
+        paint.setStyle(Paint.Style.STROKE);paint.setColor(themeColor());paint.setStrokeWidth(1.6f);
+        c.drawRoundRect(-150,-27,150,27,27,27,paint);
+        for(int i=0;i<4;i++){
+            float x=-118+i*59+29.5f;boolean down=false;
+            for(int k=0;k<controls.size();k++)if(("selector_"+i).equals(controls.valueAt(k)))down=true;
+            paint.setStyle(Paint.Style.FILL);paint.setColor(down?0xaa708c24:0x6015210a);
+            c.drawRoundRect(x-28,-24,x+28,24,9,9,paint);
+            paint.setStyle(Paint.Style.STROKE);paint.setColor(themeColor());paint.setStrokeWidth(down?2.5f:1.1f);
+            c.drawRoundRect(x-28,-24,x+28,24,9,9,paint);
+            drawMask(c,SELECTOR_ICONS[i],x,0,19);
+        }
+        paint.setStyle(Paint.Style.STROKE);paint.setColor(themeColor());paint.setStrokeWidth(3);
+        c.drawLine(-129,-7,-136,0,paint);c.drawLine(-136,0,-129,7,paint);
+        c.drawLine(129,-7,136,0,paint);c.drawLine(136,0,129,7,paint);
         c.restore();
     }
     private void actionStick(Canvas c,String name) {
         PointF p=visibleCenter(name);
         float r=80*controlSize();
-        paint.setStyle(Paint.Style.FILL);paint.setColor(actionFill(false));
-        c.drawCircle(p.x,p.y,r,paint);
-        paint.setStyle(Paint.Style.STROKE);paint.setColor(0xe006111b);
-        paint.setStrokeWidth(6f);c.drawCircle(p.x,p.y,r,paint);
-        paint.setColor(ACTION_EDGE);paint.setStrokeWidth(2.8f);c.drawCircle(p.x,p.y,r,paint);
+        actionSurface(c,p.x,p.y,r,false);
         float kx=p.x,ky=p.y;
         for(int i=0;i<controls.size();i++) {
             if(name.equals(controls.valueAt(i))) {
@@ -624,20 +601,21 @@ final class TouchControllerOverlay extends View {
                 break;
             }
         }
-        paint.setStyle(Paint.Style.FILL);paint.setColor(0xa04d6573);
+        paint.setStyle(Paint.Style.FILL);paint.setColor(0xa0789243);
         c.drawCircle(kx,ky,31*controlSize(),paint);
     }
     @Override protected void onDraw(Canvas c) {
         super.onDraw(c);refreshTheme();c.save();c.translate(offsetX(),offsetY());c.scale(scale(),scale());
         if(actionStyle) {
-            actionButton(c,"l1",46,"L1");actionButton(c,"l2",46,"L2");
-            actionButton(c,"r1",46,"R1");actionButton(c,"r2",46,"R2");
+            actionButton(c,"l1",52,"L1");actionButton(c,"l2",52,"L2");
+            actionButton(c,"r1",52,"R1");actionButton(c,"r2",52,"R2");
             actionButton(c,"touchpad",34,"");actionButton(c,"options",34,"");
             actionDpad(c);
             actionButton(c,"triangle",46,"△");actionButton(c,"square",46,"□");
             actionButton(c,"circle",46,"○");actionButton(c,"cross",46,"×");
             actionStick(c,"leftstick");actionStick(c,"rightstick");
-            actionButton(c,"shake",34,"");
+            actionButton(c,"l3",40,"L3");actionButton(c,"r3",40,"R3");
+            actionButton(c,"shake",37,"");
         } else {
             rectangle(c,"l2",108,"L2");rectangle(c,"l1",108,"L1");
             rectangle(c,"r1",108,"R1");rectangle(c,"r2",108,"R2");

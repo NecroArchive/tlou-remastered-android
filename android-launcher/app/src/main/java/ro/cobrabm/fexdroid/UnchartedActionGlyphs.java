@@ -1,5 +1,4 @@
 package ro.cobrabm.fexdroid;
-
 import android.graphics.Bitmap;
 import android.util.Base64;
 import java.io.ByteArrayInputStream;
@@ -7,63 +6,54 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.zip.InflaterInputStream;
-
-/** Anti-aliased action silhouettes from the user-supplied Uncharted control reference.
- * Kept as 4-bit alpha masks to minimise APK size; no fonts, emoji, or extra resources.
- * Classic PlayStation layout does not load any of these masks.
- */
+/** Alpha masks extracted from the approved TLOU action HUD reference. */
 final class UnchartedActionGlyphs {
-    private static final int SIZE=64;
+    private static final int SIZE=48;
     private static final String[][] DATA={
-        {"l1","eNrNlV1IVEEYhuestqJ7c1YzKCsUKiIStsQIg7Lowi6KNUKtLpLCH6w0qJT+tAKF7U/oQlIq6S4slCSKkjxF0EVkq91EIrvFJv2we+am3VbP2XmbOWvg2R3vHQ7nwHmYb97v+96ZIWQRDYU/m9zis8DILcyrrSgpdKtyvNbXevjFSFOrR84z2+obblGEe9sqpavn1hFyEgALDxyVRcj3ErKEApTil1vCKzxcIedA4pUnHbvP858ZfsHN0hIJ93GeY3E9EjiVzmtuE7XMis9fE+kB1p3dnDmW5GabVyLwWFWjoGD0j7RAec4yi89sj0l74M51WTzkSizQviQfz06oMlzdO3gtyPlsu4yTDUhg8u4oMAIm4es1LhyBqQ/w7EV5urhmIMKzZ9PHPVlIL5+znflfWtk/Uxx4k4rVhuuRsVGrtKhVh6KpPMfsGbjgB+PzA3H3vtnUAmnU8D3SrfQp2+liKQZw8v/hyMhHwYO4nJeaQLHoSoKONfElgphQ6BN7ctwWhpA2ee4m1REl3d/s829x04jckHjX248Y6bb7w1lyyeKiPj9WRELkiJ23mAf2DCU5EPhRTlZ+txWHs6tbg0lu+BEiBbH53MHl6Z8bLlk8PgRDKbAVMMMKbXZ1BZPz40rB1/k8S2TP0cP6APAFiCqu8fl89RxHuKc3+Izy/Lfb5i/RRGMsec+rqpCWv7Pt/hTmYrwrqvaHSMcDW3zjzLL/HKNPd3mUflv/OsAam5IVhqnhp6rAxvspo+8Pj1ruMihDeb7hTuUw7xykXGGYHw9Frqhij2/wyrCuOg3gFomT4k+2DbCDxTSx+uTuEwiAhdSOUza+CpwLfebpqn7Q146w3Z4ZfTE/ZbpYvnzLY6MwO2R3j6PTq0FohF72+9h+ci/FnZkYXjcoBLC/LWBe99EU8zv88YE6H+UH41vKedreU4dmgqzzIpd+CJiWnC3tce6gL3XXY906vOl7X9nIuY6p0x4/ZiXTleKoJno3U1PquyI7mpymLg7uh5gslF8d28B03WzWUSm/O5QKjenfNTqsLHR1rbkRaEBcVRe825Sly/u8Cllc4x+dWU3G"},
-        {"l2","eNrNlc1rE0EUwGea1m7Aw0w8JWiJQYoga6oXQaF+4E2sOXivV/Fgj4JQY/AmQnvxpjH0D1jsqbfFg9cuCYpY2C5pe7BUXSi2qUlmn7O72e5kZrMXL32H8DK/eZP3HYROlEzMpPPCcjo//Smdn/2Yzs9VUyDh9qsI4REYo9KTdbZ2lYy4gJ/9BnDBXZtJvICfg9czNwyAjVtJ/DXs1c5fezV20YIfRRXfs7oVnp8Gz6HBvih43GEVPz4/P6fMnvIL9+FREH/T/8zCV9nc7aCYo0VPemAWFojAM9bOcGxGB4v2ZJ4RkWsD84jjSVgSuc6i+jQHivFH5MaBxLHeE5KccRoy11jcaVjzKhFvD5Qxp3rsIS70j/vzZaSZQqfNddR6PDiI9Zv7Yg+FUhYCMPbVXisfxl+sKlEuaJFPZ2jOWaVccjyi/Ao/4fqFO5fYw7u3fV63N8GzuWxyj+usiLJcdz0XAI58/sa24ZfP7Q/cky4JOL8Ntv0tiJ5Sa9l/n3Inrg/epzTfDw7CXKhTg/NHcQGettT8XBZiLqvxD52JuYykviVMdVyfqJDIaRChvlGxp6L6TrhCTjPOktxfBe+KUAxjW+bzf8Uhnu1KnFpt0dms3N8aDKfMOhyyJ4tdIs1XGIHeCsfD25bn8zMW7F/I84nmYCHmedhR9oMb7ISAj1ueuoFuwC7Prd709wusqBsMv4d+rahv5aZN2E3cb+8A9syeCfCdJO7HzGMHPAD2Nnk/IopK0+s/a6WRC5iE+cEpK1xvpe///+VT7VSMJ6sn6/8W/QN3Zeiv"},
-        {"r1","eNrNlT9MU0Ecx+9apC3TMYkSTYmaOAgWN6KGLjgoEXBw0cQOSqILxWjYpIoaYoJIHHQSQiKIDiq6uEh0YBElcdCoaBNj/N93g0UJ7buvv3cP2vfa9zpzQ++un9/3d7/f797dMbamWt3UzeNRH8bZ1qcSyE80+PBTRA0J87a3h3bopvBrwAvXa/rhJf28O1SOq2cI3LgkAn1XYU6WrzAMZEjGBQsclZnTpbGFgeXY6qwFb4Wbi2Hk4sXpgcyFkroA552VOPjNHUE/ZpnDJa+6l3TioMwJ14oi8sg5bcRDXhLx3agrubKE93QVxwG5VJQLHSALPS7yMMb06rVWKCO2ZGi24JJvMu3SrCerjVka7GN78TNeLM6SPRiiv5ryNJiJ16XzvQV9+tlKP8ZYj8lYlUyxDRhYzTj4KqH7kHpu8Shbh9eM7X5T8D9oW4bVIufzSLEai/OThQB32d0O/OXBNPneqb5YKcRKStJBPGDxJixxj++zHuQ/jQTbrLw46Rd5UCIlOjz1rFX+Iy5HRKv05P2GWRtWRpa2y4x58HmoRAT4w+4DnaI8Pjo+KeKkl4gzT34tApVlo4YPlyvcrd9WpnfzY0nu0FN8o3DxjpzOhhuQKS/egx/29pP/sAendKft/JGyuXJyKy70ai6TEaX1qpTnhNYnIkqW+tcc32l9A50r+jKuLlJf5G7/CrgutF1S19+tD9CVhQe0fvvcQnNoYW6aHbky5di+akBimfveqTUYJIuYcJxPVwuPM7rbPvMK13IjJRDzpYIFaYGvFfS8n1IYr2AQohKZiQoG5yyDLsZ9cmBB2hyZ7xbO8+pq26n6wIuJtra+y4eFh0EL9Ouh3k92n/B8QPanYRiffk/dORPzfp623PpoIPNkoNnv/eJV3YNnG8RaenD/A+uclMQ="},
-        {"r2","eNpjYBgFAwGElJLxSavtXnscn3zs//8vHQVwSmve+///50Tc2v3+//+/9SpO/Yxx//+9D76hgEuepff/77fKvwNwyavP/f/LiXkKVv2MQBx57/1F7BaDnMSouu/f+2foUgKMgoyMjAyM7uXnzry9//8HI7pWJQUlp+pVs1/f/39q3/9zX5GkmNqY08t77t7MWPXn//+374B+///uCZLJNv/PAYXe/9u99t9/CHj//wdIAurb+/8xAdB9jCoGYPk6LNLvvwHlz00GO2w/Nvn/CxiU6xeD9df/xwauLMjrwiX/7+77/++++/+DmD8fRe7u3WWhzu5AC/76/AfrZ0PS9///MiUloBa1c//+AT29GSTPAzQMAv6UePyEeJsp5z3QBIh+JqU8iOZ1CxiYH0ODXew8UPqVIyRCZcDyv2UDBFgeQcOMMat8zXtYGLOC5T9JL2RgeYQIdpH6iwIo8iyPGXgOIqVJLphhOhDXCa523u+AnAoPQeXjIM5/ee9NC0qKKIbG73qw86c5KymiJhlDqDqw/7+BPI41R3CATX8giCu7yILlL+DMbPHAcP/3H2dmYegH6zfAJc0Edt5f3JkRrP0XIy55HrD8D5zyceBE/wSn8yDJ7yLOwgLk/X/vcetnB5v/Daf9jODsVYC7sBIEgdEagzYAALHxmWQ="},
-        {"triangle","eNrNlU1oE0EUx2e2m7ZWhNmgl4rSgwhqA1FBEETjxYsKOXmsBaWg1JrgwVsbT2JBAoIeKtpAQVSQ4AeihzYo+IGaxtCDVUgCPaiIyRzEJukm85xtunFmZzbnPkgC+c37mPefmYfQejQ80BlveEb80D7ne9yO+vBdL7hnAJo+CchoM4xQP/xAhjaD+fEt/38anqCDYc0C3AszfBGwCJqP66oLQQqhELNxDzzVxT9OEwgNwQIZgu86fpeG0eY5SBglWNLFTzcHyCGePgQ0pqmvm9WQlYGqUaK2pfHfxKo4AJDfCPBXl/4wLCAeeniCQgIZKk/TPJlmdZNCg+DLankZmuqi9M82gCWyW90gTx09ARDPAMSCuRWF9wHcKtF6H4O6tZXZES8/TYFbLQk0b+TADnswb5prsUFgy0p32rjalQNIeRqIB9v880UA5j1CZKLNy/yjhOcliTbs1adHwsvY6x8SMYsQpbkiryruphT+laq9FF49PGNSeFV7Nz1zRHis+JtU4Oyo4t7rhnbWVfYqfLub2emi7exOTnFkjT9wm3dA0ockW7ixKkIN4T3PZe3XymOtnzcX2A3JfUyorhVIfGGwrJ1jP6X0SYXPiAL1u3nb1oz5nxzHvgi75zdesbiu9f9tUWzeSZlRYDfFq2O612YeIOvwlUvykzrXwnYa4OWn4u/3HvECk8VV/qGRLV6xCCYe5Yxjj5wCWfp+YVH7KO88X+D8V+N6IaXlxsjt2Url4bvyN5+psOPc1OzXq6Pl134DZcu1qVNn7mSjvgNn/9lg9+S9DiOJoOBItPNQs/A6nLT/ACTwTlk="},
-        {"square","eNrNVU1o1EAUTtq1pR4k8YcKIkTQi1Kph/UoVYoXQdpDQUR0EdSCoL3VulYLKh4qrhcvrbAqeHERodhTiwpearUuIoJKs8Ef1Npt5rRLt/l5vkky20x2Eq8dmEmY7/19b968kaS1NmRVScSzs9eT4NavM1MDCRZOEXCXN2txzlMG4CCz+2LwDvDHghhXcwEOI0I8RRj+XQS3FAAF7CLiP0Te8wCmCTNU/5uIu4uAPn2c4os35Qb8qOf580lcHAMy0SwpL/3QzHkCFoFKVH0di919D08ArKj+NqgLODQPXRHz9dyA/YZS7OHxZrKqf54K8fblrR7kC12hR6CJ2N2aH8b1Lc45noDssxvZQemX0fydGucg5Xt+7Nn5AvCpaHcK2DlaC5bIIDjDYGfC+AYfJz3SHn0yB8tFsDmCFwJuuHkY6Y1BRP8Zw1UJE/UbpxP2LxcZfjXTRsqX8a8ahtez3PUaK1qa5g/C5pV8ADubkJp3FNVQgchtTN2ip/yQ5ipcHwqLDirb6XIxol73Dq+oIyet/w0Hr9bVnXbv8+sQl/vWuvqja4L7pez1z4YsLZwI5H6GuW80gt0yS5LdFQ6+A6JjInw5VCMKr8TUNRsPFP7kXG/3KavO1/ylpqHjrOWBuEiC2HzhHgnqfpKUwR2HpVovBzf1v/Azt9vFn4/tpyNlL+/Mesmp5KqY+glJjl5L+Zhn4B48N7B61causmsUI7AOwG00L4ua1iAa+GM4WBQDwqbWl9WJiczAEnfFLefuvzMNE+BDTFdNXxqf1ksNHWFVoG9oVJ8rVeOautLcPVQolO7Gt/2m/WfHpjqTnp10/43Edyd15mDyw9St/edhk9bg+AcQTX/q"},
-        {"circle","eNrdlN9LVEEUx2d0NdfWuFusFUTsrkhQEK4RRSgkPdSTbUsu1JMVpkG0EWmSRgX5kA+11AZq2tIPpV7S0giSKF/DEnrq17oQ2EPU3pfUdPfOac7svXPv/mj/AM/DMns/c74z5ztnhpAVGE6lIF7fGimEK4dmlx4UULgEAH8LLH6PcwjnF6CEpvn3/+YXIU415Gbij+ti+1bkizQLV/kRn3oD6fiTnd41sb/P15XQce7y+8hazxmDAtubZ2M2VacJSOYr7YaOU4Ho81ys1ElxYss1h5aocnW/npExKyQxjFFFOmJEKVi4wEVdtyyrh6x8ywUe3TBvWd2CgaW3wn66Jd8EOcEg5c8j/9Uy46zBN8jiku4Zc8JDQz5qqb3R5OM6LzO/UGIH7Vo8FuOKCSN/u1R3EkrbmsnuiHdn8LBX379idAVosfPoDS3Xpt3FwXafnh+3lDUZUBRaAdDeAep4Hg6/XxLkHXP1cn8zmc7cR94C5+IGv5lp3ALnahNb3nNVL78+ky9ifjVTp/QTpmWZ+gtpnqw2/C9Ge5P9g7E4m+Sjj4LDWPcxw180YJ5Qb1XtRj66Iri268sh43wOYttSvc00Xj+D6pT9iTz/CvROKMUZzPH62axL64zIBi0xuI0PniF/7/rRe9vsL+5QShjPy/MT6tBeuY63Wu54SAUNV1vN53FVx/KA90CP2f+VPD+B1TaC6No1L9q815skL0WsKUJHDSN/FFzXGpDdGcWeTokRgxqsZzjo2SHTy4WrqOscVcXLVnEn6DYeUdo5ivb+asb8p/G3+M3R0yKz7Ryq7JPopeJ3Qz4EZS3SWrKZcW9G3MLd8omjIm9Vg1nbZRWWTnBpHNcNfgiLu+u2XvyA/He6//XnmqyXYxvIa0Z6734bGPFlPVvT5mt0pK/z8cnaLIG2YfOcFOJx5jzIHrJy4x/Co0tt"},
-        {"cross","eNrNlT0sZFEUx+978/HGR3EJjeoRhWqjkKh2UaBDVFQIiXKnsLuSbYTIhkSoJGgUdJhtNkLCFCJCQUNCZEkwWRvJvMpmGHPP3rn3zoxx7nsKjVPMFL977vmfj3seIe/Qar2x76v3Ad9cvyc3t9c9LwhePna4IMOsGxhcA7akg7SktLP7OwNue9q4410Tq3GH47uETva3rYs05BZr0vDWQ2ASA0P6KKlfcM6GBqflgX9IeNnU741GQhRnQzQPW+uzP5prDVKqBMBTfgTr9MEmBjFC0tuBp94X4mTETzJ6zQXM5IevCov/iOBh4l9p1FXIEjhlcwecYPb6e6LhIkpU8EW35kn18GVic37W1hxoEDgufv9o/A8hZw+2i3plt5gXvJFn72d7EUhg7lPNOx+jUbiliIv043+bK4l5BCc4v8I0b6LEKAkC7GDexnEyfa1hgaMpcjvnN6JQQQZh/DzSzV8UskIspan/Jedy7EIsieX7M+H5/U7C0JYnJhtlwbV+uNRUfoQR3F2ePlOqelJ4AVA+fJlnG0n2Ivcgl3+V4ftY/mcx+NKiv/DSgVx42oJfR48a/NxjwKOvRPuH8XoKcHysxmTtsQ/xCv7k1VIsgmVb11vlTorvRnFxo9nopGjX1oWPZfuA3emHZyvNxO5mJJe7brHyyfpJ3XmAwUGHh3/AfWfI4q7Gw55flPLJV75o1ZS8T/sP5IdnvA=="}
+        {"l1","eNqNkrENwjAQRR0ihcJFxATpaRgh2YC0dPQUbEAyAkNAQ8EImBGyAYyQIkWEcD72+WKnQAhXT/bdv/9tC/H/ksfAeR+4en9npRmW57IaWUErrpnBrI61X4AuCaNDIcHl81akGJgbsQIcR7XIgcJPAmrGCHg0zDGwHjbcjUGOVRn65HJ13RVabxgYO61MN+HRvZX0o4wensxZiGKcpb5B6Zn3bApW3LwzkxLcLSaUQ9VORds662yhrHY8uHgnm4A0CcWcrt9djKQA7j0k+XGJ0jpwRmG3xIfJk94CRpjs75vJwenHn/gAq4t2fw=="},
+        {"l2","eNpjYMADGA+Qxha7Cmdy/f//Asbe53ggfgKEyX6B8QDjDghbF6RXDsLeAmIzXQAxgSTIzA0gNrcDmK0BYstB7OIDsW0gbHYHILsEwmZuYABrArEZQQaBMEj+AZIbgfJMMDZQH1MDgs0MVMsIcqUJg2T0tFUpzF8YQ0N3hsqtfrVqC/sPplX7//0Dq2H+AtULMnsCmjkFSOZ/gLqBAeIGMHaAuqUAyc0WEDY3yDxZCBscKNwQtg2IDVQIYm8BB/gDRFgx1ILY8g4MkMACsqFhy/iF8YA0zHbpV69+wqMr+1UAIu4aGAiyGRqwxzUDxFIAyodLzQ=="},
+        {"r1","eNqt0aFOxTAUBuC/bXKb7CSbhnCHQbJhZ0iKgScAjcaAQFxDUt6AR8BiyBUTc/QR+gg1eMRF3oyupxuahCPaL216enoK/F/cvS2U4xhmH3/e7Gc/AWeGKXaA9mwVZ5EPaBuHnl3h8BUbdo2PPRr2Wnzfm5rdKE+2RMG20hMqk2xEdEo3OdBKuegDaaNJulxGIH2RyxC+UiZbLhYgW2eTqUyTrVyLTbZ0A3oteP05yFBwfn1ltSvTvSAdCzvSJrtFR+kmKjBgW3Ij3uWX8PxKMWivbZc7R2aFbdItyqnU5H5yeiLi7nrqUoqHyefsR5wCJ+xu7maM9nK3mMaX33+8/sOf/wCrn0Es"},
+        {"r2","eNpjYBjMQABCMYOI/f8hYD2Q////t1Wr9v//shvM/v0KyP4wkYGBHarkwyQGBu7//3+tWv3//5ffDAz6UPHfrxBqHjkwMDD9//8z/ALEDiD7KFMDnO3J5AC1+/9/V2aoc4B6r0VC2dz//6UlQNn8///CnSyPxNb//wfOtv//A86u//8Fzga6HM7+//8BjMn4//8FGJsJSZwha1XAYIohAKrcY8w="},
+        {"triangle","eNqN0TESgjAQBdAEZ7RIQW3FDeQI0lnmSHAEb+IJnOUIHIHWSooUKRzWye6SpBBkq1dk/yQ/Sm1McU82LrOPPBt3WdxaB40YrMPMsObbkGynv8ZdHrf8TOcLbMB6tsYeHig5MAAubsfgN/k6BSO5zlx5MuWXM0Yb/O3Digs2daLZPV2f3XHNZH5WHTizy+AP+xQsP6ZjvCxL5aqK8bzciY+IL7Vzvn2uylo="},
+        {"square","eNqtkbFKA0EQhveMSSC+gFxzb2AeIYeNhe1VCrGxs7jW7lLZWCUvkCKN3dVWm0dQRCwEc4WYIs0Jm2QVdn83O7ubtAEHFj6Ynf//mWHsX+t6iwcYBE5QBe7iyzeiIZ/Vjo/0VS4dF3jlngGJJQ1EgM7nlVMH3seCRg0vC+mcFlAQzqniGp9OUiQKH5Y5RGuEPCV5wS4VH5C8ZHyFlOQl695j86Vh+JjlylmJk1PST4C694IpSRqvb+2TPUNmPtkZ9AOlgTKvpjT4Ma0pudrauLYJrVOHY23Ypm+WeEOpbWB2g35xl9FyYnXLU7eo1uOv8juOJpBh4eeoA8d4Ctws0+21LnaOeLjHwf8AxHmmbw=="},
+        {"circle","eNqdkjESATEUhhNmKLZwAIUj5AjiBgpG4RB7hHUTOobCBZAtdJocYQujoFEolmF/sUledozKq755k/f//0vC2F/VmAUWr8AJJDEwqXD6q88D8xFoNoaCwxow9foRcFiQEfZBBNpxE8GpVWFRYRXOf0YTTU6INckUIiXXXLh+B7h27sQ6cvEFzsOesjm7RuexVNIzsJI+AnCXbtbU0+tczuun98qYyEuum8MsuVFmmVwtt42xsoH6bIxM2aDFbo7c5uGl+o5WxGtrVyzWZpmN5VtD4WTlefbxywNH7in65V0cw/vywddHeAPqY6SU"},
+        {"cross","eNqdkj0OwjAMhQMIRSIDDEww9AgcgSzsSIhzcAKULuwMnIJL0CPkCB26wMTgoVKhxm2cHyYkvORT8vzsOBHiv5hHHLSRh6gDjwJfsfGcIQVvG8K7z9sYLJ3d4UIn0LOqhUB89zwpSIVYcbLEdgHMU5LMmFcIoQODNjSJeNprX4wCEn55y29uascKsd2B7/+xleBLaaGejtc0BM+GPBRXvkHk7oIq53ZoVZrtac3YsrvrUodUMdZObpOx5oFlMnpVRc6iRBwjSkjkZbJfJC9ok1c+//wHH25tZQs="},
+        {"l3","eNpjYCAfcP///xdE1///fwAn+wFMNT8Sm5tqbH4k89kmwNhcDWCKyQHhWP0fCPb/f3Am8///DkjsAzA2OxKbG4c4sl7G//8R5uf/RLBZAzDCjZ/GYYLC/rVqBYiltWo9SrzwI7FZQ0NDQGzR0FAHUtMAABE6XKg="},
+        {"r3","eNqd0DEOgjAUBuBXNSGRQRZnFlfCFTiCN+AILg4OGthdPIKHcHDQ1CMQE8PKIdC4lN8Kj7Zsxk5fmr//ax7RrydwvHF8cbwdWCTW3s165tzHJr8YvK4tRWVmLykRZ/aJyH93nEZEq0PncJ8IxZHsXtCRS1CbSgG1s0baf2cMlDn/OgSelY+qrQHUurOOownE/JvxtZHzJE1lGgGe5Wk+uD7W7qdKgL/eRip2LE2hkCkavh6hNHGBF4q+JlPSrDJsrmZjHuz6Rjau5ybWkbPtCf17PlEmYIU="},
+        {"shake","eNpjYMADGAMQbO4PSOwvBNiyELYAiF3vANZbAWLbX2BgB7L/gtj8H0Bsph8gNvMPkBp2iBV/QfbKHwCzbcEmQAxlgZqMF4iGhobC2P+BAEncAcbOWrVqFYy9H0kNkex/MLb+//8/4F7///8DEvvCUGaz///fAE8CiODECgDA2mWS"},
+        {"pistol","eNpjYBjMwAJKyx9gYPgPA28YmODsPwzMQDL/1a79MPb/V6vAariR1Mgjsfnh7D0Q9f//rVq1kgFs5g/uB2DrGIEKFZgPgNlANR8UmBkw2OwgNdwQNsjM/Xvg7AehARC2/v//B2BesUdlO8DYQIfDvfsfwQY64R+MDbT2LxL7D4zNjcRGFqcnAAAYN4RL"},
+        {"brick","eNq90b1qAkEQB/C5gB5kC+0kBLw38B7B08LaRgLJQ1xr5d4j+ByBKARSWNyqb2BhZ6Ngeg0T2Ssu48x9mSdwqx//2YWZWYC7n9o/vw4rtqLfko4BPS38NhuZRfEwVoTdvBBa9X35SoSPqZkHejUWz/eawD82Jf4bmJcPhU/sZepZd9vpxQAKPfNOa/RTAPfUOHm79IHYYEw9VuiLxwpdq/ok1tEi0Hs/NzbshOPM1COJCcXYrjMpElMQMi1kPkgsLfPVMzPrWOXOJnGW4iSf8FlcTF5jJ+VGwnMZc9c/VQzO5+a2zOb9/xKuAZuGSg=="},
+        {"bottle","eNpjYCAPcCQg2BZ6CHYL0wE4m0VgAZwtIyEAZwu2ItSbHkCI54towpjs1xtYHaBs+Q8OcCX1f+BMxv9wNvf//x8YGCHs/f//P4CyGf///3+AgQPMZgaz4crhbH4g+wKUbY/E3o9gg4yBqWdGYoO0/oc6TR/EhrkRyIQ5DST8A0nrB4QLsBljj2TMf4QxTEhawcY8QHIlzCf6CK0M7P///0WEE8wFQHY9zBggiP6PiCrW/w2IOMknIR0AAMruepM="},
+        {"medkit","eNpjYKANEFu1amkAlL1r1apVK6DsC0AsC2UvAGJdKHsDXLz+PwT8ALL3I7GRAOMqKFjJwMAMVfL/HwMDEzp7NYL9lxHB/sFAkP1vC8NuGPsL2CUQ9gewC/Gzf4YwiO5HmLmfFHv//wvD4RcomwHG/gtk50PZT4Bs1lAIcGCgJwAAP0rK3g=="}
     };
     private final Map<String,Bitmap> cache=new HashMap<>();
     private boolean decoded;
-
-    private void decodeOnce() {
-        if(decoded)return;
-        decoded=true;
-        for(String[] item:DATA) {
-            try {
-                byte[] compressed=Base64.decode(item[1],Base64.NO_WRAP);
-                byte[] packed=new byte[SIZE*SIZE/2];
-                int offset=0;
-                try(InflaterInputStream zip=new InflaterInputStream(new ByteArrayInputStream(compressed))) {
+    Bitmap get(String name) {
+        if(!decoded) {
+            decoded=true;
+            for(String[] entry:DATA)try {
+                byte[] packed=new byte[SIZE*SIZE/4];
+                try(InflaterInputStream stream=new InflaterInputStream(new ByteArrayInputStream(Base64.decode(entry[1],Base64.NO_WRAP)))) {
+                    int offset=0;
                     while(offset<packed.length) {
-                        int n=zip.read(packed,offset,packed.length-offset);
-                        if(n<0)break;
-                        if(n==0)continue;
+                        int n=stream.read(packed,offset,packed.length-offset);
+                        if(n<0)throw new IOException("short mask");
                         offset+=n;
                     }
-                    if(offset!=packed.length || zip.read()!=-1)
-                        throw new IOException("Corrupt glyph " + item[0]);
+                    if(stream.read()!=-1)throw new IOException("oversize mask");
                 }
                 int[] rgba=new int[SIZE*SIZE];
-                for(int i=0;i<rgba.length;i++) {
-                    int b=packed[i>>1]&255;
-                    int alpha=((i&1)==0 ? b>>>4 : b&15)*17;
-                    float y=(float)(i/SIZE)/(SIZE-1);
-                    // The masks retain their detail, but no longer use GoW's
-                    // saturated gold. Uncharted steel/ivory is neutral and
-                    // readable against the desaturated slate button fill.
-                    int red=Math.round(226-46*y),green=Math.round(234-48*y),
-                        blue=Math.round(231-46*y);
-                    rgba[i]=(alpha<<24)|(red<<16)|(green<<8)|blue;
+                for(int i=0;i<rgba.length;i++){
+                    int a=((packed[i>>2]>>(6-2*(i&3)))&3)*85;
+                    rgba[i]=(a<<24)|0x00ffffff;
                 }
-                Bitmap bitmap=Bitmap.createBitmap(SIZE,SIZE,Bitmap.Config.ARGB_8888);
-                bitmap.setPixels(rgba,0,SIZE,0,0,SIZE,SIZE);
-                cache.put(item[0],bitmap);
-            } catch(RuntimeException|IOException e) {
-                android.util.Log.e("UnchartedTouch","Unable to decode icon " + item[0],e);
+                Bitmap b=Bitmap.createBitmap(SIZE,SIZE,Bitmap.Config.ARGB_8888);
+                b.setPixels(rgba,0,SIZE,0,0,SIZE,SIZE);
+                cache.put(entry[0],b);
+            } catch(IOException|RuntimeException e) {
+                android.util.Log.e("TLOUTouch","Unable to decode "+entry[0],e);
             }
         }
+        return cache.get(name);
     }
-    Bitmap get(String name) {decodeOnce();return cache.get(name);}
 }

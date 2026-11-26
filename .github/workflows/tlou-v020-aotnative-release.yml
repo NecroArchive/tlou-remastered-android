@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: Qualcomm lossless graphics, exact live shader source, stage subgroup contract and landscape options; release c712ce3c9e268aae9bf55ae88cf79e5561591acc.
+# Trigger 2026-11-26: Qualcomm vertex publication, exact captured VS/PS lowering, reverse orientation, full EOP readback compaction, imported mapper dependency resolution; release aacefbe132801db35219ed49313d2326ad6e89f6.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]

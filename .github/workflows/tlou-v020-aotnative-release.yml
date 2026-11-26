@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Trigger 2026-11-26: fine producer windows, exact copy waits, safe parallel pipelines, structural Qualcomm recovery, dense EOP batch and complete diagnostic export; release 5e27dc78591d0dadb8e10bf23e33341505d5c24a.
+# Trigger 2026-11-26: proven timeline completion fast paths, bounded recorder copy wait, exact unused storage alias legalization, independent stage recovery and Vulkan state capture; release cf3da741c990dd2acad847b36d2fd6999ac8383c.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -32,13 +32,13 @@ jobs:
         run: |
           set -euo pipefail
           echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "5e27dc78591d0dadb8e10bf23e33341505d5c24a"
+          test "$(git rev-parse HEAD)" = "cf3da741c990dd2acad847b36d2fd6999ac8383c"
           bash -n android/bionic/package_aotnative_v020.sh
           grep -Fq 'TLOU Qualcomm: verified selected ICD mapped' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
           grep -Fq 'readback.tick >= watch_tick' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
           ! grep -Fq 'TLOU_QUALCOMM_PRESENT_ROTATE' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_presenter.cpp
           grep -Fq 'single_graphics_queue ? 1u' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
-          grep -Fq 'Identical wait/completion policy for Qualcomm and Turnip' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_semaphore.cpp
+          grep -Fq 'PublishCompleted(gpu_tick, tick)' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_semaphore.cpp
           grep -Fq 'TLOU draw queue (5 s)' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
           grep -Fq 'TLOU_DRIVER_WAIT_PROFILE' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
           grep -Fq 'applyScreenOrientation' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
@@ -100,6 +100,11 @@ jobs:
           /tmp/test_tlou_eop_batch_policy
           c++ -std=c++20 -O2 -Wall -Wextra -Werror gow3_pc/tests/test_tlou_qualcomm_dead_int_decls.cpp -o /tmp/test_tlou_qualcomm_dead_int_decls
           /tmp/test_tlou_qualcomm_dead_int_decls
+          grep -Fq 'StripCapturedStorageAliases' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+          grep -Fq 'work_semaphore.NoteAvoidedRefresh()' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.h
+          grep -Fq 'Qualcomm graphics legalization:' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+          grep -Fq 'i < 128' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/tlou_host_copy_wait.h
+          grep -Fq 'const bool need_refresh' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp
           grep -Fq 'i<12' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/RunLog.java
           grep -Fq 'RunLog.rotateShaderCaptures(this)' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
           grep -Fq 'gpu_write_window_shift = 16' gow3_pc/gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp

@@ -1379,12 +1379,15 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     // draw the recording thread runs: built in the background, the draw carries the build. In
     // a new area the GPU thread compiled ~1,400 pipelines one after another (~77 ms each on a
     // laptop, up to 191 in one 8.7 s frame); now they build on the compiler threads at once.
-    // Qualcomm's lossless path must not publish a raw pending graphics pipeline
-    // to the recording thread while warm-up can publish the same key. Wait on
-    // the command thread instead; already-compiled hits retain the fast path.
-    if (pending_allowed && instance.GetDriverID()!=vk::DriverId::eQualcommProprietary &&
-        ParallelPipelines() && compiler && !sel.regs->stage_enable.hs_en &&
-        !EmulatorSettings.IsShaderCollect() && !graphics_pipelines.contains(sel.graphics_key)) {
+    // Qualcomm's previous exclusion was needed while background warm-up
+    // could publish the same key. Once warm-up is fully drained, use the
+    // existing lossless queued-draw path, retaining pending_keepalive.
+    // Small one-shot render targets remain synchronous on Qualcomm.
+    if (pending_allowed && ParallelPipelines() && compiler &&
+        !sel.regs->stage_enable.hs_en && !EmulatorSettings.IsShaderCollect() &&
+        !graphics_pipelines.contains(sel.graphics_key) &&
+        (instance.GetDriverID()!=vk::DriverId::eQualcommProprietary ||
+         (!sync_compile && !BackgroundWarmupActive()))) {
         const auto pend = [&](std::shared_ptr<AsyncGraphicsCompilation> build) {
             pending_keepalive.push_back(build);
             last_pending = std::move(build);

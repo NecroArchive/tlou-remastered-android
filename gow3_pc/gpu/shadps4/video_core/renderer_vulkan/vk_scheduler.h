@@ -1002,6 +1002,13 @@ public:
         if (work_semaphore.IsFree(tick)) {
             return true;
         }
+        // The current recording tick (and any future tick) cannot have
+        // completed. This is a nonblocking probe, not a request to submit.
+        // Wait()/Flush() retain the exact dependency semantics.
+        if (tick >= work_semaphore.CurrentTick()) {
+            work_semaphore.NoteAvoidedRefresh();
+            return false;
+        }
         work_semaphore.Refresh();
         return work_semaphore.IsFree(tick);
     }

@@ -16,16 +16,8 @@ void DumpDeviceFault(const Instance& instance);
 
 constexpr u64 WAIT_TIMEOUT = 1000000000;
 namespace {
-bool QualcommTimeline(const Instance& instance) {
-#ifdef __ANDROID__
-    return instance.GetDriverID() == vk::DriverId::eQualcommProprietary;
-#else
-    (void)instance;
-    return false;
-#endif
-}
-// A successful timeline wait proves the requested value has completed.
-// Publish the lower bound monotonically, without a second driver round trip.
+// Publish the observed driver counter monotonically. Concurrent refreshers
+// cannot move completion backwards or require another driver query.
 void PublishCompleted(std::atomic<u64>& known, u64 completed) {
     u64 old = known.load(std::memory_order_acquire);
     while (old < completed &&
@@ -74,16 +66,6 @@ Semaphore::Semaphore(const Instance& instance_) : instance{instance_} {
 Semaphore::~Semaphore() = default;
 
 void Semaphore::Refresh() {
-    // CurrentTick is the next recording value, not a submitted signal.
-    // If every value below it is already completed, querying the driver
-    // cannot improve the result at this point. Other ICDs retain their
-    // previous polling behavior.
-    if (QualcommTimeline(instance) && KnownGpuTick() >= CurrentTick() - 1) {
-#ifdef __ANDROID__
-        if (TimelineProfile()) { ++timeline_stats.avoided; timeline_stats.Report(); }
-#endif
-        return;
-    }
 #ifdef __ANDROID__
     const bool profile = TimelineProfile();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -134,8 +116,8 @@ bool Semaphore::WaitFor(u64 tick, u64 timeout_ns) {
     if (result != vk::Result::eSuccess) {
         return false; // timeout (a lost device shows in the next plain Wait)
     }
-    if (QualcommTimeline(instance)) PublishCompleted(gpu_tick, tick);
-    else Refresh();
+    // Identical wait/completion policy for Qualcomm and Turnip.
+    Refresh();
     return true;
 }
 
@@ -186,8 +168,8 @@ void Semaphore::Wait(u64 tick) {
                          (unsigned long long)CurrentTick());
         }
     }
-    if (QualcommTimeline(instance)) PublishCompleted(gpu_tick, tick);
-    else Refresh();
+    // Identical wait/completion policy for Qualcomm and Turnip.
+    Refresh();
 }
 
 } // namespace Vulkan

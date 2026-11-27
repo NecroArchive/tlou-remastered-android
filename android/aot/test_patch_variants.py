@@ -90,13 +90,13 @@ class AllPatchVariants(unittest.TestCase):
         old,segments=fixture()
         catalog,groups,code_count,data_count=mod.catalog_data(
             patches,lambda a,n:old.get((a,n),b""),segments,0x1200000)
-        self.assertEqual(len(groups),13)
-        self.assertEqual(len(set(groups)),13)
+        self.assertEqual(len(groups),14)
+        self.assertEqual(len(set(groups)),14)
         self.assertEqual(set(groups),{
             "resolution_720","resolution_540","resolution_360",
             *(f"effect_{x}" for x in mod.EFFECTS)})
         self.assertEqual(catalog.count("excl=resolution"),3)
-        self.assertEqual(catalog.count("\ngroup effect_"),10)
+        self.assertEqual(catalog.count("\ngroup effect_"),11)
         self.assertIn("w a93a3e eb49",catalog)
         self.assertIn("w acf111 488d0df81b6000",catalog)
         self.assertGreater(code_count,30)
@@ -116,7 +116,7 @@ class AllPatchVariants(unittest.TestCase):
                 originals[(at,len(bytes.fromhex(old)))]=bytes.fromhex(old)
         read=lambda a,n: originals.get((a,n),b"")
         catalog,names,_,_=mod.catalog_data(patches,read,segments,0x1200000,True)
-        self.assertEqual(len(names),15)
+        self.assertEqual(len(names),16)
         self.assertIn("cheat_ammo",names)
         self.assertIn("cheat_flashlight",names)
         self.assertIn("w 2c0f34 488d05d541330180783902",catalog)
@@ -147,7 +147,7 @@ class AllPatchVariants(unittest.TestCase):
                              [(0,0xA60000,True)],0x1200000)
 
     def test_all_compile_options_are_independent_of_initial_user_preferences(self):
-        self.assertEqual(mod.PROFILE,"tlou-111-variants-v5")
+        self.assertEqual(mod.PROFILE,"tlou-111-variants-v6")
         # The frontend must bake only stability fixes and hand optional groups
         # to --variants; neither +720 nor +omni may be hardcoded at build time.
         code=(ROOT/"aot_local.py").read_text()

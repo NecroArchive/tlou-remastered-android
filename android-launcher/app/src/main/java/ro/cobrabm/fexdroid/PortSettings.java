@@ -10,7 +10,7 @@ import java.util.Map;
 
 /** Log 32 launch profile. Experimental A/B switches are NOT user preferences. */
 final class PortSettings {
-    static final String[] EFFECTS={"ssao","motion_blur","depth_of_field","bloom","sunlight_shadows","subsurface","omni_light_shadows","spot_light_shadows","distant_geometry_lod","ssr"};
+    static final String[] EFFECTS={"ssao","motion_blur","depth_of_field","bloom","sunlight_shadows","subsurface","omni_light_shadows","spot_light_shadows","distant_geometry_lod","ssr","sun_shadow_quality"};
     static final String[] CHEATS={"cheat_ammo","cheat_flashlight"};
     static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences("tlou",Context.MODE_PRIVATE);

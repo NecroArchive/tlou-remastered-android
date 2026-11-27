@@ -92,7 +92,7 @@ final class RuntimeAot {
     static boolean hasCompleteVariantCatalog(JSONObject source) {
         String version=source.optString("version");
         String profile="1.00".equals(version)?"tlou-100-variants-v1":
-            "1.11".equals(version)?"tlou-111-variants-v5":"";
+            "1.11".equals(version)?"tlou-111-variants-v6":"";
         if(profile.isEmpty() || !profile.equals(source.optString("native_patch_profile")))
             return false;
         JSONObject variants=source.optJSONObject("variant_catalog");

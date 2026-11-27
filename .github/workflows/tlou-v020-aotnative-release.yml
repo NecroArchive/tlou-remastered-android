@@ -1,5 +1,5 @@
-name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# CPU-GPU synchronization: active EOS dependencies, completed readbacks, EOP batching, timeline polling and recorder FIFO. 6ccd76dcaeb87f0767a11b8d290742ded2c3c2ba.
+name: TLOU 0.2.1 AOTNative v2 APK (release source, original signer)
+# Release 0.2.1: EOS label-specific dependency, translations and removal of shadow/vegetation experiments. c1ec9c6c98337e24bef93c764c96c6fbbc15c43b.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -23,7 +23,7 @@ jobs:
       TLOU_ANDROID_API: '30'
       TLOU_CPU_BACKEND: 'aot'
     steps:
-      - name: Checkout the EXACT v0.2.0 RELEASE branch, not experimental application code
+      - name: Checkout the EXACT v0.2.1 RELEASE branch, not experimental application code
         uses: actions/checkout@v4
         with:
           ref: perf/tlou-recorder-copy-fast-20261126
@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "6ccd76dcaeb87f0767a11b8d290742ded2c3c2ba"
+          test "$(git rev-parse HEAD)" = "c1ec9c6c98337e24bef93c764c96c6fbbc15c43b"
           grep -Fq 'TLOU readback wake:' gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp
           grep -Fq 'env.put("GOW3_READBACK_WAKE","1")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
           grep -Fq 'TLOU recorder wait site (5 s):' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
@@ -48,10 +48,10 @@ jobs:
           grep -Fq 'TLOU_DRIVER_WAIT_PROFILE' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
           grep -Fq 'applyScreenOrientation' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
           test "$(git branch --show-current)" = "perf/tlou-recorder-copy-fast-20261126"
-          grep -Fq "versionName '0.2.0'" android-launcher/app/build.gradle
+          grep -Fq "versionName '0.2.1'" android-launcher/app/build.gradle
           grep -Fq "applicationIdSuffix '.aotnative2'" android-launcher/app/build.gradle
           test -s android/bionic/package_aotnative_v020.sh
-          # Verify the final v0.2.0 code cleanup is in THIS release build,
+          # Verify the final v0.2.1 code cleanup is in THIS release build,
           # not just the earlier AOT-only linker change.
           grep -Fq 'tlou-aot-native-launcher' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
           ! grep -Fq 'FEX_APP_CONFIG_LOCATION' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/GameActivity.java
@@ -216,16 +216,16 @@ jobs:
           python3 android/bionic/verify_bionic.py --ndk "$TLOU_NDK" --root out/android-bionic
           cmp out/android-bionic/lib/libgow3cpu.so out/android-bionic/aot-backend/libgow3cpu.so
           gradle -p android-launcher :app:testDebugUnitTest :app:lintVitalRelease --no-daemon --max-workers=2
-      - name: Package 0.2.0 with AOTNative v2 package and ORIGINAL debug signing certificate
+      - name: Package 0.2.1 with AOTNative v2 package and ORIGINAL debug signing certificate
         shell: bash -el {0}
         run: bash android/bionic/package_aotnative_v020.sh
-      - name: Publish verified installable v0.2.0 AOTNative APK
+      - name: Publish verified installable v0.2.1 AOTNative APK
         uses: actions/upload-artifact@v4
         with:
-          name: TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64
+          name: TheLastOfUsRemastered-Android-v0.2.1-AOTNative-v2-arm64
           path: |
-            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64.apk
-            out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64.apk.sha256
+            out/release/TheLastOfUsRemastered-Android-v0.2.1-AOTNative-v2-arm64.apk
+            out/release/TheLastOfUsRemastered-Android-v0.2.1-AOTNative-v2-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 30
       - name: Upload native build errors and tests only, never the private signer

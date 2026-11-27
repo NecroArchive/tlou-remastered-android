@@ -2089,12 +2089,12 @@ void BufferCache::PrefetchCompletedSrt() {
     const u64 complete = scheduler.GetWorkSemaphore()->KnownGpuTick();
     if (!complete || complete == srt_prefetch_tick) return;
     srt_prefetch_tick = complete;
-    // At most four candidates per already-observed completion. A miss
+    // At most two candidates per already-observed completion. A miss
     // performs no GPU wait, submission, staging allocation or page change.
-    for (unsigned i = 0; i < 4; ++i) {
+    for (unsigned i = 0; i < 2; ++i) {
         const auto entry = srt_prefetch_history[srt_prefetch_scan++ %
                                                srt_prefetch_history.size()];
-        if (entry.hits < 2 || !IsRangeGpuWrittenShared(entry.address, entry.bytes)) continue;
+        if (entry.hits < 3 || !IsRangeGpuWrittenShared(entry.address, entry.bytes)) continue;
         const VAddr page = entry.address & ~VAddr{4095};
         const u64 writer = FetchableWindowTick(page, false);
         if (!writer || writer > complete ||
@@ -4975,7 +4975,7 @@ void BufferCache::SweepTracking() {
     }
 }
 
-void BufferCache::CompleteReadbacks(bool wait, u64 wait_until) {
+void BufferCache::CompleteReadbacks(bool wait, u64 wait_until, bool force_poll) {
     // Pages of a readback are read-protected once its submission is out: a read fault waits
     // for submitted work only (never for the command buffer this thread is still recording).
     // The GPU recorder polls this path on every draw/dispatch. A queued
@@ -5025,6 +5025,7 @@ void BufferCache::CompleteReadbacks(bool wait, u64 wait_until) {
         return std::chrono::milliseconds(ms > 0 ? ms : 0);
     }();
     auto* semaphore = scheduler.GetWorkSemaphore();
+    bool polled_this_pass = false;
     while (!pending_readbacks.empty()) {
         PendingReadback& readback = pending_readbacks.front();
 #ifdef __ANDROID__
@@ -5042,14 +5043,19 @@ void BufferCache::CompleteReadbacks(bool wait, u64 wait_until) {
             if (wait && readback.tick <= wait_until) {
                 scheduler.Wait(readback.tick);
             } else {
-                // Querying the timeline semaphore is an ioctl: once per 16 polls.
-                if (!wait && (++readback_polls & 15) != 0) {
-                    return;
+                // A forced fault/idle poll may query once. The ordinary draw
+                // poll is opportunistic: a stale result can only delay landing,
+                // never authorize it. Mandatory waits above remain exact.
+                if (!wait) {
+                    if (polled_this_pass || (!force_poll && (++readback_polls & 15) != 0))
+                        return;
+                    polled_this_pass = true;
+                    if (force_poll) semaphore->Refresh();
+                    else semaphore->RefreshPoll();
+                } else {
+                    semaphore->Refresh();
                 }
-                semaphore->Refresh();
-                if (!semaphore->IsFree(readback.tick)) {
-                    return;
-                }
+                if (!semaphore->IsFree(readback.tick)) return;
             }
         }
         NoteReadbackLanded(readback.tick);
@@ -5222,15 +5228,10 @@ void BufferCache::PollReadbacksNow() {
     if (pending_readbacks.empty()) {
         return;
     }
-    auto* semaphore = scheduler.GetWorkSemaphore();
-    // Query only if the queue can contain a submitted readback with unknown
-    // completion. A current-buffer readback cannot land before submission.
-    if (pending_readbacks.front().tick < scheduler.CurrentTick() &&
-        !semaphore->IsFree(pending_readbacks.back().tick)) {
-        semaphore->Refresh();
-    }
+    // Walk the completed prefix first. Query only at the first submitted
+    // unknown tick, instead of querying the back and then querying again.
     readback_polls = 0;
-    CompleteReadbacks(false);
+    CompleteReadbacks(false, ~0ULL, true);
 }
 
 // gow3 18 Oct 2026: a CPU write into a page a pending readback read-protects (the CPU's own data
@@ -5310,6 +5311,7 @@ void BufferCache::UnwatchPage(VAddr page) {
 }
 
 u64 BufferCache::PendingReadbackTick(VAddr address, u64 size, bool newest_only) const {
+    if (!TouchesPendingReadback(address, size)) return 0;
     u64 tick = 0;
     const VAddr end = address + size;
     for (const auto& readback : pending_readbacks) {

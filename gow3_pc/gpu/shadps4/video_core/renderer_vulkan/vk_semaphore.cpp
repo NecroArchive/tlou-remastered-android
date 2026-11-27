@@ -74,6 +74,26 @@ void Semaphore::NoteAvoidedRefresh() noexcept {
 #endif
 }
 
+void Semaphore::RefreshPoll() {
+#ifdef __ANDROID__
+    const auto next = CurrentTick();
+    if (next && KnownGpuTick() >= next - 1) {
+        NoteAvoidedRefresh();
+        return;
+    }
+    const u64 now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto deadline = next_poll_ns.load(std::memory_order_relaxed);
+    if (now < deadline ||
+        !next_poll_ns.compare_exchange_strong(deadline, now + 50000,
+                                               std::memory_order_relaxed)) {
+        NoteAvoidedRefresh();
+        return;
+    }
+#endif
+    Refresh();
+}
+
 void Semaphore::Refresh() {
 #ifdef __ANDROID__
     // All issued ticks already known complete. Querying cannot prove

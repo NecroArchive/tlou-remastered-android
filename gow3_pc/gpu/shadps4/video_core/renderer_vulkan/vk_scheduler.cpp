@@ -514,24 +514,28 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             queued_chunks.store(recorder_queue.size(), std::memory_order_release);
             recorder_busy = true;
         }
-        // current_cmdbuf only changes after SyncRecording(), which waits for this thread.
-        // Counts are read from a fully published chunk; no per-host-copy
-        // atomics or clock reads are added to the critical producer path.
-        const u32 host_items = chunk->HostCopyItems();
-        const u32 host_groups = chunk->HostCopyGroups();
-        chunk->Execute(current_cmdbuf);
-        if (host_items) {
-            recorder_host_copy_items.fetch_add(host_items, std::memory_order_relaxed);
-            recorder_host_copy_groups.fetch_add(host_groups, std::memory_order_relaxed);
-        }
-        {
+        // Recycle the finished chunk and claim the next already-published
+        // chunk under the SAME lock. Busy stays true until the FIFO is empty,
+        // so SyncRecording cannot observe a false idle between chunks.
+        do {
+            const u32 host_items = chunk->HostCopyItems();
+            const u32 host_groups = chunk->HostCopyGroups();
+            chunk->Execute(current_cmdbuf);
+            if (host_items) {
+                recorder_host_copy_items.fetch_add(host_items, std::memory_order_relaxed);
+                recorder_host_copy_groups.fetch_add(host_groups, std::memory_order_relaxed);
+            }
             std::scoped_lock lk{recorder_mutex};
             free_chunks.push_back(std::move(chunk));
-            recorder_busy = false;
             if (recorder_queue.empty()) {
+                recorder_busy = false;
                 recorder_idle_cv.notify_all();
+            } else {
+                chunk = std::move(recorder_queue.front());
+                recorder_queue.pop_front();
+                queued_chunks.store(recorder_queue.size(), std::memory_order_release);
             }
-        }
+        } while (chunk);
     }
 }
 
@@ -744,7 +748,7 @@ void Scheduler::PopPendingOperations() {
         if ((++pending_polls & 31) != 0 && !Gow3Toggle::Disabled(Gow3Toggle::PendingPollLimit)) {
             return;
         }
-        work_semaphore.Refresh();
+        work_semaphore.RefreshPoll();
     }
     while (!pending_ops.empty() && work_semaphore.IsFree(pending_ops.front().gpu_tick)) {
         pending_ops.front().callback();
@@ -990,7 +994,17 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     if (submit_result==vk::Result::eErrorDeviceLost) { ReportCheckpoints(); DumpDeviceFault(instance); }
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 
+#ifdef __ANDROID__
+    // A newly submitted tick is normally not yet complete (0 completed at
+    // return in logs 27/28). ResourcePool queries on actual reuse pressure;
+    // pending operations poll below. Keep timestamp collection refreshed.
+    if (driver_probe_enabled && (signal_value & 7u) == 0)
+        work_semaphore.Refresh();
+    else
+        work_semaphore.NoteAvoidedRefresh();
+#else
     work_semaphore.Refresh();
+#endif
     CollectDriverProbe(signal_value,driver_submit_ns);
     AllocateWorkerCommandBuffers();
 

@@ -915,8 +915,8 @@ void SignalEop(const PM4CmdEventWriteEop& eop) {
 // Batch actual readbacks, NOT their guest-visible signals. Each producer's
 // copy, snapshot, page protection and fence callback remain in original order.
 // Android's small EOP/RELEASE_MEM submissions cost hundreds of ms per 5 s.
-// Bound the open tick to twelve readback-producing events or 350 us between
-// events. A natural submit changes the tick and starts a new group.
+// Bound the open tick by the tested EopBatchPolicy count and age limits.
+// A natural submit changes the tick and starts a new group.
 // Guest idle, faults, and unmet PM4 waits retain explicit submission paths.
 static void SubmitDeferredReadbacks(Vulkan::Rasterizer& rasterizer, bool compute) {
 #ifdef __ANDROID__
@@ -1385,13 +1385,34 @@ void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
         const char* env = std::getenv("TLOU_ORDERED_EOS");
         return !env || env[0] != '0';
     }();
-    // Use the same ordered recorder mechanism as EOP, but never for GDS,
-    // outstanding readbacks, GPU-written labels, or direct recording.
+    // Preserve ordered publication of guest-visible writes. Do not relax
+    // GDS, an active label-page hazard, image downloads or deferred fences.
+    using Block = Vulkan::Rasterizer::EosBlock;
     const auto label = event_eos.Address<VAddr>();
-    if (ordered_eos && event_eos.command == PM4CmdEventWriteEos::Command::SignalFence &&
+    const bool eligible = ordered_eos &&
+        event_eos.command == PM4CmdEventWriteEos::Command::SignalFence &&
         label && !(label & 3) && Vulkan::DrawPipe::OnStageB() &&
-        !Gow3Toggle::Disabled(Gow3Toggle::RecorderFences) &&
-        rasterizer.CanDeferSimpleEos(label)) {
+        !Gow3Toggle::Disabled(Gow3Toggle::RecorderFences);
+    const auto block = eligible ? rasterizer.SimpleEosBlock(label) : Block::Direct;
+    struct EosCounts {
+        std::array<u64, 6> reasons{};
+        u64 events{};
+        std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+    };
+    static thread_local EosCounts counts;
+    ++counts.reasons[static_cast<u32>(block)];
+    if ((++counts.events & 1023) == 0) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - counts.since >= std::chrono::seconds(5)) {
+            const auto& r = counts.reasons;
+            std::printf("TLOU EOS paths: recorder=%llu direct=%llu queued-page=%llu deferred-fence=%llu label-page=%llu image=%llu\n",
+                (unsigned long long)r[0], (unsigned long long)r[1],
+                (unsigned long long)r[2], (unsigned long long)r[3],
+                (unsigned long long)r[4], (unsigned long long)r[5]);
+            counts = EosCounts{};
+        }
+    }
+    if (block == Block::None) {
         rasterizer.NoteLabelAfterDma(2);
         rasterizer.NoteLabelWrite(label, 4);
         rasterizer.SignalAfterHostCopies(signal);

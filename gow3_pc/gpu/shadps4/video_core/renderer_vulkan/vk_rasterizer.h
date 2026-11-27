@@ -202,12 +202,31 @@ public:
     void ProcessDownloadImages();
     // Only called on the draw-pipe owner. Keep the synchronous path whenever
     // an EOS could cross an image, DMA or buffer readback dependency.
-    [[nodiscard]] bool CanDeferSimpleEos(VAddr label) {
-        return scheduler.IsRecordingDeferred() && dma_results.empty() &&
-               eop_soft_readbacks.empty() && eop_open_readbacks.empty() &&
-               eop_readbacks.empty() && !buffer_cache.HasDeferredSignals() &&
-               !buffer_cache.MayBeGpuWritten(label & ~VAddr{4095}, 4096) &&
-               !texture_cache.HasDownloadWork();
+    // A historical 64 KiB write bit is not an active dependency. Check
+    // the actual page (including pending snapshots), retaining the global
+    // ordering gates for readback fences and image downloads.
+    enum class EosBlock : u32 { None, Direct, QueuedResults, DeferredFence, LabelPage, Image };
+    [[nodiscard]] EosBlock SimpleEosBlock(VAddr label) {
+        if (!scheduler.IsRecordingDeferred()) return EosBlock::Direct;
+        if (buffer_cache.HasDeferredSignals()) return EosBlock::DeferredFence;
+        const VAddr page = label & ~VAddr{4095};
+        const auto intersects = [page](const auto& ranges) {
+            for (const auto& [address, size] : ranges) {
+                if (size && address < page + 4096 &&
+                    address + size > page) return true;
+            }
+            return false;
+        };
+        // EOS does not consume the EOP/DMA result queues. Only a queued
+        // result on its label page prevents the existing recorder fast path.
+        if (intersects(dma_results) || intersects(eop_soft_readbacks) ||
+            intersects(eop_open_readbacks) || intersects(eop_readbacks))
+            return EosBlock::QueuedResults;
+        if (buffer_cache.IsRangeGpuWrittenShared(page, 4096) ||
+            buffer_cache.HasPendingReadbackForRange(page, 4096))
+            return EosBlock::LabelPage;
+        if (texture_cache.HasDownloadWork()) return EosBlock::Image;
+        return EosBlock::None;
     }
     bool IsMapped(VAddr addr, u64 size);
     void MapMemory(VAddr addr, u64 size);

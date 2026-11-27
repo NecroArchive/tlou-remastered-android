@@ -42,6 +42,8 @@ public:
 
     /// Refresh the known GPU tick
     void Refresh();
+    // Opportunistic polls only; explicit dependency waits/queries stay exact.
+    void RefreshPoll();
     void NoteAvoidedRefresh() noexcept;
 
     /// Waits for a tick to be hit on the GPU
@@ -55,6 +57,9 @@ protected:
     vk::UniqueSemaphore semaphore;    ///< Timeline semaphore.
     std::atomic<u64> gpu_tick{0};     ///< Current known GPU tick.
     std::atomic<u64> current_tick{1}; ///< Current logical tick.
+#ifdef __ANDROID__
+    std::atomic<u64> next_poll_ns{0};
+#endif
 };
 
 } // namespace Vulkan

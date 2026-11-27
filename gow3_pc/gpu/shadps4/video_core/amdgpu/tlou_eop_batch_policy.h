@@ -8,8 +8,8 @@ namespace AmdGpu::Detail {
 // the tick, so the next producer starts a fresh group automatically.
 class EopBatchPolicy {
 public:
-    static constexpr std::uint32_t MaxEvents = 16;
-    static constexpr std::uint64_t MaxAgeNs = 450000;
+    static constexpr std::uint32_t MaxEvents = 24;
+    static constexpr std::uint64_t MaxAgeNs = 700000;
     enum class Limit { None, Count, Age };
     Limit ObserveLimit(std::uint64_t tick, std::uint64_t now_ns) noexcept {
         if (tick != tick_ || count_ == 0 || now_ns < first_ns_) {

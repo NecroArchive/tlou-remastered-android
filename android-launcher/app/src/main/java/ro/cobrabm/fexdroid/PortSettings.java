@@ -122,6 +122,7 @@ final class PortSettings {
         // implements GOW3_TLOU_HOST_COPY_BATCH=1 for isolated A/B experiments.
         env.put("GOW3_TLOU_HOST_COPY_BATCH","0");
         env.put("TLOU_SRT_HOT_READBACKS","1");
+        env.put("TLOU_SRT_COMPLETED_PREFETCH","1");
         env.put("TLOU_SRT_DEP_BATCH","0");
         env.put("GOW3_FETCH_NO_BLOCK","1");
         env.put("GOW3_LAND_ON_GUEST","1");

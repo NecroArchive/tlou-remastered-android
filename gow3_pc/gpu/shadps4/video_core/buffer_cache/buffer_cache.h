@@ -421,7 +421,7 @@ private:
 
     /// gow3: writes finished asynchronous readbacks to guest memory, oldest first. With
     /// `wait_until` set, waits for the GPU up to that readback tick (~0: all of them).
-    void CompleteReadbacks(bool wait, u64 wait_until = ~0ULL);
+    void CompleteReadbacks(bool wait, u64 wait_until = ~0ULL, bool force_poll = false);
 
     /// gow3: the latest tick of the pending readbacks with bytes in [address, address + size),
     /// or 0. With `newest_only`, only readbacks holding the newest GPU data of those bytes
@@ -969,6 +969,11 @@ public:
     [[nodiscard]] bool IsLabelDeferred(VAddr label) const {
         std::scoped_lock lock{deferred_mutex};
         return deferred_labels.contains(label);
+    }
+    // Draw/cache owner only: index rejects unrelated windows, exact pieces
+    // decide whether a label or a host read really overlaps a snapshot.
+    [[nodiscard]] bool HasPendingReadbackForRange(VAddr address, u64 size) const {
+        return PendingReadbackTick(address, size, false) != 0;
     }
     [[nodiscard]] bool HasDeferredSignals() const {
         return deferred_signals.load(std::memory_order_acquire) != 0;

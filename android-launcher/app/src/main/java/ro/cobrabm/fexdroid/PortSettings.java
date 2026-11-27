@@ -84,6 +84,7 @@ final class PortSettings {
         // Keep the original movie decoder, scale scene/HUD/aim as one domain.
         final String scaledPreset=resolution.equals("720")?"1":
             resolution.equals("540")?"3":resolution.equals("360")?"4":null;
+        env.put("TLOU_RENDER_AUDIT",p.getBoolean("render_audit",false)?"1":"0");
         env.put("TLOU_EXPECT_SCENE_SIZE","1920x1080");
         env.put("GOW3_UPSCALER","off");
         env.put("GOW3_OUTPUT_RES","1920x1080");

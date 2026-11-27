@@ -230,6 +230,33 @@ def create_catalog_100(baseline_boot: Path, eboot_digest: str, destination: Path
     }
 
 
+# Read-only native hook slots for the remaining render investigation. No guest
+# writes, no skips, no runtime hooks installed unless explicitly requested.
+RENDER_AUDIT_SITES = (
+    (0xB9BE75, "c5f81080c0000000"),
+    (0xA8A2F8, "4885c0"),
+    (0xA8A355, "e8466c0a00"),
+    (0xA8A697, "488b5308"),
+    (0xA8A84B, "e820620a00"),
+    (0xAA3976, "80780e00"),
+    (0xAA263D, "e8ae3e0d00"),
+    (0xB77D98, "e8b3bafcff"),
+    (0xA918BC, "e88f350000"),
+    (0xA91A44, "e807340000"),
+)
+
+def render_audit_catalog(read, segments):
+    lines = []
+    for address, expected in RENDER_AUDIT_SITES:
+        original = bytes.fromhex(expected)
+        if read(address, len(original)) != original or not any(
+                executable and start <= address and address + len(original) <= end
+                for start, end, executable in segments):
+            raise ValueError("Render audit instruction guard mismatch at +" + hex(address))
+        lines.append(f"hook {address:x} {len(original)} regs")
+    return "\n".join(lines) + "\n"
+
+
 def create_catalog(baseline_boot: Path, eboot_digest: str, destination: Path):
     patches = load_patches()
     if eboot_digest not in patches.RESOLUTION_111_SELF_SHA256:
@@ -240,6 +267,7 @@ def create_catalog(baseline_boot: Path, eboot_digest: str, destination: Path):
             f.seek(start + offset)
             return f.read(length)
         catalog, groups, codes, data = catalog_data(patches, read, segments, image_size, include_cheats=True)
+        catalog += render_audit_catalog(read, segments)
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_suffix(".tmp")
     tmp.write_text(catalog, encoding="ascii")

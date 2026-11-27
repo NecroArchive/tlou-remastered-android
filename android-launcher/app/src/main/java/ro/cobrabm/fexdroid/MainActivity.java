@@ -278,6 +278,7 @@ public final class MainActivity extends Activity {
             toggleSetting(box,"distant_geometry_lod","Reduzir LOD da geometria distante (1.11)",false);
             toggleSetting(box,"ssr","Desativar SSR (1.11)",false);
             toggleSetting(box,"sun_shadow_quality","Reduzir distância das sombras solares (1.11)",false);
+            toggleSetting(box,"render_audit","Diagnóstico de sombras e vegetação (1.11)",false);
             LinearLayout cheats=card(root,"CHEATS (1.11)");
             toggleSetting(cheats,"cheat_ammo","Munição infinita",false);
             toggleSetting(cheats,"cheat_flashlight","Lanterna infinita",false);

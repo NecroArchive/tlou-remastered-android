@@ -445,6 +445,91 @@ static void TlouTraceInvalidDispatch(GuestState* s, uint64_t target,
 
 """
 
+RENDER_AUDIT = r'''
+
+// Opt-in native slot capture: no guest register or memory writes. A failed
+// memory read is an explicit missing sample rather than a guessed value.
+static bool TlouAuditRead(uint64_t address, void* dst, size_t size) {
+    if (!address || !size || address + size < address) return false;
+    iovec local{dst, size}, remote{reinterpret_cast<void*>(address), size};
+    return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(size);
+}
+static uint64_t TlouAuditValue(uint64_t address, size_t size) {
+    uint64_t value = 0;
+    return size <= sizeof(value) && TlouAuditRead(address, &value, size) ? value : UINT64_MAX;
+}
+static uint64_t TlouAuditMatrix(uint64_t address) {
+    unsigned char data[64];
+    if (!TlouAuditRead(address, data, sizeof(data))) return UINT64_MAX;
+    uint64_t hash = 1469598103934665603ull;
+    for (auto byte : data) { hash ^= byte; hash *= 1099511628211ull; }
+    return hash;
+}
+static void TlouRenderAudit(GuestRegs* regs) {
+    const uint64_t off = regs->rip - E.base;
+    const auto* g = regs->gpr;
+    static std::mutex lock;
+    static uint64_t transform_ring[512]{};
+    static unsigned cursor = 0;
+    static unsigned samples[10]{};
+    unsigned i = 0;
+    const char* name = nullptr;
+    uint64_t a = 0, b = 0, c = 0, d = 0, e = 0;
+    std::lock_guard<std::mutex> guard(lock);
+    switch (off) {
+    case 0xb9be75:
+        i=0; name="frustum"; a=g[R12]; b=g[RAX];
+        c=TlouAuditValue(b+0x276,1); d=TlouAuditMatrix(b+0xc0); break;
+    case 0xa8a2f8:
+        i=1; name="shadow_job"; a=g[RAX]; b=g[R12];
+        c=TlouAuditValue(b+0x276,1); d=g[R13];
+        e=TlouAuditValue(g[RDX]+0x151,1); break;
+    case 0xa8a355:
+        i=2; name="atlas_clear"; a=g[RSI]; b=g[R8]; c=g[RDI]; break;
+    case 0xa8a697:
+        i=3; name="shadow_submit"; a=TlouAuditValue(g[RBX]+0x90,4);
+        b=TlouAuditValue(g[RBX],8); c=g[RBX]; break;
+    case 0xa8a84b:
+        i=4; name="atlas_resolve"; a=g[RSI]; b=g[RCX]; c=g[RDI]; break;
+    case 0xaa3976:
+        i=5; name="background_classify"; a=g[R14]; b=g[R12];
+        c=g[RAX]; d=TlouAuditValue(c+0xe,1); break;
+    case 0xaa263d:
+        i=6; name="billboard_transform"; a=g[RDI]; b=g[RSI]; c=g[RDX];
+        if (b) transform_ring[cursor++ % 512]=b;
+        break;
+    case 0xb77d98:
+        i=7; name="billboard_upload"; a=g[RDI]; b=g[RSI]; c=g[RDX];
+        if (!b || std::find(transform_ring,transform_ring+512,b)==transform_ring+512) return;
+        break;
+    case 0xa918bc:
+        i=8; name="shadow_enqueue"; a=g[R15]; b=g[RSI]; c=g[R12]; d=g[RBX]; break;
+    case 0xa91a44:
+        i=9; name="resolve_enqueue"; a=g[RSI]; b=g[RCX]; c=g[R8]; break;
+    default: return;
+    }
+    if (samples[i] >= 1024) return;
+    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::fprintf(stderr,"TLOU_RENDER_AUDIT site=%s seq=%u ns=%lld tid=%ld a=%llx b=%llx c=%llx d=%llx e=%llx\n",
+        name,++samples[i],(long long)ns,(long)syscall(SYS_gettid),
+        (unsigned long long)a,(unsigned long long)b,(unsigned long long)c,
+        (unsigned long long)d,(unsigned long long)e);
+}
+static void TlouInstallRenderAudit() {
+    const char* enabled=std::getenv("TLOU_RENDER_AUDIT");
+    if (!enabled || std::strcmp(enabled,"1")) return;
+    static const uint64_t sites[]={0xb9be75,0xa8a2f8,0xa8a355,0xa8a697,0xa8a84b,
+        0xaa3976,0xaa263d,0xb77d98,0xa918bc,0xa91a44};
+    unsigned installed=0;
+    for (uint64_t site:sites) {
+        if (site < E.size && InstallSlot(E.base+site,TlouRenderAudit,nullptr,nullptr)) ++installed;
+    }
+    std::fprintf(stderr,"TLOU_RENDER_AUDIT installed=%u expected=10\n",installed);
+    std::fflush(stderr);
+}
+'''
+
 def once(source: str, before: str, after: str, name: str) -> str:
     if source.count(before) != 1:
         raise ValueError(f"{name}: expected exactly one upstream ABI patch site; found {source.count(before)}")
@@ -586,6 +671,11 @@ def port(upstream: Path, out: Path) -> None:
                 "    TlouTraceFiberRun(s, fn, ret, true);\n"
                 "    --t->host_depth;\n",
                 "TLOU fiber run HLE return diagnostics")
+    main = once(main, "void PrepareImage() {", RENDER_AUDIT + "void PrepareImage() {",
+                "read-only render investigation slots")
+    main = once(main, "    E.ready = true;",
+                "    TlouInstallRenderAudit();\n    E.ready = true;",
+                "install optional audit after variant resolution")
     (out / "guest_cpu_aot.cpp").write_text(main)
     print(f"TLOU AOT backend: upstream {UPSTREAM}, PS4 fiber ABI ported; source generated at {out}")
 

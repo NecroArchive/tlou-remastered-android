@@ -16,7 +16,7 @@ ResourcePool::ResourcePool(Semaphore* work_semaphore_, std::size_t grow_step_)
 
 std::size_t ResourcePool::CommitResource() {
     u64 gpu_tick = work_semaphore->KnownGpuTick();
-    const auto search = [this, gpu_tick](std::size_t begin,
+    const auto search = [this, &gpu_tick](std::size_t begin,
                                          std::size_t end) -> std::optional<std::size_t> {
         for (std::size_t iterator = begin; iterator < end; ++iterator) {
             if (gpu_tick >= ticks[iterator]) {
@@ -27,24 +27,35 @@ std::size_t ResourcePool::CommitResource() {
         return std::nullopt;
     };
 
-    // Try to find a free resource from the hinted position to the end.
-    auto found = search(hint_iterator, ticks.size());
-    if (!found) {
-        // Refresh semaphore to query updated results
-        work_semaphore->Refresh();
-        gpu_tick = work_semaphore->KnownGpuTick();
-        found = search(hint_iterator, ticks.size());
+    // Search the complete ring using the cached, proven timeline value.
+    // A free resource before the hint does not need a driver query.
+    const auto search_ring = [&]() {
+        auto found = search(hint_iterator, ticks.size());
+        return found ? found : search(0, hint_iterator);
+    };
+    auto found = search_ring();
+    if (!found && !ticks.empty()) {
+        // The current logical tick cannot have completed. Avoid an ioctl
+        // when every resource is owned by the current recording.
+        const auto current = work_semaphore->CurrentTick();
+        bool submitted_candidate = false;
+        for (const auto tick : ticks) {
+            if (tick < current) {
+                submitted_candidate = true;
+                break;
+            }
+        }
+        if (submitted_candidate) {
+            work_semaphore->Refresh();
+            gpu_tick = work_semaphore->KnownGpuTick();
+            // search captures by reference: use the NEW completion value.
+            found = search_ring();
+        }
     }
     if (!found) {
-        // Search from beginning to the hinted position.
-        found = search(0, hint_iterator);
-        if (!found) {
-            // Both searches failed, the pool is full; handle it.
-            const std::size_t free_resource = ManageOverflow();
-
-            ticks[free_resource] = work_semaphore->CurrentTick();
-            found = free_resource;
-        }
+        const std::size_t free_resource = ManageOverflow();
+        ticks[free_resource] = work_semaphore->CurrentTick();
+        found = free_resource;
     }
 
     // Free iterator is hinted to the resource after the one that's been commited.

@@ -178,6 +178,17 @@ PERFORMANCE_EFFECTS_111 = {
         (0xA63BB6, "84c9", "30c9"),  # TEST CL,CL -> XOR CL,CL; branch to no-shadow; EDX=0
         (0xA63BCA, "418a84244f010000", "b001" + "90"*6),  # no-shadow category enabled
     ],
+    # Foreground geometry selector only: scale LOD transition thresholds, not
+    # the independent disappear-distance branch at 0xACF395 or visibility
+    # consumer at 0xA97821. Both verified 01.11 SELF hashes use default 1.0.
+    # Redirect the existing scale load to an immutable 0.75 constant. No
+    # shared constants are modified; original selection/clamping stays intact.
+    "distant_geometry_lod": [
+        (0xACF111, "488d0d586fa500", "488d0df81b6000"),
+        (0x10D0D10, "0000403f", None),
+        (0xACF127, "c5fa5919", None),
+        (0xACF3E2, "c5e2594738c5ea58c0c5fa59c0c5f82ec177128d7e014883c22089f14439d772cdffcf89f9", None),
+    ],
     "spot_light_shadows": [
         (0xA6445A, "4584ed", "4530ed"),  # TEST R13B,R13B -> XOR R13B,R13B
         (0xA6446F, "418a842450010000", "b001" + "90"*6),  # no-shadow spot path #1
@@ -532,7 +543,7 @@ def write_selected(source, prepared, options):
     profile = known_profile(digest)
     if profile is None:
         if (options or {}).get("resolution", "original") != "original" or any(
-            (options or {}).get(name, False) for name in (*PERFORMANCE_EFFECTS, *CHEATS_111)
+            (options or {}).get(name, False) for name in (*PERFORMANCE_EFFECTS, *PERFORMANCE_EFFECTS_111, *CHEATS_111)
         ):
             raise ValueError("Eboot não reconhecido: patches exigem SHA-256 validado")
         # A prepared directory may be manually reused after replacing the game:

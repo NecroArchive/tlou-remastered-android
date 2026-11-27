@@ -14,7 +14,7 @@ import static org.junit.Assert.*;
 public class RuntimeAotCatalogTest {
     private JSONObject catalog(String version) throws Exception {
         final boolean v100="1.00".equals(version);
-        final String profile=v100?"tlou-100-variants-v1":"tlou-111-variants-v3";
+        final String profile=v100?"tlou-100-variants-v1":"tlou-111-variants-v4";
         JSONArray groups=new JSONArray();
         if(v100)for(String base:new String[]{
             "base_null_component_transforms","base_static_ray_hit_submesh_bounds",
@@ -25,7 +25,7 @@ public class RuntimeAotCatalogTest {
                 "bloom","sunlight_shadows","subsurface"})
             groups.put("effect_"+effect);
         if(!v100)for(String extra:new String[]{
-            "omni_light_shadows","spot_light_shadows"})
+            "omni_light_shadows","spot_light_shadows","distant_geometry_lod"})
             groups.put("effect_"+extra);
         JSONObject variant=new JSONObject().put("profile",profile)
             .put("sha256","a".repeat(64)).put("groups",groups);

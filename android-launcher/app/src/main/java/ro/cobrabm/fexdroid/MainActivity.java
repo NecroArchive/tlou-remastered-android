@@ -53,7 +53,8 @@ public final class MainActivity extends Activity {
         for(String effect:PortSettings.EFFECTS)
             if(!prefs.contains(effect))
                 initial.putBoolean(effect,
-                    !effect.equals("omni_light_shadows") && !effect.equals("spot_light_shadows"));
+                    !effect.equals("omni_light_shadows") && !effect.equals("spot_light_shadows") &&
+                    !effect.equals("distant_geometry_lod"));
         // Preserve every previously selected shadow patch on upgrades. The
         // old one-time migration reset flags AFTER code was already compiled
         // into ARM64, causing an AOT launch failure. Fresh installs get OFF
@@ -274,6 +275,7 @@ public final class MainActivity extends Activity {
             toggleSetting(box,"subsurface","Desativar subsurface",true);
             toggleSetting(box,"omni_light_shadows","Desativar sombras de luzes omni (1.11)",false);
             toggleSetting(box,"spot_light_shadows","Desativar sombras de holofotes (1.11)",false);
+            toggleSetting(box,"distant_geometry_lod","Reduzir LOD da geometria distante (1.11)",false);
             LinearLayout cheats=card(root,"CHEATS (1.11)");
             toggleSetting(cheats,"cheat_ammo","Munição infinita",false);
             toggleSetting(cheats,"cheat_flashlight","Lanterna infinita",false);

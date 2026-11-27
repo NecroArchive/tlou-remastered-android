@@ -300,10 +300,11 @@ void StagingBufferPool::TickFrame() {
 
 void StagingBufferPool::TrimRing(Ring& ring, u64 keep, u64 idle_frames) {
     auto& blocks = ring.blocks;
+    StagingCompletion completion{scheduler};
     for (size_t i = blocks.size(); i-- > 0;) {
         const Block& block = blocks[i];
         if (blocks.size() <= keep || frame - block.last_used_frame < idle_frames ||
-            !scheduler.IsFree(block.buffer->LastTick())) {
+            !completion.IsFree(block.buffer->LastTick())) {
             continue;
         }
         blocks.erase(blocks.begin() + i);

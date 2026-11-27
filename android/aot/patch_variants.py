@@ -16,9 +16,9 @@ import struct
 
 EFFECTS = ("ssao", "motion_blur", "depth_of_field", "bloom",
            "sunlight_shadows", "subsurface", "omni_light_shadows",
-           "spot_light_shadows")
+           "spot_light_shadows", "distant_geometry_lod")
 RESOLUTIONS = ("720", "540", "360")
-PROFILE = "tlou-111-variants-v3"  # Omni/spot classification rerouted, no light discard.
+PROFILE = "tlou-111-variants-v4"  # Adds verified geometry LOD variant; all earlier effects retained.
 
 
 def load_patches():

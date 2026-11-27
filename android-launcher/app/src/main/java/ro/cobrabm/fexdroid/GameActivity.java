@@ -284,7 +284,7 @@ public final class GameActivity extends Activity {
             args.add(app0.getAbsolutePath());
             args.add("--user");
             args.add(user.getAbsolutePath());
-            // 0.2.0: strict native ARM64 AOT; never boot an x86-64 fallback.
+            // 0.2.1: strict native ARM64 AOT; never boot an x86-64 fallback.
             RuntimeAot.Ready nativeAot;
             // Defensive guard for old shortcuts/direct intents, not only the launcher.
             // A 1.00 base with an active 1.11 update is supported as effective 1.11.
@@ -358,7 +358,7 @@ public final class GameActivity extends Activity {
                 RunLog.write(this,"AOT native: strict unit execution; misses and fault-entry logging always on; "
                         +"full per-call stats/trace="+(detailedAotStats?"ON (diagnostic, slower)":"OFF (performance)"));
                 RunLog.write(this,"TLOU AOT performance markers: expensive thread scans="+(detailedAotStats?"ON":"OFF")+"; raw AOT stats="+detailedAotStats);
-                RunLog.write(this,"CPU ARM64 AOT obrigatório na versão 0.2.0");
+                RunLog.write(this,"CPU ARM64 AOT obrigatório na versão 0.2.1");
             }
             env.put("LD_LIBRARY_PATH",cpuLibraryPath);
             env.put("GOW3_ANDROID_PORT","1");

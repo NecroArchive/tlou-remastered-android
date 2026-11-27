@@ -12,6 +12,14 @@ ASSETS=ROOT/"android-launcher/app/src/main/assets/ui-translations.tsv"
 JAVA=ROOT/"android-launcher/app/src/main/java/ro/cobrabm/fexdroid"
 
 REQUIRED=(
+    "Desativar SSR (1.11)",
+    "Reduzir LOD da geometria distante (1.11)",
+    "A atualização substitui arquivos do jogo. Faça backup antes.",
+    "Munição infinita",
+    "ADPF — ajuste dinâmico de desempenho",
+    "Para mover botões, abra o menu durante o jogo.",
+    "A CPU ARM64 ainda não está pronta para este jogo. É obrigatório compilar o jogo antes de iniciar.",
+    " ainda não suportadas. Variantes de patches da versão do jogo disponíveis.",
     "CPU ARM64 não disponível",
     "A CPU ARM64 ainda não está pronta para este jogo. Compile a CPU uma vez, ou use FEX para iniciar sem esperar pela compilação.",
     "Motivo técnico (veja o log para detalhes):",

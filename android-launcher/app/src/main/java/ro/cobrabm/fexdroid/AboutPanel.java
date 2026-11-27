@@ -46,7 +46,7 @@ final class AboutPanel {
     private LinearLayout build(Runnable logs,Runnable export){
         LinearLayout root=column();
         TextView title=text("THE LAST OF US REMASTERED",22,TEXT);title.setTypeface(Typeface.create("sans-serif-condensed",Typeface.BOLD));root.addView(title);
-        String version="0.2.0";try{version=activity.getPackageManager().getPackageInfo(activity.getPackageName(),0).versionName;}catch(Exception ignored){}
+        String version="0.2.1";try{version=activity.getPackageManager().getPackageInfo(activity.getPackageName(),0).versionName;}catch(Exception ignored){}
         TextView v=text(tr("Versão")+" "+version,13,ACCENT);v.setPadding(0,dp(6),0,dp(8));root.addView(v);
         LinearLayout contact=card(root,"DESENVOLVIMENTO");
         row(contact,"Fork e modificações","erickmendes22 · Daedalus Emulator",null);

@@ -4,10 +4,10 @@ Adaptação do **The Last of Us Remastered de PS4 para Android**, baseada no
 [port de PC de ravencaio](https://github.com/ravencaio/tlou-remastered-pc), com
 runtime Bionic ARM64, compilação nativa da CPU ARM64 (AOT) e renderização Vulkan.
 
-**Versão 0.2.0 · Port Android ARM64 nativo**
+**Versão 0.2.1 · Port Android ARM64 nativo**
 
 [English](README.md) · [Notas da versão](RELEASE_NOTES.md) ·
-[Releases](https://github.com/erickmendes22/tlou-remastered-android/releases) · [Código Android](https://github.com/erickmendes22/tlou-remastered-android/tree/tlou-v020-from-stable-011) ·
+[Releases](https://github.com/erickmendes22/tlou-remastered-android/releases) · [Código Android](https://github.com/erickmendes22/tlou-remastered-android/tree/perf/tlou-recorder-copy-fast-20261126) ·
 [YouTube — @daedalusemulator](https://www.youtube.com/@daedalusemulator)
 
 ## Recursos
@@ -71,7 +71,7 @@ padrão não confirma compatibilidade com todos os modelos dessas famílias.
 
 Exporte os saves antes de desinstalar o aplicativo ou limpar os dados dele.
 
-## Estado da versão 0.2.0
+## Estado da versão 0.2.1
 
 Esta versão exige compilação nativa ARM64 (AOT) do jogo 01.11.
 A atualização aprimora a interface e a preservação das atualizações do jogo,

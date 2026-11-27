@@ -1,6 +1,6 @@
 # Android build and validation
 
-**Current release: v0.1, ARM64 Bionic / FEX / Vulkan.** APK builds and Android
+**Current release: v0.2.1, native ARM64 AOT / Bionic / Vulkan.** APK builds and Android
 gameplay have been tested; this is no longer an unbuilt integration stage.
 User installation and compatibility: [English](../README.md) /
 [Português](../README.pt-BR.md). See [release notes](../RELEASE_NOTES.md).

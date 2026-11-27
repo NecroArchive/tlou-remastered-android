@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package the full native TLOU v0.2.0 for the EXISTING AOTNative v2 package/signer.
+# Package the full native TLOU v0.2.1 for the EXISTING AOTNative v2 package/signer.
 set -Eeuo pipefail
 trap 'echo "TLOU APK packaging failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 cd "$(dirname "$0")/../.."
@@ -41,7 +41,7 @@ for library in libgow3cpu.so libgow3gpu.so libgow3present.so libc++_shared.so; d
 done
 stage="$out/apk-jni/arm64-v8a"
 assets="$out/apk-assets/runtime"
-# The CPU and GPU are rebuilt on the v0.2.0 release source branch.
+# The CPU and GPU are rebuilt on the v0.2.1 release source branch.
 # No FEX backend is accepted in the packaged CPU library.
 if [[ ! -s "$out/apk-assets/runtime-aot/libgow3cpu.so" ||
       ! -s "$out/apk-assets/runtime-aot/libbbcpu.so" ]]; then
@@ -70,7 +70,7 @@ for required in "$out/apk-assets/runtime-aot/libgow3cpu.so" \
                 "$out/apk-assets/runtime-aot/libbbcpu.so" \
                 "$out/aot-compiler/bin/libbbrecomp.so" \
                 "$out/aot-compiler/upstream.sha256"; do
-  [[ -s "$required" ]] || { echo "Missing mandatory v0.2.0 AOT payload: $required" >&2; exit 8; }
+  [[ -s "$required" ]] || { echo "Missing mandatory v0.2.1 AOT payload: $required" >&2; exit 8; }
 done
 # Sanity check AArch64 runtime: the compiler and CPU backend must match the
 # pinned AOT ABI, not any accidental FEX-only package.
@@ -172,11 +172,11 @@ expected=adbdd4efd7cb981ce6a30303de83b635800b0960c68276d9247962918cc7328c
 gradle -p "$root/android-launcher" :app:assembleDebug --no-daemon --max-workers=2
 built="$root/android-launcher/app/build/outputs/apk/debug/app-debug.apk"
 [[ -s "$built" ]] || { echo "Missing actual AOTNative debug APK" >&2; exit 8; }
-apk="$root/out/release/TheLastOfUsRemastered-Android-v0.2.0-AOTNative-v2-arm64.apk"
+apk="$root/out/release/TheLastOfUsRemastered-Android-v0.2.1-AOTNative-v2-arm64.apk"
 cp "$built" "$apk"
 "$android_tools/apksigner" verify --verbose "$apk"
 require_command_regex "$expected" "$android_tools/apksigner" verify --print-certs "$apk"
-require_command_regex "package: name='com[.]daedalus[.]tlou[.]remastered[.]aotnative2' versionCode='200'" "$android_tools/aapt" dump badging "$apk"
+require_command_regex "package: name='com[.]daedalus[.]tlou[.]remastered[.]aotnative2' versionCode='201' versionName='0[.]2[.]1'" "$android_tools/aapt" dump badging "$apk"
 require_command_regex 'lib/arm64-v8a/libgow3gpu[.]so' unzip -Z -1 "$apk"
 require_command_regex 'lib/arm64-v8a/libgow3cpu[.]so' unzip -Z -1 "$apk"
 require_command_regex 'lib/arm64-v8a/libgow3present[.]so' unzip -Z -1 "$apk"
@@ -204,4 +204,4 @@ assert hashlib.sha256(stage).digest()==hashlib.sha256(expected).digest(), 'Runti
 print('Full native AOT CPU verified byte-identical in APK and staged engine')
 PY
 sha256sum "$apk" > "$apk.sha256"
-echo "TLOU 0.2.0 AOTNative v2 signed and verified: $apk"
+echo "TLOU 0.2.1 AOTNative v2 signed and verified: $apk"

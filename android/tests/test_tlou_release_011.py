@@ -1,4 +1,4 @@
-"""Production release 0.2.0: version, worker policy, icon and compatibility."""
+"""Production release 0.2.1: version, worker policy, icon and compatibility."""
 from pathlib import Path
 import unittest
 
@@ -11,15 +11,15 @@ class Release011(unittest.TestCase):
         build=(ANDROID/"build.gradle").read_text()
         main=(JAVA/"MainActivity.java").read_text()
         about=(JAVA/"AboutPanel.java").read_text()
-        self.assertIn("versionName '0.2.0'",build)
+        self.assertIn("versionName '0.2.1'",build)
         # Experimental AOT v2 has its own Android package ID and an upgrade
         # code above 41. The production 0.1.1 release remains versionCode 41.
         if "applicationIdSuffix '.aotnative2'" in build:
-            self.assertIn("versionCode 200",build)
+            self.assertIn("versionCode 201",build)
         else:
-            self.assertIn("versionCode 200",build)
+            self.assertIn("versionCode 201",build)
         self.assertIn('text("v"+TlouDialogs.version(this)',main)
-        self.assertIn('String version="0.2.0"',about)
+        self.assertIn('String version="0.2.1"',about)
         self.assertIn('artFrame.addView(artVersion,artBadge)',main)
         self.assertNotIn('text("v0.1",',main)
 
@@ -50,8 +50,8 @@ class Release011(unittest.TestCase):
         build=(ANDROID/"build.gradle").read_text()
         workflow=(ROOT/".github/workflows/tlou-native-apk.yml").read_text()
         self.assertIn("applicationId 'com.daedalus.tlou.remastered'",build)
-        self.assertIn("versionName '0.2.0'",build)
-        self.assertIn("versionCode 200",build)
+        self.assertIn("versionName '0.2.1'",build)
+        self.assertIn("versionCode 201",build)
         self.assertIn("name: TLOU Bionic Full Native and APK",workflow)
         self.assertIn("tlou-ui-approval-log32-20261105",workflow)
         self.assertIn("key: tlou-development-signing-v2",workflow)
@@ -59,7 +59,7 @@ class Release011(unittest.TestCase):
         self.assertIn("Restore signing identity used by existing installations",workflow)
         self.assertIn("app:assembleRelease",workflow)
         self.assertNotIn("app:assembleDebug",workflow)
-        self.assertIn("v0.2.0",(ROOT/"RELEASE_NOTES.md").read_text())
+        self.assertIn("v0.2.1",(ROOT/"RELEASE_NOTES.md").read_text())
 
 if __name__=="__main__":
     unittest.main()

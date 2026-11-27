@@ -186,7 +186,7 @@ final class PortSettings {
         // policy; do not keep the speculative normal-priority scanner or
         // per-5-second hit instrumentation running in gameplay.
         env.put("GOW3_PREP_WORKERS","0");
-        // Release 0.2.0: do not constrain render threads to a user-chosen
+        // Release 0.2.1: do not constrain render threads to a user-chosen
         // fast-core subset. Oryon is detected from the SoC identifier; the
         // native AOT split policy still verifies the allowed CPU topology.
         env.put("TLOU_FAST_RENDER_CORES","0");

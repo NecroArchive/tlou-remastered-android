@@ -130,6 +130,22 @@ public class RuntimeAotCatalogTest {
         assertTrue(RuntimeAot.hasRequiredRegional111Entries(new JSONObject(),catalog("1.11")));
     }
 
+    @Test public void acceptsOnlyExactRetiredV6Superset() throws Exception {
+        JSONObject bank=catalog("1.11");
+        bank.put("native_patch_profile","tlou-111-variants-v6");
+        JSONObject variants=bank.getJSONObject("variant_catalog");
+        variants.put("profile","tlou-111-variants-v6");
+        JSONArray groups=variants.getJSONArray("groups");
+        assertFalse(RuntimeAot.hasCompleteVariantCatalog(bank));
+        groups.put("effect_sun_shadow_quality");
+        assertTrue(RuntimeAot.hasCompleteVariantCatalog(bank));
+        groups.put("unknown_effect");
+        assertFalse(RuntimeAot.hasCompleteVariantCatalog(bank));
+        groups.remove(groups.length()-1);
+        groups.remove(0);
+        assertFalse(RuntimeAot.hasCompleteVariantCatalog(bank));
+    }
+
     @Test public void keepsAll111VariantContract() throws Exception {
         assertTrue(RuntimeAot.hasCompleteVariantCatalog(catalog("1.11")));
         JSONObject wrong=catalog("1.11");

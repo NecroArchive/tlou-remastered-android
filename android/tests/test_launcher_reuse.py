@@ -8,16 +8,16 @@ reuse = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reuse)
 
 class LauncherReuseTests(unittest.TestCase):
-    def test_v020_always_requires_full_native_release_even_for_launcher_only_changes(self):
+    def test_v021_always_requires_full_native_release_even_for_launcher_only_changes(self):
         gradle=(reuse.ROOT/"android-launcher/app/build.gradle").read_text()
-        self.assertIn("versionName '0.2.0'",gradle)
+        self.assertIn("versionName '0.2.1'",gradle)
         for change in ("android/bionic/reuse_apk.py",
                        "android/tlou_patches.py",
                        "android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortMenu.java",
                        "gow3_pc/gpu/shim.cpp"):
             with patch.object(reuse.subprocess,"check_output",return_value=change+"\\n") as mocked:
                 self.assertFalse(reuse.unchanged(),change)
-                # Release 0.2.0 must reject the old fast path before git diff.
+                # Release 0.2.1 must reject the old fast path before git diff.
                 mocked.assert_not_called()
 
     def test_current_ui_is_never_replaced_by_old_apk(self):

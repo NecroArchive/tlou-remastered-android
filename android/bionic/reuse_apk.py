@@ -20,11 +20,11 @@ PACKAGING_ONLY = {"android/bionic/reuse_apk.py", "android/tests/test_launcher_re
 
 
 def unchanged():
-    # Native AOT is mandatory in 0.2.0: the signed 0.1.1 payload cannot be
+    # Native AOT is mandatory in 0.2.1: the signed 0.1.1 payload cannot be
     # reused, even when a commit changes only interface/translations.
     # Preserve the proven full-native release job, not the launcher-only path.
     gradle=(ROOT / "android-launcher/app/build.gradle").read_text()
-    if "versionName '0.2.0'" in gradle:
+    if "versionName '0.2.1'" in gradle:
         return False
     paths = subprocess.check_output([
         "git", "diff", "--name-only", BASE, "HEAD", "--", "gow3_pc", "ci",

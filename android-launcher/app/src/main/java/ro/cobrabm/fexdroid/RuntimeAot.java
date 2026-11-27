@@ -93,13 +93,20 @@ final class RuntimeAot {
         String version=source.optString("version");
         String profile="1.00".equals(version)?"tlou-100-variants-v1":
             "1.11".equals(version)?"tlou-111-variants-v5":"";
+        // Existing 0.2.0 v6 banks contain every v5 variant plus one
+        // retired shadow variant. Accept that exact superset without
+        // recompile: the new patch options never write the retired bytes.
+        // Existing hook slots remain null (no audit installed in 0.2.1).
+        final boolean retiredV6="1.11".equals(version) &&
+            "tlou-111-variants-v6".equals(source.optString("native_patch_profile"));
+        if(retiredV6)profile="tlou-111-variants-v6";
         if(profile.isEmpty() || !profile.equals(source.optString("native_patch_profile")))
             return false;
         JSONObject variants=source.optJSONObject("variant_catalog");
         if(variants==null || !profile.equals(variants.optString("profile")) ||
            variants.optString("sha256").length()!=64)return false;
         JSONArray groups=variants.optJSONArray("groups");
-        int count="1.00".equals(version)?13:PortSettings.EFFECTS.length+3;
+        int count="1.00".equals(version)?13:PortSettings.EFFECTS.length+3+(retiredV6?1:0);
         if(groups==null || groups.length()<count ||
             groups.length()>count+("1.11".equals(version)?PortSettings.CHEATS.length:0))return false;
         java.util.HashSet<String> all=new java.util.HashSet<>();
@@ -122,6 +129,7 @@ final class RuntimeAot {
             all.removeAll(java.util.Arrays.asList("resolution_720","resolution_540","resolution_360"));
             for(String effect:effects)all.remove("effect_"+effect);
             for(String cheat:PortSettings.CHEATS)all.remove(cheat);
+            if(retiredV6 && !all.remove("effect_sun_shadow_quality"))return false;
             if(!all.isEmpty())return false;
         }
         return true;

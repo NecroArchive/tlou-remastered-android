@@ -1,5 +1,5 @@
 name: TLOU 0.2.0 AOTNative v2 APK (release source, original signer)
-# Diagnostic APK: guarded solar distance + opt-in atlas and billboard capture. ef86e7f03a6bf03ad356b993cda68cad3de7e6b3.
+# CPU-GPU synchronization: active EOS dependencies, completed readbacks, EOP batching, timeline polling and recorder FIFO. 6ccd76dcaeb87f0767a11b8d290742ded2c3c2ba.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "ef86e7f03a6bf03ad356b993cda68cad3de7e6b3"
+          test "$(git rev-parse HEAD)" = "6ccd76dcaeb87f0767a11b8d290742ded2c3c2ba"
           grep -Fq 'TLOU readback wake:' gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp
           grep -Fq 'env.put("GOW3_READBACK_WAKE","1")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
           grep -Fq 'TLOU recorder wait site (5 s):' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp

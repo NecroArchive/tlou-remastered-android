@@ -486,6 +486,29 @@ def port(upstream: Path, out: Path) -> None:
     main = once(main, "    const uint8_t* flags = nullptr;    // bbr_func_granular[]",
                 "    const uint8_t* flags = nullptr;    // bbr_func_granular[]\n    bool resume = false;       // bbr_abi_flags bit 0",
                 "resume capability")
+    # Repeated indirect entries inside the same granular function need no
+    # new binary search. Cache the immutable range index, never a native
+    # function pointer; the live E.fns[u] load and dirty checks stay intact.
+    main = once(main, """    const GranRec* end = G.funcs + G.nfuncs;
+    const GranRec* f = std::upper_bound(G.funcs, end, offset, [](uint64_t v, const GranRec& r) { return v < r.start; });
+    if (f == G.funcs) return false;
+    --f;""", """    const GranRec* end = G.funcs + G.nfuncs;
+    struct TlouGranularMemo { const GranRec* table; uint64_t count, index; };
+    static thread_local TlouGranularMemo memo{};
+    const GranRec* f = nullptr;
+    if (memo.table == G.funcs && memo.count == G.nfuncs && memo.index < G.nfuncs) {
+        const GranRec* candidate = G.funcs + memo.index;
+        // Match upper_bound exactly, including duplicate/overlapping ranges.
+        if (candidate->start <= offset && offset < candidate->end &&
+            (candidate + 1 == end || offset < (candidate + 1)->start))
+            f = candidate;
+    }
+    if (!f) {
+        f = std::upper_bound(G.funcs, end, offset, [](uint64_t v, const GranRec& r) { return v < r.start; });
+        if (f == G.funcs) return false;
+        --f;
+        memo = {G.funcs, G.nfuncs, uint64_t(f - G.funcs)};
+    }""", "TLOU granular dispatch range memo")
     main = once(main, "    if (!G.flags) return false;",
                 "    if (!G.flags && !G.resume) return false;",
                 "resume dispatch prerequisite")

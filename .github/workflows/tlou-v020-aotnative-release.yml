@@ -1,5 +1,5 @@
 name: TLOU 0.2.1 AOTNative v2 APK (release source, original signer)
-# Release 0.2.1: EOS label-specific dependency, translations and removal of shadow/vegetation experiments. c1ec9c6c98337e24bef93c764c96c6fbbc15c43b.
+# Release 0.2.1: EOS label-specific dependency, translations and removal of shadow/vegetation experiments. 12116faf43d2b1dc5883ddcd9c32c3dd6c64c201.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -31,8 +31,8 @@ jobs:
       - name: Record source revision and reject a misrouted release
         run: |
           set -euo pipefail
-          echo "V020_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "c1ec9c6c98337e24bef93c764c96c6fbbc15c43b"
+          echo "V021_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "12116faf43d2b1dc5883ddcd9c32c3dd6c64c201"
           grep -Fq 'TLOU readback wake:' gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp
           grep -Fq 'env.put("GOW3_READBACK_WAKE","1")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
           grep -Fq 'TLOU recorder wait site (5 s):' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
@@ -232,7 +232,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: TLOU-v020-AOTNative-release-failure
+          name: TLOU-v021-AOTNative-release-failure
           path: |
             .local-deps/android/bionic-build/**/*.log
             out/android-bionic/gpu/CMakeFiles/CMakeConfigureLog.yaml

@@ -69,7 +69,7 @@ final class TouchControllerOverlay extends View {
             centers.put(name,new PointF(preferences.getFloat("overlay_x_"+name,defaults[i][0]),
                                         preferences.getFloat("overlay_y_"+name,defaults[i][1])));
         }
-        setContentDescription("On-screen PlayStation controller");
+        setContentDescription(TlouLanguage.t(context,"Controle PlayStation na tela"));
     }
     private PointF center(String name) { return centers.get(name); }
     // Scale the visuals and touch targets without changing saved button positions.

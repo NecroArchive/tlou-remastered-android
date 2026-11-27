@@ -12,6 +12,19 @@ ASSETS=ROOT/"android-launcher/app/src/main/assets/ui-translations.tsv"
 JAVA=ROOT/"android-launcher/app/src/main/java/ro/cobrabm/fexdroid"
 
 REQUIRED=(
+    "Lanterna infinita",
+    "Somente campanha. Pode exigir recompilar a CPU ARM64 uma vez. Reinicie o jogo para aplicar.",
+    "CHEATS (1.11)",
+    "Desativar cheats",
+    "Orientação da tela",
+    "Paisagem",
+    "Paisagem invertida",
+    "Automática (sensor)",
+    "Desligado",
+    "Estilo dos controles",
+    "Ação TLOU",
+    "PlayStation clássico",
+    "Controle PlayStation na tela",
     "Desativar SSR (1.11)",
     "Reduzir LOD da geometria distante (1.11)",
     "A atualização substitui arquivos do jogo. Faça backup antes.",

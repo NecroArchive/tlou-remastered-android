@@ -147,13 +147,21 @@ void Semaphore::Wait(u64 tick) {
     if (IsFree(tick)) {
         return;
     }
-    // Update the GPU tick and try again
+#ifndef __ANDROID__
+    // Desktop retains the existing refresh-before-wait path.
     Refresh();
     if (IsFree(tick)) {
         return;
     }
+#else
+    // vkWaitSemaphores also succeeds immediately for an already-completed
+    // value. A counter query immediately before this mandatory wait adds an
+    // ioctl without strengthening its ordering guarantee. Preserve all
+    // timeout/device-lost handling and publish only the proven target below.
+    NoteAvoidedRefresh();
+#endif
 
-    // If none of the above is hit, fallback to a regular wait
+    // Wait for the exact producer value.
     const vk::SemaphoreWaitInfo wait_info = {
         .semaphoreCount = 1,
         .pSemaphores = &semaphore.get(),

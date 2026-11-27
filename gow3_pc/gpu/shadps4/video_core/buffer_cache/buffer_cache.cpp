@@ -2606,15 +2606,31 @@ bool BufferCache::WriteThrough(VAddr address, const void* data, u64 size) {
     }
     // The GPU's copy, in order with the work recorded so far (resident and synchronized first).
     const auto [arena, offset] = ObtainBuffer(address, static_cast<u32>(size), false);
-    const auto staging = staging_pool.Request(size, VideoCore::MemoryType::HostUncached, 4);
-    std::memcpy(staging.mapped, data, size);
-    staging.Flush();
-    const vk::BufferCopy copy{
-        .srcOffset = staging.offset,
-        .dstOffset = offset,
-        .size = size,
-    };
-    runtime.CopyBuffer(staging.buffer, arena, std::span{&copy, 1});
+#ifdef __ANDROID__
+    // Exact same guest bytes, same ordering, fewer small staging allocations
+    // and source-range hazard checks for the frequent scalar HLE copies.
+    static const bool inline_words = [] {
+        const char* env = std::getenv("TLOU_SCALAR_INLINE_UPDATE");
+        return !(env && env[0] == '0');
+    }();
+    if (inline_words && size <= 256 && offset % 4 == 0 &&
+        offset <= arena->SizeBytes() && size <= arena->SizeBytes() - offset) {
+        std::array<u32, 64> words;
+        std::memcpy(words.data(), data, size);
+        runtime.InlineWords(arena, offset, std::span<const u32>{words.data(), size / 4});
+    } else
+#endif
+    {
+        const auto staging = staging_pool.Request(size, VideoCore::MemoryType::HostUncached, 4);
+        std::memcpy(staging.mapped, data, size);
+        staging.Flush();
+        const vk::BufferCopy copy{
+            .srcOffset = staging.offset,
+            .dstOffset = offset,
+            .size = size,
+        };
+        runtime.CopyBuffer(staging.buffer, arena, std::span{&copy, 1});
+    }
     // Newest value in both views: not GPU data any more; readbacks recorded earlier must not
     // write their older values over it.
     if (gpu_modified_ranges.Intersects(address, size)) {

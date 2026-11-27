@@ -16,9 +16,9 @@ import struct
 
 EFFECTS = ("ssao", "motion_blur", "depth_of_field", "bloom",
            "sunlight_shadows", "subsurface", "omni_light_shadows",
-           "spot_light_shadows", "distant_geometry_lod")
+           "spot_light_shadows", "distant_geometry_lod", "ssr")
 RESOLUTIONS = ("720", "540", "360")
-PROFILE = "tlou-111-variants-v4"  # Adds verified geometry LOD variant; all earlier effects retained.
+PROFILE = "tlou-111-variants-v5"  # Adds verified SSR bypass; all earlier effects retained.
 
 
 def load_patches():

@@ -314,6 +314,31 @@ void Runtime::InlineData(VideoCore::Buffer* dst, u64 offset, u32 value) {
                  vk::AccessFlagBits2::eTransferWrite);
 }
 
+void Runtime::InlineWords(VideoCore::Buffer* dst, u64 offset, std::span<const u32> words) {
+    const auto size = words.size_bytes();
+    ASSERT(size != 0 && size <= 256 && offset % 4 == 0 &&
+           offset <= dst->SizeBytes() && size <= dst->SizeBytes() - offset);
+    if (words.size() == 1) {
+        InlineData(dst, offset, words.front());
+        return;
+    }
+    scheduler.EndRendering();
+    if (IsBufferAccessed(dst, offset, size, true)) {
+        FlushBarriers();
+    }
+    if (instance.HasGpuCheckpoints()) {
+        scheduler.Checkpoint("inline words", dst->CpuAddr() + offset, size);
+    }
+    // RecordData stores a private copy in the same live recorder chunk;
+    // direct mode consumes the caller's span synchronously.
+    scheduler.Record([handle = dst->Handle(), offset,
+                      data = scheduler.RecordData(words)](vk::CommandBuffer cmdbuf) {
+        cmdbuf.updateBuffer(handle, offset, data.size_bytes(), data.data());
+    });
+    AccessBuffer(dst, offset, size, vk::PipelineStageFlagBits2::eCopy,
+                 vk::AccessFlagBits2::eTransferWrite);
+}
+
 bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                       vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
                       std::optional<VideoCore::SubresourceRange> subres_range) {

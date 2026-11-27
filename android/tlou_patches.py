@@ -189,6 +189,17 @@ PERFORMANCE_EFFECTS_111 = {
         (0xACF127, "c5fa5919", None),
         (0xACF3E2, "c5e2594738c5ea58c0c5fa59c0c5f82ec177128d7e014883c22089f14439d772cdffcf89f9", None),
     ],
+    # Native SSR OFF path in the frame renderer. The original condition
+    # jumps over BOTH constants preparation and execution of ssr.cpp.
+    # Preserve the surrounding resource preparation and all following passes.
+    "ssr": [
+        (0xA93A2E, "4180bf1902000000", None),
+        (0xA93A3E, "7449", "eb49"),
+        (0xA93A48, "80b8ef10000000", None),
+        (0xA93A4F, "7438", None),
+        (0xA93A79, "e802dd0700", None),
+        (0xA93A84, "e807e40700", None),
+    ],
     "spot_light_shadows": [
         (0xA6445A, "4584ed", "4530ed"),  # TEST R13B,R13B -> XOR R13B,R13B
         (0xA6446F, "418a842450010000", "b001" + "90"*6),  # no-shadow spot path #1

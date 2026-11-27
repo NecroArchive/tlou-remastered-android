@@ -2111,6 +2111,13 @@ void BufferCache::PrefetchCompletedSrt() {
         CopyMappedReadbackPieces(std::span<const DownloadPiece>{&piece, 1},
                                  (entry.bytes + 63) & ~u64{63},
                                  MaxMappedReadbackBytes, 0, &published, true);
+        // Log only the first few successful anticipations for device validation.
+        static u32 reported = 0;
+        if (published && reported < 8) {
+            ++reported;
+            std::printf("TLOU completed SRT prefetch: %llu bytes at tick %llu\n",
+                        (unsigned long long)published, (unsigned long long)writer);
+        }
     }
 #endif
 }

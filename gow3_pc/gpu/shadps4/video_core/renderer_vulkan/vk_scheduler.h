@@ -601,6 +601,9 @@ public:
     template <typename Func>
     bool Push(Func&& func) {
         last_host_batch = nullptr; // a different Vulkan command breaks copy adjacency
+#ifdef __ANDROID__
+        last_inline_batch = nullptr;
+#endif
         using Command = TypedCommand<std::decay_t<Func>>;
         static_assert(sizeof(Command) <= Capacity, "recorded command is too large");
         const size_t offset = (used + alignof(Command) - 1) & ~(alignof(Command) - 1);
@@ -624,6 +627,9 @@ public:
     // 1 item costs only sizeof(Item), not a reserved 16-item array.
     [[nodiscard]] bool PushHostCopy(const Gow3Copy::Item& item, u64 sequence,
                                     std::atomic<u64>& completed) {
+#ifdef __ANDROID__
+        last_inline_batch = nullptr;
+#endif
         static_assert(std::is_trivially_destructible_v<Gow3Copy::Item>);
         if (last_host_batch) {
             const size_t at = (used + alignof(Gow3Copy::Item) - 1) &
@@ -662,9 +668,45 @@ public:
         return true;
     }
 
+#ifdef __ANDROID__
+    // Merge only directly adjacent writes to the same VkBuffer in this
+    // unpublished chunk. Any recorded barrier, draw or other command breaks
+    // adjacency. Preserve order even for non-adjacent or overlapping writes.
+    bool PushInlineWords(vk::Buffer buffer, u64 offset, std::span<const u32> words) {
+        ASSERT(!words.empty() && words.size() <= 64);
+        last_host_batch = nullptr;
+        if (last_inline_batch && last_inline_batch->buffer == buffer &&
+            offset == last_inline_batch->offset + last_inline_batch->count * sizeof(u32) &&
+            words.size() <= 64 - last_inline_batch->count) {
+            if (words.size_bytes() > Capacity - used) return false;
+            std::memcpy(storage + used, words.data(), words.size_bytes());
+            last_inline_batch->count += words.size();
+            used += words.size_bytes();
+            PrefetchAhead();
+            return true;
+        }
+        using Command = InlineWordsCommand;
+        const size_t at = (used + alignof(Command) - 1) & ~(alignof(Command) - 1);
+        const size_t data_at = (at + sizeof(Command) + alignof(u32) - 1) & ~(alignof(u32) - 1);
+        if (data_at + words.size_bytes() > Capacity) return false;
+        auto* payload = reinterpret_cast<u32*>(storage + data_at);
+        std::memcpy(payload, words.data(), words.size_bytes());
+        auto* command = new (storage + at) Command(buffer, offset, payload, words.size());
+        if (last) last->next = command; else first = command;
+        last = command;
+        last_inline_batch = command;
+        used = data_at + words.size_bytes();
+        PrefetchAhead();
+        return true;
+    }
+#endif
+
     /// Raw storage in the chunk for a command's variable-length data; null when full.
     void* Allocate(size_t bytes, size_t align) {
         last_host_batch = nullptr; // conservative boundary for record-data ownership
+#ifdef __ANDROID__
+        last_inline_batch = nullptr;
+#endif
         const size_t offset = (used + align - 1) & ~(align - 1);
         if (offset + bytes > Capacity) {
             return nullptr;
@@ -683,6 +725,9 @@ public:
         }
         first = last = nullptr;
         last_host_batch = nullptr;
+#ifdef __ANDROID__
+        last_inline_batch = nullptr;
+#endif
         used = 0;
         host_copy_items = 0;
         host_copy_groups = 0;
@@ -733,6 +778,20 @@ private:
         Detail::HostCopyBatch batch;
     };
 
+#ifdef __ANDROID__
+    struct InlineWordsCommand final : CommandBase {
+        InlineWordsCommand(vk::Buffer buffer_, u64 offset_, const u32* words_, size_t count_)
+            : buffer(buffer_), offset(offset_), words(words_), count(count_) {}
+        void Execute(vk::CommandBuffer cmdbuf) override {
+            cmdbuf.updateBuffer(buffer, offset, count * sizeof(u32), words);
+        }
+        vk::Buffer buffer;
+        u64 offset;
+        const u32* words;
+        size_t count;
+    };
+    InlineWordsCommand* last_inline_batch{};
+#endif
     alignas(64) std::byte storage[Capacity];
     size_t used = 0;
     CommandBase* first{};
@@ -845,6 +904,23 @@ public:
             const bool pushed = record_chunk->Push(std::forward<Func>(func));
             ASSERT(pushed);
         }
+    }
+
+    void RecordInlineWords(vk::Buffer buffer, u64 offset, std::span<const u32> words) {
+#ifdef __ANDROID__
+        if (IsRecordingDeferred()) {
+            ++record_serial;
+            if (!record_chunk->PushInlineWords(buffer, offset, words)) {
+                full_chunks.push_back(std::move(record_chunk));
+                record_chunk = AcquireChunk();
+                ASSERT(record_chunk->PushInlineWords(buffer, offset, words));
+            }
+            return;
+        }
+#endif
+        Record([buffer, offset, data = RecordData(words)](vk::CommandBuffer cmdbuf) {
+            cmdbuf.updateBuffer(buffer, offset, data.size_bytes(), data.data());
+        });
     }
 
     /// gow3 20 Oct 2026: advances on every Record() and CommandBuffer() call and with every new

@@ -204,7 +204,8 @@ public:
     // an EOS could cross an image, DMA or buffer readback dependency.
     [[nodiscard]] bool CanDeferSimpleEos(VAddr label) {
         return scheduler.IsRecordingDeferred() && dma_results.empty() &&
-               eop_soft_readbacks.empty() && !buffer_cache.HasDeferredSignals() &&
+               eop_soft_readbacks.empty() && eop_open_readbacks.empty() &&
+               eop_readbacks.empty() && !buffer_cache.HasDeferredSignals() &&
                !buffer_cache.MayBeGpuWritten(label & ~VAddr{4095}, 4096) &&
                !texture_cache.HasDownloadWork();
     }

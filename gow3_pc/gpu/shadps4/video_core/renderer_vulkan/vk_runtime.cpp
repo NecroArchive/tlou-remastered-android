@@ -318,10 +318,6 @@ void Runtime::InlineWords(const VideoCore::Buffer* dst, u64 offset, std::span<co
     const auto size = words.size_bytes();
     ASSERT(size != 0 && size <= 256 && offset % 4 == 0 &&
            offset <= dst->SizeBytes() && size <= dst->SizeBytes() - offset);
-    if (words.size() == 1) {
-        InlineData(dst, offset, words.front());
-        return;
-    }
     scheduler.EndRendering();
     if (IsBufferAccessed(dst, offset, size, true)) {
         FlushBarriers();
@@ -329,12 +325,9 @@ void Runtime::InlineWords(const VideoCore::Buffer* dst, u64 offset, std::span<co
     if (instance.HasGpuCheckpoints()) {
         scheduler.Checkpoint("inline words", dst->CpuAddr() + offset, size);
     }
-    // RecordData stores a private copy in the same live recorder chunk;
-    // direct mode consumes the caller's span synchronously.
-    scheduler.Record([handle = dst->Handle(), offset,
-                      data = scheduler.RecordData(words)](vk::CommandBuffer cmdbuf) {
-        cmdbuf.updateBuffer(handle, offset, data.size_bytes(), data.data());
-    });
+    // Adjacent scalar writes merge only inside the unpublished recorder
+    // chunk; dependency tracking/barriers above still run for every write.
+    scheduler.RecordInlineWords(dst->Handle(), offset, words);
     AccessBuffer(dst, offset, size, vk::PipelineStageFlagBits2::eCopy,
                  vk::AccessFlagBits2::eTransferWrite);
 }

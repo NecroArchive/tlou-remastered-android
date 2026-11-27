@@ -131,6 +131,12 @@ public:
 
     /// Schedules a copy of pending images for download back to CPU memory.
     void ProcessDownloadImages();
+    // Draw-pipe owner uses this only at an ordered EOS boundary.
+    [[nodiscard]] bool HasDownloadWork() {
+        std::scoped_lock lock{download_images_mutex, tiny_mutex};
+        return !download_images.empty() || !tiny_downloads.empty() ||
+               !tiny_ranges.empty() || has_pending_readbacks.load(std::memory_order_acquire);
+    }
     /// gow3: guest ranges of tiny images copied into the buffer cache since the last call; the
     /// rasterizer reads them back with the next end-of-pipe fence.
     std::vector<std::pair<VAddr, u64>> TakeTinyReadbacks();

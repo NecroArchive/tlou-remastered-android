@@ -200,6 +200,14 @@ public:
     void LandWatchedReadback(VAddr addr, bool assume_locks);
     void WaitDrawPipeForCapture();
     void ProcessDownloadImages();
+    // Only called on the draw-pipe owner. Keep the synchronous path whenever
+    // an EOS could cross an image, DMA or buffer readback dependency.
+    [[nodiscard]] bool CanDeferSimpleEos(VAddr label) {
+        return scheduler.IsRecordingDeferred() && dma_results.empty() &&
+               eop_soft_readbacks.empty() && !buffer_cache.HasDeferredSignals() &&
+               !buffer_cache.MayBeGpuWritten(label & ~VAddr{4095}, 4096) &&
+               !texture_cache.HasDownloadWork();
+    }
     bool IsMapped(VAddr addr, u64 size);
     void MapMemory(VAddr addr, u64 size);
     void RegisterMemory(VAddr addr, u64 size);

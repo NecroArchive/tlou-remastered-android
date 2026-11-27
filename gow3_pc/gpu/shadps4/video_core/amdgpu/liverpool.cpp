@@ -1369,7 +1369,35 @@ void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
 }
 
 void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
-    const auto& event_eos = *reinterpret_cast<const PM4CmdEventWriteEos*>(data);
+    const auto event_eos = *reinterpret_cast<const PM4CmdEventWriteEos*>(data);
+    const auto signal = [event_eos] {
+        event_eos.SignalFence([](void* address, u64 value, u32 num_bytes) {
+            auto* memory = Core::Memory::Instance();
+            Gow3WriteLog::Note(reinterpret_cast<u64>(address), &value, num_bytes, Gow3WriteLog::Fence);
+            if (!memory->TryWriteBacking(address, &value, num_bytes)) {
+                const Vulkan::GpuWriteSite site{5};
+                memcpy(address, &value, num_bytes);
+            }
+        });
+    };
+#ifdef __ANDROID__
+    static const bool ordered_eos = [] {
+        const char* env = std::getenv("TLOU_ORDERED_EOS");
+        return !env || env[0] != '0';
+    }();
+    // Use the same ordered recorder mechanism as EOP, but never for GDS,
+    // outstanding readbacks, GPU-written labels, or direct recording.
+    const auto label = event_eos.Address<VAddr>();
+    if (ordered_eos && event_eos.command == PM4CmdEventWriteEos::Command::SignalFence &&
+        label && !(label & 3) && Vulkan::DrawPipe::OnStageB() &&
+        !Gow3Toggle::Disabled(Gow3Toggle::RecorderFences) &&
+        rasterizer.CanDeferSimpleEos(label)) {
+        rasterizer.NoteLabelAfterDma(2);
+        rasterizer.NoteLabelWrite(label, 4);
+        rasterizer.SignalAfterHostCopies(signal);
+        return;
+    }
+#endif
     // Copies deferred to the recording thread precede writes the guest sees.
     rasterizer.WaitHostCopies();
     rasterizer.WaitDeferredSignals();
@@ -1377,14 +1405,7 @@ void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
     rasterizer.NoteLabelAfterDma(2);
     rasterizer.NoteLabelWrite(event_eos.Address<VAddr>(), 4);
     NoteOvertake(rasterizer, "end-of-shader label", event_eos.Address<VAddr>());
-    event_eos.SignalFence([](void* address, u64 value, u32 num_bytes) {
-        auto* memory = Core::Memory::Instance();
-        Gow3WriteLog::Note(reinterpret_cast<u64>(address), &value, num_bytes, Gow3WriteLog::Fence);
-        if (!memory->TryWriteBacking(address, &value, num_bytes)) {
-            const Vulkan::GpuWriteSite site{5};
-            memcpy(address, &value, num_bytes);
-        }
-    });
+    signal();
     if (event_eos.command == PM4CmdEventWriteEos::Command::GdsStore) {
         ASSERT(event_eos.size == 1);
         rasterizer.Finish();

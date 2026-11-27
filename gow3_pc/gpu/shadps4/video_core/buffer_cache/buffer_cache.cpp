@@ -2152,7 +2152,11 @@ void BufferCache::DownloadRanges(std::span<const std::pair<VAddr, u64>> ranges, 
         return;
     }
 #ifdef __ANDROID__
-    if (hot_srt) {
+    static const bool remember_srt = [] {
+        const char* env = std::getenv("TLOU_SRT_COMPLETED_PREFETCH");
+        return env && env[0] == '1';
+    }();
+    if (hot_srt && remember_srt) {
         for (const auto& [address, size] : ranges) RememberSrtRead(address, size);
     }
 #endif

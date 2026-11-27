@@ -208,7 +208,11 @@ public:
     enum class EosBlock : u32 { None, Direct, QueuedResults, DeferredFence, LabelPage, Image };
     [[nodiscard]] EosBlock SimpleEosBlock(VAddr label) {
         if (!scheduler.IsRecordingDeferred()) return EosBlock::Direct;
-        if (buffer_cache.HasDeferredSignals()) return EosBlock::DeferredFence;
+        // The original EOS slow path waits for recorder copies/signals, not
+        // unrelated GPU readback fences. Keep the conservative same-label
+        // test, including hash collisions, so a pending label cannot overtake.
+        if (buffer_cache.HasDeferredSignals() && buffer_cache.MayBeLabelDeferred(label))
+            return EosBlock::DeferredFence;
         const VAddr page = label & ~VAddr{4095};
         const auto intersects = [page](const auto& ranges) {
             for (const auto& [address, size] : ranges) {

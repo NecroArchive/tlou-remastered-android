@@ -1386,7 +1386,7 @@ void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
         return !env || env[0] != '0';
     }();
     // Preserve ordered publication of guest-visible writes. Do not relax
-    // GDS, an active label-page hazard, image downloads or deferred fences.
+    // GDS, an active label-page hazard, image downloads or same-label deferred fences.
     using Block = Vulkan::Rasterizer::EosBlock;
     const auto label = event_eos.Address<VAddr>();
     const bool eligible = ordered_eos &&

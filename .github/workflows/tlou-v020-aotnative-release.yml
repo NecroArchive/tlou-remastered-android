@@ -1,5 +1,5 @@
 name: TLOU 0.2.1 AOTNative v2 APK (release source, original signer)
-# Release 0.2.1: EOS label-specific dependency, translations and removal of shadow/vegetation experiments. 12116faf43d2b1dc5883ddcd9c32c3dd6c64c201.
+# Release 0.2.1: EOS label-specific dependency, translations and removal of shadow/vegetation experiments. 3a45cc4f0a29d1fb9770cd1dda93a5565edf0857.
 on:
   push:
     branches: [experiment/tlou-local-aot-20261112]
@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "V021_RELEASE_SOURCE_COMMIT=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "12116faf43d2b1dc5883ddcd9c32c3dd6c64c201"
+          test "$(git rev-parse HEAD)" = "3a45cc4f0a29d1fb9770cd1dda93a5565edf0857"
           grep -Fq 'TLOU readback wake:' gow3_pc/gpu/shadps4/video_core/amdgpu/liverpool.cpp
           grep -Fq 'env.put("GOW3_READBACK_WAKE","1")' android-launcher/app/src/main/java/ro/cobrabm/fexdroid/PortSettings.java
           grep -Fq 'TLOU recorder wait site (5 s):' gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp

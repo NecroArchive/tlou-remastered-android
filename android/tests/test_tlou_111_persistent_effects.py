@@ -90,7 +90,7 @@ class PersistentUpdate111EffectTests(unittest.TestCase):
         variants = [patch.selected_options(requested, "01.11", digest)
                     for digest in patch.SELF_SHA256_111]
         self.assertEqual(variants[0], variants[1])
-        self.assertEqual(len(variants[0]), 12)
+        self.assertEqual(len(variants[0]), 11)
 
 
 if __name__ == "__main__":

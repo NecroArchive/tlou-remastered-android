@@ -10,7 +10,7 @@ import java.util.Map;
 
 /** Log 32 launch profile. Experimental A/B switches are NOT user preferences. */
 final class PortSettings {
-    static final String[] EFFECTS={"ssao","motion_blur","depth_of_field","bloom","sunlight_shadows","subsurface","omni_light_shadows","spot_light_shadows","distant_geometry_lod","ssr","sun_shadow_quality"};
+    static final String[] EFFECTS={"ssao","motion_blur","depth_of_field","bloom","sunlight_shadows","subsurface","omni_light_shadows","spot_light_shadows","distant_geometry_lod","ssr"};
     static final String[] CHEATS={"cheat_ammo","cheat_flashlight"};
     static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences("tlou",Context.MODE_PRIVATE);
@@ -45,6 +45,8 @@ final class PortSettings {
         edit.remove("aot_tso_profile");
         // The proxy/compatibility renderer was retired. Ignore old saved choices.
         edit.remove("render_path");
+        edit.remove("sun_shadow_quality");
+        edit.remove("render_audit");
         edit.apply();
     }
 
@@ -84,7 +86,6 @@ final class PortSettings {
         // Keep the original movie decoder, scale scene/HUD/aim as one domain.
         final String scaledPreset=resolution.equals("720")?"1":
             resolution.equals("540")?"3":resolution.equals("360")?"4":null;
-        env.put("TLOU_RENDER_AUDIT",p.getBoolean("render_audit",false)?"1":"0");
         env.put("TLOU_EXPECT_SCENE_SIZE","1920x1080");
         env.put("GOW3_UPSCALER","off");
         env.put("GOW3_OUTPUT_RES","1920x1080");
@@ -122,7 +123,7 @@ final class PortSettings {
         // implements GOW3_TLOU_HOST_COPY_BATCH=1 for isolated A/B experiments.
         env.put("GOW3_TLOU_HOST_COPY_BATCH","0");
         env.put("TLOU_SRT_HOT_READBACKS","1");
-        env.put("TLOU_SRT_COMPLETED_PREFETCH","1");
+        env.put("TLOU_SRT_COMPLETED_PREFETCH","0");
         env.put("TLOU_SRT_DEP_BATCH","0");
         env.put("GOW3_FETCH_NO_BLOCK","1");
         env.put("GOW3_LAND_ON_GUEST","1");

@@ -178,14 +178,6 @@ PERFORMANCE_EFFECTS_111 = {
         (0xA63BB6, "84c9", "30c9"),  # TEST CL,CL -> XOR CL,CL; branch to no-shadow; EDX=0
         (0xA63BCA, "418a84244f010000", "b001" + "90"*6),  # no-shadow category enabled
     ],
-    # Normal solar cascade distance calculation: preserve unsigned cascade cap
-    # and all downstream clamps. Scale the maximum distance by 0.75 only.
-    # Future refresh-frequency reduction belongs in this same optional group.
-    "sun_shadow_quality": [
-        (0xB9B2A2, "498b4f10c5fa1091f0000000c5ea5d9138100000b904000000c5ea5d904c020000418b84249003000083f8050f4cc8b80300000083f9030f42c18983b0000000", "498b4f10c5fa1091f0000000c5ea5d9138100000c5ea5d904c020000c5ea59154a5a5300418b8c2490030000b80300000083f9030f42c18983b0000000909090"),
-        (0xB9B2E2, "85c00f8436030000c5f258c0", None),
-        (0x10D0D10, "0000403f", None),
-    ],
     # Foreground geometry selector only: scale LOD transition thresholds, not
     # the independent disappear-distance branch at 0xACF395 or visibility
     # consumer at 0xA97821. Both verified 01.11 SELF hashes use default 1.0.

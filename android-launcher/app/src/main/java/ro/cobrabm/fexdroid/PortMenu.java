@@ -217,7 +217,6 @@ final class PortMenu {
                 toggle("spot_light_shadows","Desativar sombras de holofotes (1.11)",false);
                 toggle("distant_geometry_lod","Reduzir LOD da geometria distante (1.11)",false);
                 toggle("ssr","Desativar SSR (1.11)",false);
-                toggle("sun_shadow_quality","Reduzir distância das sombras solares (1.11)",false);
                 row("Restaurar patches e resolução",()->{
                     SharedPreferences.Editor e=prefs.edit().putString("resolution","original");
                     for(String key:PortSettings.EFFECTS)e.putBoolean(key,false);

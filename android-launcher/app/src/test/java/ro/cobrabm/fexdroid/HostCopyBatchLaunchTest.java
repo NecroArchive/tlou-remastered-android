@@ -56,12 +56,12 @@ public final class HostCopyBatchLaunchTest {
         for(String effect:PortSettings.EFFECTS)
             groups.put("effect_"+effect);
         JSONObject bank=new JSONObject()
-            .put("profile","tlou-111-variants-v6")
+            .put("profile","tlou-111-variants-v5")
             .put("sha256","a".repeat(64))
             .put("groups",groups);
         JSONObject source=new JSONObject()
             .put("version","1.11")
-            .put("native_patch_profile","tlou-111-variants-v6")
+            .put("native_patch_profile","tlou-111-variants-v5")
             .put("variant_catalog",bank);
         assertTrue(RuntimeAot.hasCompleteVariantCatalog(source));
         JSONObject prefs=new JSONObject()
@@ -71,7 +71,7 @@ public final class HostCopyBatchLaunchTest {
             prefs.put("resolution",resolution);
             for(String effect:PortSettings.EFFECTS) {
                 prefs.put(effect,true);
-                assertTrue("all variant groups required for "+effect+" at "+resolution,
+                assertTrue("all 11 variants required for "+effect+" at "+resolution,
                     RuntimeAot.hasCompleteVariantCatalog(source));
                 prefs.put(effect,false);
             }

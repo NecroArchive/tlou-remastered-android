@@ -326,6 +326,9 @@ public:
         if (!pending_readbacks.empty()) {
             CompleteReadbacks(false);
         }
+#ifdef __ANDROID__
+        PrefetchCompletedSrt();
+#endif
     }
 
 
@@ -381,7 +384,16 @@ private:
     void DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size);
     struct DownloadPiece { const Buffer* arena; VAddr address; u64 size, offset; };
     u64 CopyMappedReadbackPieces(std::span<const DownloadPiece> pieces, u64 bytes, u64 max_bytes,
-                                 size_t primary_pieces = SIZE_MAX, u64* hot_published = nullptr);
+                                 size_t primary_pieces = SIZE_MAX, u64* hot_published = nullptr,
+                                 bool completed_only = false);
+    // Only real repeated SRT reads enter this bounded history. The cache
+    // owner consumes it after GPU completion, never by issuing a new wait.
+    struct SrtPrefetchEntry { VAddr address{}; u64 bytes{}; u32 hits{}; };
+    std::array<SrtPrefetchEntry, 32> srt_prefetch_history{};
+    size_t srt_prefetch_next{}, srt_prefetch_scan{};
+    u64 srt_prefetch_tick{};
+    void RememberSrtRead(VAddr address, u64 size);
+    void PrefetchCompletedSrt();
 
     /// gow3: a CPU write fault next to, not on, GPU-written bytes: unprotects the page without
     /// a download (see LazyPage). False when the download is needed.

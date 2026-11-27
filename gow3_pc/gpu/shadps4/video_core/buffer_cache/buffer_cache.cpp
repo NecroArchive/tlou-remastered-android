@@ -1959,7 +1959,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
 
 u64 BufferCache::CopyMappedReadbackPieces(std::span<const DownloadPiece> pending,
                                                u64 total_size_bytes, u64 max_bytes,
-                                               size_t primary_pieces, u64* hot_published) {
+                                               size_t primary_pieces, u64* hot_published, bool completed_only) {
     if (primary_pieces > pending.size() && hot_published) return 0;
     const auto coherent = vk::MemoryPropertyFlagBits::eHostCoherent;
     if (arena_host_mapped && scheduler.host_read_barrier &&
@@ -1986,12 +1986,18 @@ u64 BufferCache::CopyMappedReadbackPieces(std::span<const DownloadPiece> pending
                     return tick;
                 }, max_bytes);
         }(); // release the cache history lock before Wait can submit callbacks
-        if (plan) {
+        if (plan && (!completed_only ||
+                     (plan->tick < current_tick &&
+                      scheduler.GetWorkSemaphore()->IsFree(plan->tick)))) {
             // Both paths wait for the exact same producer tick and call the same
             // guest-byte merger. Only the temporary snapshot allocation differs.
             const auto copy_and_publish = [&](std::span<u8> snapshot) -> bool {
                 if (!CopyMappedReadback(*plan, snapshot,
-                    [this](u64 tick) { scheduler.Wait(tick); })) return false;
+                    [this, completed_only](u64 tick) {
+                        // completed_only was proved above using the monotonic
+                        // cached completion tick. Never submit or query here.
+                        if (!completed_only) scheduler.Wait(tick);
+                    })) return false;
                 // Strict late guard for speculative SRT pieces. The CPU can write
                 // while the thread waits for the GPU; only an actually requested
                 // range may use the ordinary guest-byte merger unconditionally.
@@ -2060,6 +2066,55 @@ u64 BufferCache::CopyMappedReadbackPieces(std::span<const DownloadPiece> pending
     return 0;
 }
 
+void BufferCache::RememberSrtRead(VAddr address, u64 size) {
+    if (!address || !size || size > 512 || (address & 4095) + size > 4096)
+        return;
+    for (auto& entry : srt_prefetch_history) {
+        if (entry.address == address && entry.bytes == size) {
+            if (entry.hits < 255) ++entry.hits;
+            return;
+        }
+    }
+    srt_prefetch_history[srt_prefetch_next++ % srt_prefetch_history.size()] =
+        {address, size, 1};
+}
+
+void BufferCache::PrefetchCompletedSrt() {
+#ifdef __ANDROID__
+    static const bool enabled = [] {
+        const char* env = std::getenv("TLOU_SRT_COMPLETED_PREFETCH");
+        return env && env[0] == '1';
+    }();
+    if (!enabled || !arena_host_mapped || !scheduler.host_read_barrier) return;
+    const u64 complete = scheduler.GetWorkSemaphore()->KnownGpuTick();
+    if (!complete || complete == srt_prefetch_tick) return;
+    srt_prefetch_tick = complete;
+    // At most four candidates per already-observed completion. A miss
+    // performs no GPU wait, submission, staging allocation or page change.
+    for (unsigned i = 0; i < 4; ++i) {
+        const auto entry = srt_prefetch_history[srt_prefetch_scan++ %
+                                               srt_prefetch_history.size()];
+        if (entry.hits < 2 || !IsRangeGpuWrittenShared(entry.address, entry.bytes)) continue;
+        const VAddr page = entry.address & ~VAddr{4095};
+        const u64 writer = FetchableWindowTick(page, false);
+        if (!writer || writer > complete ||
+            memory_tracker->IsRegionCpuModified(page, 4096)) continue;
+        const u64 first = entry.address >> block_shift;
+        const u64 last = (entry.address + entry.bytes - 1) >> block_shift;
+        if (!resident_ranges.Contains(first, last + 1)) continue;
+        const auto* arena = GetArena(first, last);
+        if (!arena) continue;
+        const DownloadPiece piece{arena, entry.address, entry.bytes, 0};
+        u64 published = 0;
+        // primary_pieces=0 makes every byte speculative: the existing late
+        // GPU ownership, CPU dirty, lazy and pending-readback guards apply.
+        CopyMappedReadbackPieces(std::span<const DownloadPiece>{&piece, 1},
+                                 (entry.bytes + 63) & ~u64{63},
+                                 MaxMappedReadbackBytes, 0, &published, true);
+    }
+#endif
+}
+
 void BufferCache::DownloadRanges(std::span<const std::pair<VAddr, u64>> ranges, bool hot_srt) {
     std::vector<DownloadPiece> pending;
     u64 total_size_bytes = 0;
@@ -2089,6 +2144,11 @@ void BufferCache::DownloadRanges(std::span<const std::pair<VAddr, u64>> ranges, 
     if (total_size_bytes == 0) {
         return;
     }
+#ifdef __ANDROID__
+    if (hot_srt) {
+        for (const auto& [address, size] : ranges) RememberSrtRead(address, size);
+    }
+#endif
     // Log 20: ~9400 synchronous downloads / 5 s, predominantly small SRT tables.
     // Coherent mapped arenas already expose the source bytes after their writing
     // submission's HOST_READ barrier. Avoid a second GPU copy and an unrelated

@@ -53,8 +53,8 @@ public:
 
     void FillBuffer(const VideoCore::Buffer* dst, u64 offset, u64 size, u32 value);
 
-    void InlineData(VideoCore::Buffer* dst, u64 offset, u32 value);
-    void InlineWords(VideoCore::Buffer* dst, u64 offset, std::span<const u32> words);
+    void InlineData(const VideoCore::Buffer* dst, u64 offset, u32 value);
+    void InlineWords(const VideoCore::Buffer* dst, u64 offset, std::span<const u32> words);
 
     bool Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                  vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,

@@ -299,7 +299,7 @@ void Runtime::FillBuffer(const VideoCore::Buffer* dst, u64 offset, u64 size, u32
                  vk::AccessFlagBits2::eTransferWrite);
 }
 
-void Runtime::InlineData(VideoCore::Buffer* dst, u64 offset, u32 value) {
+void Runtime::InlineData(const VideoCore::Buffer* dst, u64 offset, u32 value) {
     scheduler.EndRendering();
 
     if (IsBufferAccessed(dst, offset, sizeof(value), true)) {
@@ -314,7 +314,7 @@ void Runtime::InlineData(VideoCore::Buffer* dst, u64 offset, u32 value) {
                  vk::AccessFlagBits2::eTransferWrite);
 }
 
-void Runtime::InlineWords(VideoCore::Buffer* dst, u64 offset, std::span<const u32> words) {
+void Runtime::InlineWords(const VideoCore::Buffer* dst, u64 offset, std::span<const u32> words) {
     const auto size = words.size_bytes();
     ASSERT(size != 0 && size <= 256 && offset % 4 == 0 &&
            offset <= dst->SizeBytes() && size <= dst->SizeBytes() - offset);

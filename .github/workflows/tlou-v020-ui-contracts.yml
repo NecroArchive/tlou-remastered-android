@@ -1,4 +1,4 @@
-name: TLOU 0.2.0 UI and AOT contract checks
+name: TLOU 0.2.1 UI and AOT contract checks
 on:
   push:
     branches: [tlou-v020-from-stable-011]
@@ -22,7 +22,7 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
-      - name: Assert all requested 0.2.0 settings are present in release source
+      - name: Assert all requested 0.2.1 settings are present in release source
         shell: bash
         run: |
           set -euo pipefail
@@ -47,7 +47,7 @@ jobs:
           grep -Fq 'Compilar CPU ARM64' "$main"
           grep -Fq 'prepareForNativeAot(base)' "$main"
           test -s android/bionic/package_aotnative_v020.sh
-          echo "All requested 0.2.0 source-side settings and AOT-only guards present"
+          echo "All requested 0.2.1 source-side settings and AOT-only guards present"
       - name: Generate real native save-choice fixture for launcher unit tests
         run: python3 gow3_pc/tests/test_android_save_choice.py
       - name: Compile launcher and run Android unit tests

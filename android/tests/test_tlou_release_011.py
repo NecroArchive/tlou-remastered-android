@@ -20,6 +20,7 @@ class Release011(unittest.TestCase):
             self.assertIn("versionCode 201",build)
         self.assertIn('text("v"+TlouDialogs.version(this)',main)
         self.assertIn('String version="0.2.1"',about)
+        self.assertIn('return "0.2.1";',(JAVA/"TlouDialogs.java").read_text())
         self.assertIn('artFrame.addView(artVersion,artBadge)',main)
         self.assertNotIn('text("v0.1",',main)
 

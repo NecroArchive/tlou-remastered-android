@@ -176,15 +176,15 @@ jobs:
         run: bash android/bionic/package_apk.sh
       - name: Verify APK payload and native dependency closure
         if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
-        run: python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.2.0-arm64.apk
+        run: python3 android/bionic/check_tools_apk.py out/release/TheLastOfUsRemastered-Android-v0.2.1-arm64.apk
       - name: Publish installable TLOU APK
         if: ${{ !contains(github.event.head_commit.message, '[native-only]') }}
         uses: actions/upload-artifact@v4
         with:
-          name: TheLastOfUsRemastered-Android-v0.2.0-arm64
+          name: TheLastOfUsRemastered-Android-v0.2.1-arm64
           path: |
-            out/release/TheLastOfUsRemastered-Android-v0.2.0-arm64.apk
-            out/release/TheLastOfUsRemastered-Android-v0.2.0-arm64.apk.sha256
+            out/release/TheLastOfUsRemastered-Android-v0.2.1-arm64.apk
+            out/release/TheLastOfUsRemastered-Android-v0.2.1-arm64.apk.sha256
           if-no-files-found: error
       - name: Publish built native binaries
         uses: actions/upload-artifact@v4
@@ -249,7 +249,7 @@ jobs:
           github-token: ${{ github.token }}
           run-id: 42136621594
       - name: Validate source compatibility and extract native payload
-        run: python3 android/bionic/reuse_apk.py out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk
+        run: python3 android/bionic/reuse_apk.py out/source-apk/TheLastOfUsRemastered-Android-v0.2.1-arm64.apk
       - name: Restore existing signing identity; never create a replacement key
         uses: actions/cache/restore@v4
         with:
@@ -267,7 +267,7 @@ jobs:
           "$sdk_tools/apksigner" sign --ks out/android-bionic/experimental-development.jks --ks-key-alias tlou-bionic --ks-pass pass:TLOU-Bionic-development --key-pass pass:TLOU-Bionic-development --out "$apk" out/aligned.apk
           "$sdk_tools/apksigner" verify --verbose "$apk"
           "$sdk_tools/apksigner" verify --print-certs "$apk" | sed -n '/certificate SHA-256 digest:/p' > out/new-cert
-          "$sdk_tools/apksigner" verify --print-certs out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk | sed -n '/certificate SHA-256 digest:/p' > out/old-cert
+          "$sdk_tools/apksigner" verify --print-certs out/source-apk/TheLastOfUsRemastered-Android-v0.2.1-arm64.apk | sed -n '/certificate SHA-256 digest:/p' > out/old-cert
           test -s out/new-cert
           diff -u out/old-cert out/new-cert
           sha256sum "$apk" > "$apk.sha256"
@@ -280,7 +280,7 @@ jobs:
           import importlib.util
           spec=importlib.util.spec_from_file_location('reuse','android/bionic/reuse_apk.py')
           reuse=importlib.util.module_from_spec(spec);spec.loader.exec_module(reuse)
-          with zipfile.ZipFile('out/source-apk/TheLastOfUsRemastered-Android-v0.1-arm64.apk') as old, zipfile.ZipFile('out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk') as new:
+          with zipfile.ZipFile('out/source-apk/TheLastOfUsRemastered-Android-v0.2.1-arm64.apk') as old, zipfile.ZipFile('out/release/TheLastOfUsRemastered-Android-v0.1.1-arm64.apk') as new:
               names=[n for n in old.namelist() if reuse.payload(n) is not None and not n.endswith('/')]
               assert names
               for n in names:
